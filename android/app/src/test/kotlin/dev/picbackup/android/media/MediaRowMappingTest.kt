@@ -1,5 +1,6 @@
 package dev.picbackup.android.media
 
+import dev.picbackup.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -11,17 +12,17 @@ class MediaRowMappingTest {
             id = ID,
             uri = URI,
             displayName = DISPLAY_NAME,
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = IMAGE_MIME_TYPE,
+            sizeBytes = MediaTestData.SIZE_BYTES,
+            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+            mimeType = MediaTestData.IMAGE_MIME_TYPE,
         )
 
         assertEquals(ID, entry.id)
         assertEquals(URI, entry.uri)
         assertEquals(DISPLAY_NAME, entry.displayName)
-        assertEquals(SIZE_BYTES, entry.sizeBytes)
-        assertEquals(DATE_MODIFIED_EPOCH_SECONDS, entry.dateModifiedEpochSeconds)
-        assertEquals(IMAGE_MIME_TYPE, entry.mimeType)
+        assertEquals(MediaTestData.SIZE_BYTES, entry.sizeBytes)
+        assertEquals(MediaTestData.DATE_MODIFIED_EPOCH_SECONDS, entry.dateModifiedEpochSeconds)
+        assertEquals(MediaTestData.IMAGE_MIME_TYPE, entry.mimeType)
     }
 
     @Test
@@ -30,8 +31,8 @@ class MediaRowMappingTest {
             id = ID,
             uri = URI,
             displayName = null,
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
+            sizeBytes = MediaTestData.SIZE_BYTES,
+            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
             mimeType = null,
         )
 
@@ -45,8 +46,8 @@ class MediaRowMappingTest {
             id = ID,
             uri = URI,
             displayName = DISPLAY_NAME,
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
+            sizeBytes = MediaTestData.SIZE_BYTES,
+            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
             mimeType = BLANK_MIME_TYPE,
         )
 
@@ -57,9 +58,6 @@ class MediaRowMappingTest {
         const val ID = 42L
         const val URI = "content://media/external/images/media/42"
         const val DISPLAY_NAME = "photo-42.jpg"
-        const val SIZE_BYTES = 2_048L
-        const val DATE_MODIFIED_EPOCH_SECONDS = 1_700_000_000L
-        const val IMAGE_MIME_TYPE = "image/jpeg"
         const val BLANK_MIME_TYPE = "   "
         const val EMPTY_TEXT = ""
     }
