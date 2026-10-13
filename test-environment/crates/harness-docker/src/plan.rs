@@ -1,27 +1,33 @@
 //! Pure description of the isolated Docker test cluster.
 //!
 //! A [`ClusterPlan`] is derived from a validated [`ClusterTopology`] plus the
-//! [`PlanSettings`] network and images: one shared isolated network with one
-//! container per node. Construction cannot fail because the topology has
-//! already been validated by [`harness_core`].
+//! [`PlanSettings`] network, images, and container environment: one shared
+//! isolated network with one container per node. Construction cannot fail
+//! because the topology has already been validated by [`harness_core`].
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 
 use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
 
-/// Environment key carrying the node's numeric identifier.
-const ENV_NODE_ID: &str = "NODE_ID";
-/// Environment key carrying the node's unique label.
-const ENV_NODE_LABEL: &str = "NODE_LABEL";
-/// Environment key carrying the node's role.
-const ENV_NODE_ROLE: &str = "NODE_ROLE";
-/// Environment key carrying the node's listen address.
-const ENV_LISTEN_ADDRESS: &str = "LISTEN_ADDRESS";
-/// Environment value used for the dedicated-server role.
-const ROLE_DEDICATED_SERVER: &str = "dedicated-server";
-/// Environment value used for the storage role.
-const ROLE_STORAGE: &str = "storage";
+/// Environment contract a plan uses when it renders node containers.
+///
+/// The four keys and two role values must all be distinct: they share one
+/// [`BTreeMap`] key space, so a duplicate would silently drop an entry.
+pub struct ContainerEnv {
+    /// Environment key holding the node id.
+    pub node_id: String,
+    /// Environment key holding the node label.
+    pub node_label: String,
+    /// Environment key holding the node role.
+    pub node_role: String,
+    /// Environment key holding the listen address.
+    pub listen_address: String,
+    /// Role value used for the dedicated server.
+    pub dedicated_server_role: String,
+    /// Role value used for storage nodes.
+    pub storage_role: String,
+}
 
 /// Name of the isolated Docker network the test cluster runs in.
 pub struct NetworkPlan {
@@ -36,7 +42,7 @@ impl NetworkPlan {
     }
 }
 
-/// Images and network used to build a [`ClusterPlan`].
+/// Images, network, and environment used to build a [`ClusterPlan`].
 pub struct PlanSettings {
     /// The target network name.
     pub network: String,
@@ -44,19 +50,23 @@ pub struct PlanSettings {
     pub dedicated_server_image: String,
     /// Image used for storage node containers.
     pub storage_image: String,
+    /// Environment contract for the node containers.
+    pub env: ContainerEnv,
 }
 
 impl PlanSettings {
-    /// Creates settings from a network name and the two node images.
+    /// Creates settings from a network name, the two node images, and the environment.
     pub fn new(
         network: impl Into<String>,
         dedicated_server_image: impl Into<String>,
         storage_image: impl Into<String>,
+        env: ContainerEnv,
     ) -> Self {
         Self {
             network: network.into(),
             dedicated_server_image: dedicated_server_image.into(),
             storage_image: storage_image.into(),
+            env,
         }
     }
     /// Image for a node role.
@@ -106,7 +116,7 @@ impl ClusterPlan {
                 image: settings.image_for(spec.role).to_string(),
                 hostname: spec.label.clone(),
                 address: spec.address,
-                env: env_for(spec),
+                env: env_for(spec, &settings.env),
             })
             .collect();
         Self {
@@ -123,19 +133,22 @@ impl ClusterPlan {
 }
 
 /// Environment value for a node role.
-fn role_value(role: NodeRole) -> &'static str {
+fn role_value(env: &ContainerEnv, role: NodeRole) -> &str {
     match role {
-        NodeRole::DedicatedServer => ROLE_DEDICATED_SERVER,
-        NodeRole::Storage => ROLE_STORAGE,
+        NodeRole::DedicatedServer => &env.dedicated_server_role,
+        NodeRole::Storage => &env.storage_role,
     }
 }
 
 /// Builds the four fixed environment entries for a node spec.
-fn env_for(spec: &NodeSpec) -> BTreeMap<String, String> {
+fn env_for(spec: &NodeSpec, env: &ContainerEnv) -> BTreeMap<String, String> {
     BTreeMap::from([
-        (ENV_NODE_ID.to_string(), spec.id.0.to_string()),
-        (ENV_NODE_LABEL.to_string(), spec.label.clone()),
-        (ENV_NODE_ROLE.to_string(), role_value(spec.role).to_string()),
-        (ENV_LISTEN_ADDRESS.to_string(), spec.address.to_string()),
+        (env.node_id.clone(), spec.id.0.to_string()),
+        (env.node_label.clone(), spec.label.clone()),
+        (
+            env.node_role.clone(),
+            role_value(env, spec.role).to_string(),
+        ),
+        (env.listen_address.clone(), spec.address.to_string()),
     ])
 }
