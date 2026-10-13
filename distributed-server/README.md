@@ -24,13 +24,14 @@ for clients; it does not relay Raft or blob traffic.
   `src/frame_buffer.rs` (receive-side frame accumulator: chunked bytes → whole
   frames), `src/buffer_pool.rs`,
   `src/payload.rs` (logical payload chain / chunked streaming
-  with backpressure), `src/config.rs` (node identity/configuration), and
+  with backpressure), `src/config.rs` (node identity/configuration),
+  `src/response.rs` (typed upload outcomes / status codes), and
   `src/metadata.rs` (idempotent upload ledger: upload id, content hash, upload
   record).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `payload_public_api.rs`, `config_public_api.rs`,
-  `upload_ledger_public_api.rs`).
+  `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`).
 
 ## Status
 
@@ -38,8 +39,9 @@ Early bootstrap increment: framing, the frame codec (whole-frame encode/decode
 over byte slices), the receive-side frame buffer (chunked bytes → whole frames),
 buffer-pool building blocks, the logical
 payload chain with chunked streaming/backpressure, the node
-identity/configuration model, and the idempotent upload ledger (upload id, content
-hash, upload record). Networking, actors, and `io_uring` are not implemented yet.
+identity/configuration model, the idempotent upload ledger (upload id, content
+hash, upload record), and the typed upload outcomes (status codes). Networking,
+actors, and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
