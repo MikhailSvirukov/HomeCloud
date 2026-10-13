@@ -26,10 +26,12 @@ protocol/API interfaces required to build mocks and fakes.
 
 ## Quality gates
 
-Run `test-environment/scripts/ci.sh` before hand-off. It runs:
+Run `test-environment/scripts/ci.sh` before hand-off. The same gates run in
+GitHub Actions via [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml),
+which invokes the script directly, so CI and local runs stay identical.
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 ```
