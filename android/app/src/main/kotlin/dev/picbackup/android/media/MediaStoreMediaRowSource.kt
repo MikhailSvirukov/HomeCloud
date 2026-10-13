@@ -3,6 +3,7 @@ package dev.picbackup.android.media
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 
 /**
@@ -10,7 +11,8 @@ import android.provider.MediaStore
  *
  * Performs the actual `ContentResolver` query and translates each cursor row
  * into a [RawMediaEntry]; the selection restricts rows to photos and videos, so
- * audio and other media are never surfaced.
+ * audio and other media are never surfaced, and drops rows still being written
+ * or already trashed on the platforms that expose those states.
  *
  * The query is synchronous I/O through the supplied [contentResolver], so
  * callers must not invoke [readAll] on the main thread. The caller retains
@@ -32,9 +34,9 @@ class MediaStoreMediaRowSource(
     override fun readAll(): List<RawMediaEntry> {
         val cursor = contentResolver.query(
             COLLECTION,
-            PROJECTION,
-            SELECTION,
-            SELECTION_ARGS,
+            MediaStoreQuery.projection,
+            MediaStoreQuery.selection(Build.VERSION.SDK_INT),
+            MediaStoreQuery.selectionArgs,
             null,
         ) ?: return emptyList()
 
@@ -65,30 +67,5 @@ class MediaStoreMediaRowSource(
 
         /** The external `MediaStore.Files` collection shared by all volumes. */
         val COLLECTION: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-
-        /** Columns read for every candidate row; order matches the index lookups. */
-        val PROJECTION: Array<String> = arrayOf(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_MODIFIED,
-            MediaStore.MediaColumns.MIME_TYPE,
-        )
-
-        /** Mime type prefix identifying photos. */
-        const val IMAGE_MIME_PREFIX = "image/"
-
-        /** Mime type prefix identifying videos. */
-        const val VIDEO_MIME_PREFIX = "video/"
-
-        /** Column pattern selection; both placeholders bind to the prefixes below. */
-        val SELECTION =
-            "${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR ${MediaStore.MediaColumns.MIME_TYPE} LIKE ?"
-
-        /** Selection arguments restricting the query to photos and videos only. */
-        val SELECTION_ARGS: Array<String> = arrayOf(
-            "$IMAGE_MIME_PREFIX%",
-            "$VIDEO_MIME_PREFIX%",
-        )
     }
 }
