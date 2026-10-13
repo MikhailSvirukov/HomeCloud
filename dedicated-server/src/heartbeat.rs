@@ -8,7 +8,7 @@
 //! values and carry out the returned [`HeartbeatAction`]s at the system
 //! boundary.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
@@ -60,6 +60,9 @@ pub enum HeartbeatError {
     /// A response was recorded while no heartbeat attempt was in flight.
     #[error("no heartbeat attempt is in flight for node '{0}'")]
     NoAttemptInFlight(String),
+    /// A cluster node label was empty or repeated.
+    #[error("cluster node labels must be non-empty and unique, but got '{label}'")]
+    InvalidNodeLabel { label: String },
 }
 
 /// Tracks heartbeat scheduling and consecutive misses for the fixed cluster.
@@ -72,8 +75,19 @@ pub struct HeartbeatTracker {
 }
 
 impl HeartbeatTracker {
-    /// Create a tracker with every node healthy, idle, and due at `start`.
-    pub fn new(labels: &[&str], timing: HeartbeatTiming, start: Instant) -> Self {
+    /// Create a tracker with every node healthy, idle, and due at `start`,
+    /// rejecting empty or repeated cluster node labels.
+    pub fn new(labels: &[&str], timing: HeartbeatTiming, start: Instant) -> Result<Self> {
+        let mut seen = HashSet::with_capacity(labels.len());
+
+        for label in labels {
+            if label.is_empty() || !seen.insert(*label) {
+                return Err(HeartbeatError::InvalidNodeLabel {
+                    label: (*label).to_string(),
+                });
+            }
+        }
+
         let nodes = labels
             .iter()
             .map(|label| NodeState {
@@ -91,13 +105,13 @@ impl HeartbeatTracker {
             .map(|(position, node)| (node.label.clone(), position))
             .collect();
 
-        Self {
+        Ok(Self {
             interval: timing.interval,
             timeout: timing.timeout,
             miss_threshold: timing.miss_threshold,
             nodes,
             index,
-        }
+        })
     }
 
     /// Collect and apply everything due at `now`, in configured cluster order.
@@ -196,7 +210,8 @@ mod tests {
     #[test]
     fn due_nodes_are_sent_to_in_configured_order() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
 
         let actions = tracker.poll(start);
 
@@ -216,7 +231,8 @@ mod tests {
     #[test]
     fn nothing_is_emitted_before_the_next_attempt_is_due() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
         tracker.poll(start);
         tracker.poll(start + TIMEOUT);
 
@@ -228,7 +244,8 @@ mod tests {
     #[test]
     fn an_expired_in_flight_attempt_times_out_without_a_send() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
         tracker.poll(start);
 
         let actions = tracker.poll(start + TIMEOUT);
@@ -244,7 +261,8 @@ mod tests {
     #[test]
     fn a_single_miss_keeps_the_node_healthy() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
 
         tracker.poll(start);
         tracker.poll(start + TIMEOUT);
@@ -259,7 +277,8 @@ mod tests {
     #[test]
     fn reaching_the_miss_threshold_marks_the_node_unavailable() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
 
         tracker.poll(start);
         tracker.poll(start + TIMEOUT);
@@ -274,7 +293,8 @@ mod tests {
     #[test]
     fn a_response_resets_the_miss_counter_and_reschedules_from_the_response_time() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
         tracker.poll(start);
         tracker.poll(start + TIMEOUT);
         tracker.poll(start + TIMEOUT + INTERVAL);
@@ -298,7 +318,8 @@ mod tests {
     #[test]
     fn an_unavailable_node_recovers_to_healthy_through_a_response() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS[..1], TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
         tracker.poll(start);
         tracker.poll(start + TIMEOUT);
         tracker.poll(start + TIMEOUT + INTERVAL);
@@ -320,7 +341,8 @@ mod tests {
     #[test]
     fn recording_a_response_for_an_unknown_label_is_an_error() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
 
         let error = tracker
             .record_response(UNKNOWN, start)
@@ -332,12 +354,31 @@ mod tests {
     #[test]
     fn recording_a_response_with_nothing_in_flight_is_an_error() {
         let start = Instant::now();
-        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start);
+        let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start)
+            .expect("the test cluster labels are non-empty and unique");
 
         let error = tracker
             .record_response(LABELS[0], start)
             .expect_err("no attempt is in flight");
 
         assert!(matches!(error, HeartbeatError::NoAttemptInFlight(label) if label == LABELS[0]));
+    }
+
+    #[test]
+    fn empty_and_repeated_labels_are_rejected() {
+        let start = Instant::now();
+
+        let empty = HeartbeatTracker::new(&[""], TIMING, start)
+            .err()
+            .expect("an empty label must be rejected");
+        assert!(matches!(empty, HeartbeatError::InvalidNodeLabel { label } if label.is_empty()));
+
+        let repeated = HeartbeatTracker::new(&[LABELS[0], LABELS[0]], TIMING, start)
+            .err()
+            .expect("a repeated label must be rejected");
+        assert!(matches!(
+            repeated,
+            HeartbeatError::InvalidNodeLabel { label } if label == LABELS[0]
+        ));
     }
 }
