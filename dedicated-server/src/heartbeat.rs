@@ -98,7 +98,7 @@ impl HeartbeatTracker {
         Self {
             interval: heartbeat.interval(),
             timeout: heartbeat.timeout(),
-            miss_threshold: heartbeat.miss_threshold,
+            miss_threshold: heartbeat.miss_threshold.get(),
             nodes,
             index,
         }
@@ -207,6 +207,8 @@ impl HeartbeatTracker {
 
 #[cfg(test)]
 mod tests {
+    use std::num::{NonZeroU32, NonZeroU64};
+
     use super::*;
     use crate::config::ClusterNode;
 
@@ -238,9 +240,9 @@ mod tests {
 
     fn heartbeat() -> HeartbeatConfig {
         HeartbeatConfig {
-            interval_ms: INTERVAL_MS,
-            timeout_ms: TIMEOUT_MS,
-            miss_threshold: MISS_THRESHOLD,
+            interval_ms: NonZeroU64::new(INTERVAL_MS).expect("INTERVAL_MS is non-zero"),
+            timeout_ms: NonZeroU64::new(TIMEOUT_MS).expect("TIMEOUT_MS is non-zero"),
+            miss_threshold: NonZeroU32::new(MISS_THRESHOLD).expect("MISS_THRESHOLD is non-zero"),
         }
     }
 
