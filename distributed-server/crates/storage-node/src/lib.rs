@@ -1,7 +1,8 @@
 //! PicBackup distributed storage-node crate.
 //!
 //! Structural increments so far: the frame header for the frame-only TCP actor
-//! ([`framing`]), a bounded, size-classed payload buffer pool
+//! ([`framing`]), whole-frame encode/decode over byte slices ([`codec`]), a
+//! bounded, size-classed payload buffer pool
 //! ([`buffer_pool`]), the ordered payload chain and pooled chunk stream
 //! ([`payload`]), the validated node identity/configuration model
 //! ([`config`]), and the upload metadata model with the idempotent upload
@@ -27,6 +28,7 @@
 //!   `tokio-uring` is not used.
 
 pub mod buffer_pool;
+pub mod codec;
 pub mod config;
 pub mod framing;
 pub mod metadata;
@@ -36,6 +38,7 @@ pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
     DEFAULT_CLASS_CAPACITIES,
 };
+pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
