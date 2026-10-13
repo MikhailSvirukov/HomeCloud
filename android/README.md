@@ -11,6 +11,17 @@ Kotlin/Jetpack Compose Android client for the HomeCloud v1 photo/video backup sy
 
 Non-goals (not in v1): download/view/restore, client-side version management, chunk/offset resume, propagating local deletes to the server, automatic key rotation, and the dedicated-server admin panel.
 
+## Implemented so far
+
+- Photo/video classification from raw media rows (`media/MediaCatalog`).
+- The media read permission policy that selects permissions per API level (`permissions/MediaPermissionPolicy`).
+- An in-memory upload queue holding one entry per stable `upload_id`, with `requeueFailed()` for the next retry cycle (`queue/InMemoryUploadQueue`).
+- Not yet implemented: persistence, background scheduling (WorkManager), MediaStore access, and networking/protocol.
+
+## Declared permissions
+
+The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, and `READ_EXTERNAL_STORAGE` capped with `android:maxSdkVersion="32"`. On API 33 and above the client uses the two per-type reads; below 33 it uses the legacy read, matching `MediaPermissionPolicy.requiredPermissions(sdkInt)`. No audio, contacts, location, camera, or storage-write permission is declared.
+
 ## Pinned decisions
 
 | Item | Version |
@@ -33,7 +44,7 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - Namespace and applicationId are `dev.picbackup.android`.
 - Kotlin test sources live under `app/src/test/kotlin` in package `dev.picbackup.android`.
 - Test framework is JUnit 4. `buildConfig` is enabled so `dev.picbackup.android.BuildConfig` is available to JVM unit tests.
-- Planned background mechanism is Android WorkManager, to be introduced together with the upload/queue work, not in this scaffold.
+- Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
 
 ## Directory layout
 
@@ -49,9 +60,16 @@ android/
 └── app/
     ├── build.gradle.kts   application module configuration
     └── src/
-        ├── main/          application sources and resources
+        ├── main/kotlin/dev/picbackup/android/
+        │   ├── MainActivity.kt   Compose entry point
+        │   ├── media/            photo/video classification from raw media rows
+        │   ├── permissions/      which media read permissions to request
+        │   └── queue/            in-memory upload queue and retry bookkeeping
         └── test/kotlin/dev/picbackup/android/
-                           JVM unit tests
+            ├── BuildWiringTest.kt   build wiring checks
+            ├── media/               unit tests for media classification
+            ├── permissions/         unit tests for the permission policy
+            └── queue/               unit tests for the upload queue
 ```
 
 ## Build and test
