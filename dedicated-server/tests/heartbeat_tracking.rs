@@ -1,6 +1,7 @@
 //! Integration tests for heartbeat tracking through the public API, driven
 //! entirely by a single `Instant::now()` base plus `Duration` offsets.
 
+use std::num::{NonZeroU32, NonZeroU64};
 use std::time::{Duration, Instant};
 
 use dedicated_server::config::{ClusterConfig, ClusterNode, HeartbeatConfig};
@@ -34,9 +35,9 @@ fn cluster_of(labels: &[&str]) -> ClusterConfig {
 
 fn tracker(labels: &[&str], start: Instant) -> HeartbeatTracker {
     let heartbeat = HeartbeatConfig {
-        interval_ms: INTERVAL_MS,
-        timeout_ms: TIMEOUT_MS,
-        miss_threshold: MISS_THRESHOLD,
+        interval_ms: NonZeroU64::new(INTERVAL_MS).expect("INTERVAL_MS is non-zero"),
+        timeout_ms: NonZeroU64::new(TIMEOUT_MS).expect("TIMEOUT_MS is non-zero"),
+        miss_threshold: NonZeroU32::new(MISS_THRESHOLD).expect("MISS_THRESHOLD is non-zero"),
     };
     HeartbeatTracker::new(&cluster_of(labels), &heartbeat, start)
 }
