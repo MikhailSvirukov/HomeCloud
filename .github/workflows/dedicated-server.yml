@@ -1,0 +1,41 @@
+name: dedicated-server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - dedicated-server/**
+      - .github/workflows/dedicated-server.yml
+  pull_request:
+    paths:
+      - dedicated-server/**
+      - .github/workflows/dedicated-server.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dedicated-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Area checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dedicated-server
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: dedicated-server
+      - name: Run the area checks
+        run: bash scripts/ci.sh
