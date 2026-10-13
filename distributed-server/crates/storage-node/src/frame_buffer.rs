@@ -17,9 +17,18 @@ use crate::framing::{FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN};
 pub const MAX_BUFFERED_FRAME_LEN: usize = FRAME_HEADER_LEN + MAX_FRAME_PAYLOAD_LEN as usize;
 
 /// Receive-side accumulator turning a chunked byte stream into whole frames.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FrameBuffer {
     buffer: Vec<u8>,
+}
+
+impl std::fmt::Debug for FrameBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FrameBuffer")
+            .field("buffered_len", &self.buffered_len())
+            .finish()
+    }
 }
 
 impl FrameBuffer {
@@ -179,5 +188,15 @@ mod tests {
 
         assert_eq!(buffer.next_frame(), Err(FramingError::UnsupportedVersion));
         assert_eq!(buffer.buffered_len(), FRAME_HEADER_LEN);
+    }
+
+    #[test]
+    fn debug_reports_only_buffered_length_without_bytes() {
+        let mut buffer = FrameBuffer::new();
+        buffer
+            .extend(b"SECRET-BYTES")
+            .expect("chunk fits in the buffer");
+
+        assert_eq!(format!("{buffer:?}"), "FrameBuffer { buffered_len: 12 }");
     }
 }
