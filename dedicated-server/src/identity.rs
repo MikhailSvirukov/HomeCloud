@@ -3,7 +3,7 @@
 //! The dedicated server keeps two separate private keys persisted on disk: one
 //! to decrypt incoming messages and one to sign outgoing messages, as required
 //! by the v1 specification. This module is the boundary that reads those files
-//! and binds the configured node label to the loaded material.
+//! and binds the caller-supplied node label to the loaded material.
 //!
 //! The key bytes are opaque: the v1 specification leaves key encoding and
 //! algorithm choices open, so this module never parses or interprets them. It
@@ -17,14 +17,34 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::config::IdentityConfig;
-
 /// Maximum key file size accepted, in bytes.
 pub const MAX_KEY_BYTES: usize = 64 * 1024;
 
+/// Result of loading or validating a [`ServerIdentity`].
+type Result<T> = core::result::Result<T, IdentityError>;
+
+/// Which of the two key roles an operation or error refers to.
+#[derive(Debug)]
+pub enum KeyRole {
+    /// The key that decrypts incoming messages.
+    Encryption,
+    /// The key that signs outgoing messages.
+    Signing,
+}
+
+impl fmt::Display for KeyRole {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Encryption => "encryption",
+            Self::Signing => "signing",
+        };
+        formatter.write_str(name)
+    }
+}
+
 /// The dedicated server's own key identity.
 ///
-/// Holds the node label and the private key material read from the configured
+/// Holds the node label and the private key material read from the given
 /// files. The bytes are opaque to this crate: key encoding and algorithm choices
 /// are open parameters in the v1 specification, so this module never parses or
 /// interprets them.
@@ -35,29 +55,22 @@ pub struct ServerIdentity {
 }
 
 impl ServerIdentity {
-    /// Read and validate the identity described by `identity`.
-    ///
-    /// # Errors
-    /// Returns [`IdentityError`] when a key file cannot be read, is empty, is
-    /// larger than [`MAX_KEY_BYTES`], or when the same material would serve both
-    /// roles.
-    pub fn load(identity: &IdentityConfig) -> Result<Self, IdentityError> {
-        let encryption_private_key = read_encryption_key(&identity.encryption_private_key)?;
-        let signing_private_key = read_signing_key(&identity.signing_private_key)?;
+    /// Read and validate the key identity for `label` from the two key file paths.
+    pub fn load(label: &str, encryption_key: &Path, signing_key: &Path) -> Result<Self> {
+        let encryption_private_key = read_key(KeyRole::Encryption, encryption_key)?;
+        let signing_private_key = read_key(KeyRole::Signing, signing_key)?;
 
-        validate_encryption_key(&identity.encryption_private_key, &encryption_private_key)?;
-        validate_signing_key(&identity.signing_private_key, &signing_private_key)?;
+        validate_key(KeyRole::Encryption, encryption_key, &encryption_private_key)?;
+        validate_key(KeyRole::Signing, signing_key, &signing_private_key)?;
 
-        if identity.encryption_private_key == identity.signing_private_key
-            || encryption_private_key == signing_private_key
-        {
+        if encryption_key == signing_key || encryption_private_key == signing_private_key {
             return Err(IdentityError::SharedKeyMaterial {
-                path: identity.encryption_private_key.clone(),
+                path: encryption_key.to_path_buf(),
             });
         }
 
         Ok(Self {
-            label: identity.label.clone(),
+            label: label.to_string(),
             encryption_private_key,
             signing_private_key,
         })
@@ -99,45 +112,30 @@ impl fmt::Debug for ServerIdentity {
 /// Errors produced while loading the key identity.
 #[derive(Debug, Error)]
 pub enum IdentityError {
-    /// Reading the encryption key file failed.
-    #[error("failed to read encryption key file '{path}': {source}")]
-    ReadEncryptionKey {
+    /// Reading the key file of the given role failed.
+    #[error("failed to read {role} key file '{path}': {source}")]
+    Read {
+        /// Role whose key file was read.
+        role: KeyRole,
         /// Path that was read.
         path: PathBuf,
         /// Underlying I/O failure.
         #[source]
         source: std::io::Error,
     },
-    /// Reading the signing key file failed.
-    #[error("failed to read signing key file '{path}': {source}")]
-    ReadSigningKey {
-        /// Path that was read.
-        path: PathBuf,
-        /// Underlying I/O failure.
-        #[source]
-        source: std::io::Error,
-    },
-    /// The encryption key file was empty.
-    #[error("encryption key file '{path}' is empty")]
-    EmptyEncryptionKey {
+    /// The key file of the given role was empty.
+    #[error("{role} key file '{path}' is empty")]
+    Empty {
+        /// Role whose key file was empty.
+        role: KeyRole,
         /// Path that was empty.
         path: PathBuf,
     },
-    /// The signing key file was empty.
-    #[error("signing key file '{path}' is empty")]
-    EmptySigningKey {
-        /// Path that was empty.
-        path: PathBuf,
-    },
-    /// The encryption key file exceeded [`MAX_KEY_BYTES`].
-    #[error("encryption key file '{path}' is larger than {MAX_KEY_BYTES} bytes")]
-    OversizedEncryptionKey {
-        /// Path that was oversized.
-        path: PathBuf,
-    },
-    /// The signing key file exceeded [`MAX_KEY_BYTES`].
-    #[error("signing key file '{path}' is larger than {MAX_KEY_BYTES} bytes")]
-    OversizedSigningKey {
+    /// The key file of the given role exceeded [`MAX_KEY_BYTES`].
+    #[error("{role} key file '{path}' is larger than {MAX_KEY_BYTES} bytes")]
+    Oversized {
+        /// Role whose key file was oversized.
+        role: KeyRole,
         /// Path that was oversized.
         path: PathBuf,
     },
@@ -149,12 +147,8 @@ pub enum IdentityError {
     },
 }
 
-/// Read at most [`MAX_KEY_BYTES`] + 1 bytes from `path`.
-///
-/// The read is capped at one byte past the limit: that is enough to detect an
-/// oversized file, so a misconfigured path pointing at a huge file is rejected
-/// without being loaded into memory in full.
-fn read_bounded(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+/// Read at most [`MAX_KEY_BYTES`] + 1 bytes, enough to detect an oversized file.
+fn read_bounded(path: &Path) -> std::io::Result<Vec<u8>> {
     let file = std::fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.take(MAX_KEY_BYTES as u64 + 1)
@@ -162,50 +156,30 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, std::io::Error> {
     Ok(bytes)
 }
 
-/// Read the encryption key file, mapping I/O failures to [`IdentityError`].
-fn read_encryption_key(path: &Path) -> Result<Vec<u8>, IdentityError> {
-    read_bounded(path).map_err(|source| IdentityError::ReadEncryptionKey {
+/// Read the key file for `role`, mapping I/O failures to [`IdentityError`].
+fn read_key(role: KeyRole, path: &Path) -> Result<Vec<u8>> {
+    read_bounded(path).map_err(|source| IdentityError::Read {
+        role,
         path: path.to_path_buf(),
         source,
     })
 }
 
-/// Read the signing key file, mapping I/O failures to [`IdentityError`].
-fn read_signing_key(path: &Path) -> Result<Vec<u8>, IdentityError> {
-    read_bounded(path).map_err(|source| IdentityError::ReadSigningKey {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// Reject an empty or oversized encryption key, checking emptiness first.
-fn validate_encryption_key(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
+/// Reject an empty or oversized key for `role`, checking emptiness first.
+fn validate_key(role: KeyRole, path: &Path, bytes: &[u8]) -> Result<()> {
     if bytes.is_empty() {
-        Err(IdentityError::EmptyEncryptionKey {
+        return Err(IdentityError::Empty {
+            role,
             path: path.to_path_buf(),
-        })
-    } else if bytes.len() > MAX_KEY_BYTES {
-        Err(IdentityError::OversizedEncryptionKey {
-            path: path.to_path_buf(),
-        })
-    } else {
-        Ok(())
+        });
     }
-}
-
-/// Reject an empty or oversized signing key, checking emptiness first.
-fn validate_signing_key(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
-    if bytes.is_empty() {
-        Err(IdentityError::EmptySigningKey {
+    if bytes.len() > MAX_KEY_BYTES {
+        return Err(IdentityError::Oversized {
+            role,
             path: path.to_path_buf(),
-        })
-    } else if bytes.len() > MAX_KEY_BYTES {
-        Err(IdentityError::OversizedSigningKey {
-            path: path.to_path_buf(),
-        })
-    } else {
-        Ok(())
+        });
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -249,14 +223,6 @@ mod tests {
         path
     }
 
-    fn identity(encryption_private_key: PathBuf, signing_private_key: PathBuf) -> IdentityConfig {
-        IdentityConfig {
-            label: LABEL.to_string(),
-            encryption_private_key,
-            signing_private_key,
-        }
-    }
-
     #[test]
     fn load_reads_a_valid_pair_and_exposes_label_and_exact_bytes() {
         let dir = TempDir::new("valid-pair");
@@ -264,7 +230,7 @@ mod tests {
         let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
 
         let loaded =
-            ServerIdentity::load(&identity(encryption, signing)).expect("a valid pair must load");
+            ServerIdentity::load(LABEL, &encryption, &signing).expect("a valid pair must load");
 
         assert_eq!(loaded.label(), LABEL);
         assert_eq!(
@@ -275,133 +241,84 @@ mod tests {
     }
 
     #[test]
-    fn load_reports_a_missing_encryption_key_with_its_path() {
-        let dir = TempDir::new("missing-encryption");
-        let encryption = dir.file("absent-encryption.key");
-        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
-
-        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
-            .expect_err("a missing encryption key must fail");
-
-        assert!(
-            matches!(error, IdentityError::ReadEncryptionKey { path, .. } if path == encryption)
-        );
-    }
-
-    #[test]
-    fn load_reports_a_missing_signing_key_with_its_path() {
-        let dir = TempDir::new("missing-signing");
+    fn load_reports_a_read_failure_for_each_role_with_its_path() {
+        let dir = TempDir::new("read-failure");
         let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
-        let signing = dir.file("absent-signing.key");
+        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
+        let missing_encryption = dir.file("absent-encryption.key");
+        let missing_signing = dir.file("absent-signing.key");
 
-        let error = ServerIdentity::load(&identity(encryption, signing.clone()))
+        let encryption_error = ServerIdentity::load(LABEL, &missing_encryption, &signing)
+            .expect_err("a missing encryption key must fail");
+        let signing_error = ServerIdentity::load(LABEL, &encryption, &missing_signing)
             .expect_err("a missing signing key must fail");
 
-        assert!(matches!(error, IdentityError::ReadSigningKey { path, .. } if path == signing));
+        assert!(matches!(
+            encryption_error,
+            IdentityError::Read {
+                role: KeyRole::Encryption,
+                path,
+                ..
+            } if path == missing_encryption
+        ));
+        assert!(matches!(
+            signing_error,
+            IdentityError::Read {
+                role: KeyRole::Signing,
+                path,
+                ..
+            } if path == missing_signing
+        ));
     }
 
     #[test]
-    fn load_reports_an_empty_encryption_key() {
-        let dir = TempDir::new("empty-encryption");
+    fn load_rejects_an_empty_key_file() {
+        let dir = TempDir::new("empty");
         let encryption = write_key(&dir, "encryption.key", &[]);
         let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
 
-        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
-            .expect_err("an empty encryption key must fail");
+        let error =
+            ServerIdentity::load(LABEL, &encryption, &signing).expect_err("an empty key must fail");
 
-        assert!(matches!(error, IdentityError::EmptyEncryptionKey { path } if path == encryption));
+        assert!(matches!(
+            error,
+            IdentityError::Empty {
+                role: KeyRole::Encryption,
+                path
+            } if path == encryption
+        ));
     }
 
     #[test]
-    fn load_reports_an_empty_signing_key() {
-        let dir = TempDir::new("empty-signing");
-        let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
-        let signing = write_key(&dir, "signing.key", &[]);
-
-        let error = ServerIdentity::load(&identity(encryption, signing.clone()))
-            .expect_err("an empty signing key must fail");
-
-        assert!(matches!(error, IdentityError::EmptySigningKey { path } if path == signing));
-    }
-
-    #[test]
-    fn load_reports_an_oversized_encryption_key() {
-        let dir = TempDir::new("oversized-encryption");
-        let oversized = vec![0x11_u8; MAX_KEY_BYTES + 1];
-        let encryption = write_key(&dir, "encryption.key", &oversized);
-        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
-
-        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
-            .expect_err("an oversized encryption key must fail");
-
-        assert!(
-            matches!(error, IdentityError::OversizedEncryptionKey { path } if path == encryption)
-        );
-    }
-
-    #[test]
-    fn load_reports_an_oversized_signing_key() {
-        let dir = TempDir::new("oversized-signing");
-        let oversized = vec![0x22_u8; MAX_KEY_BYTES + 1];
-        let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
-        let signing = write_key(&dir, "signing.key", &oversized);
-
-        let error = ServerIdentity::load(&identity(encryption, signing.clone()))
-            .expect_err("an oversized signing key must fail");
-
-        assert!(matches!(error, IdentityError::OversizedSigningKey { path } if path == signing));
-    }
-
-    #[test]
-    fn load_accepts_an_encryption_key_of_exactly_the_max_size() {
-        let dir = TempDir::new("max-size-encryption");
-        let at_limit = vec![0x33_u8; MAX_KEY_BYTES];
-        let encryption = write_key(&dir, "encryption.key", &at_limit);
-        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
-
-        let loaded = ServerIdentity::load(&identity(encryption, signing))
-            .expect("a key of exactly MAX_KEY_BYTES must load");
-
-        assert_eq!(loaded.encryption_private_key().len(), MAX_KEY_BYTES);
-    }
-
-    #[test]
-    fn load_accepts_a_signing_key_of_exactly_the_max_size() {
-        let dir = TempDir::new("max-size-signing");
-        let at_limit = vec![0x44_u8; MAX_KEY_BYTES];
-        let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
-        let signing = write_key(&dir, "signing.key", &at_limit);
-
-        let loaded = ServerIdentity::load(&identity(encryption, signing))
-            .expect("a key of exactly MAX_KEY_BYTES must load");
-
-        assert_eq!(loaded.signing_private_key().len(), MAX_KEY_BYTES);
-    }
-
-    #[test]
-    fn load_rejects_a_far_oversized_encryption_key() {
-        let dir = TempDir::new("far-oversized-encryption");
+    fn load_rejects_a_far_oversized_key_file() {
+        let dir = TempDir::new("oversized");
         let oversized = vec![0x55_u8; 4 * MAX_KEY_BYTES];
         let encryption = write_key(&dir, "encryption.key", &oversized);
         let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
 
-        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
-            .expect_err("a far oversized encryption key must fail");
+        let error = ServerIdentity::load(LABEL, &encryption, &signing)
+            .expect_err("a far oversized key must fail");
 
-        assert!(
-            matches!(error, IdentityError::OversizedEncryptionKey { path } if path == encryption)
-        );
+        assert!(matches!(
+            error,
+            IdentityError::Oversized {
+                role: KeyRole::Encryption,
+                path
+            } if path == encryption
+        ));
     }
 
     #[test]
-    fn load_rejects_both_roles_pointing_at_the_same_file() {
-        let dir = TempDir::new("shared-path");
-        let shared = write_key(&dir, "shared.key", ENCRYPTION_MARKER.as_bytes());
+    fn load_accepts_a_key_of_exactly_the_max_size() {
+        let dir = TempDir::new("max-size");
+        let at_limit = vec![0x33_u8; MAX_KEY_BYTES];
+        let encryption = write_key(&dir, "encryption.key", &at_limit);
+        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
 
-        let error = ServerIdentity::load(&identity(shared.clone(), shared.clone()))
-            .expect_err("the same file for both roles must fail");
+        let loaded = ServerIdentity::load(LABEL, &encryption, &signing)
+            .expect("a key of exactly MAX_KEY_BYTES must load");
 
-        assert!(matches!(error, IdentityError::SharedKeyMaterial { path } if path == shared));
+        assert_eq!(loaded.encryption_private_key().len(), MAX_KEY_BYTES);
     }
 
     #[test]
@@ -410,22 +327,10 @@ mod tests {
         let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
         let signing = write_key(&dir, "signing.key", ENCRYPTION_MARKER.as_bytes());
 
-        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
+        let error = ServerIdentity::load(LABEL, &encryption, &signing)
             .expect_err("identical key bytes must fail");
 
         assert!(matches!(error, IdentityError::SharedKeyMaterial { path } if path == encryption));
-    }
-
-    #[test]
-    fn load_reports_read_failures_before_emptiness_checks() {
-        let dir = TempDir::new("read-before-checks");
-        let encryption = write_key(&dir, "encryption.key", &[]);
-        let signing = dir.file("absent-signing.key");
-
-        let error = ServerIdentity::load(&identity(encryption, signing.clone()))
-            .expect_err("a missing signing key must outrank the empty encryption key");
-
-        assert!(matches!(error, IdentityError::ReadSigningKey { path, .. } if path == signing));
     }
 
     #[test]
@@ -434,7 +339,7 @@ mod tests {
         let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
         let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
         let loaded =
-            ServerIdentity::load(&identity(encryption, signing)).expect("a valid pair must load");
+            ServerIdentity::load(LABEL, &encryption, &signing).expect("a valid pair must load");
 
         let debug = format!("{loaded:?}");
 
