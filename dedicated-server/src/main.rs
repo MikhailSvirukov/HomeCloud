@@ -10,8 +10,9 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dedicated_server::config::{ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME};
-use dedicated_server::identity::ServerIdentity;
+use dedicated_server::{
+    startup_summary, ServerConfig, ServerIdentity, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+};
 
 // Error context for a configuration load failure.
 const CONFIG_CONTEXT: &str = "load configuration";
@@ -26,16 +27,13 @@ fn main() -> ExitCode {
         Err(error) => return report_failure(CONFIG_CONTEXT, &path, &error),
     };
 
-    let identity = match ServerIdentity::load(
-        &config.identity.label,
-        &config.identity.encryption_private_key,
-        &config.identity.signing_private_key,
-    ) {
+    let (label, encryption_private_key, signing_private_key) = config.identity_key_material();
+    let identity = match ServerIdentity::load(label, encryption_private_key, signing_private_key) {
         Ok(identity) => identity,
         Err(error) => return report_failure(IDENTITY_CONTEXT, &path, &error),
     };
 
-    print_summary(&config, &identity);
+    println!("{}", startup_summary(&config, &identity));
     ExitCode::SUCCESS
 }
 
@@ -45,21 +43,6 @@ fn config_path() -> PathBuf {
         Ok(value) if !value.is_empty() => PathBuf::from(value),
         _ => PathBuf::from(DEFAULT_CONFIG_FILE_NAME),
     }
-}
-
-/// Print the one-line startup summary.
-fn print_summary(config: &ServerConfig, identity: &ServerIdentity) {
-    println!(
-        "dedicated-server listening on {} label={} nodes={} interval_ms={} timeout_ms={} miss_threshold={} encryption_key_bytes={} signing_key_bytes={}",
-        config.listen,
-        identity.label(),
-        config.cluster.nodes.len(),
-        config.heartbeat.interval().as_millis(),
-        config.heartbeat.timeout().as_millis(),
-        config.heartbeat.miss_threshold,
-        identity.encryption_private_key().len(),
-        identity.signing_private_key().len(),
-    );
 }
 
 /// Print the error context, `path`, and the error chain to stderr.

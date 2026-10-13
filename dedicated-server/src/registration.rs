@@ -12,7 +12,7 @@ use thiserror::Error;
 type Result<T, E = RegistrationError> = core::result::Result<T, E>;
 
 /// Maximum accepted length of a login, in characters.
-pub const MAX_LOGIN_LENGTH: usize = 64;
+pub(crate) const MAX_LOGIN_LENGTH: usize = 64;
 
 /// Punctuation characters allowed in a [`Login`] in addition to ASCII
 /// alphanumerics.
