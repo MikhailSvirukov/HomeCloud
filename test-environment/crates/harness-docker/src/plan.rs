@@ -11,6 +11,9 @@ use std::net::SocketAddr;
 use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
 
 /// Environment contract a plan uses when it renders node containers.
+///
+/// The four keys and two role values must all be distinct: they share one
+/// [`BTreeMap`] key space, so a duplicate would silently drop an entry.
 pub struct ContainerEnv {
     /// Environment key holding the node id.
     pub node_id: String,

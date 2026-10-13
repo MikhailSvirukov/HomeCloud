@@ -4,6 +4,8 @@
 //! build a validated topology, derive a [`ClusterPlan`], and exercise the in-memory
 //! runtime. No Docker daemon or socket is touched.
 
+use std::collections::BTreeMap;
+
 use harness_core::{NodeId, NodeRole};
 use harness_docker::{ClusterPlan, ClusterRuntime, ContainerEnv, FakeClusterRuntime, PlanSettings};
 use harness_test_support::{addr, topology};
@@ -124,6 +126,54 @@ fn container_environment_carries_node_identity_for_dedicated_and_storage() {
     assert_eq!(
         storage.env.get("LISTEN_ADDRESS").map(String::as_str),
         Some(storage_address.as_str())
+    );
+}
+
+#[test]
+fn plan_renders_env_from_caller_supplied_key_names_and_role_values() {
+    let custom = PlanSettings::new(
+        NETWORK,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        ContainerEnv {
+            node_id: "HC_NODE_ID".to_string(),
+            node_label: "HC_LABEL".to_string(),
+            node_role: "HC_ROLE".to_string(),
+            listen_address: "HC_ADDR".to_string(),
+            dedicated_server_role: "control".to_string(),
+            storage_role: "data".to_string(),
+        },
+    );
+    let plan = ClusterPlan::from_topology(&topology(STORAGE_NODES), &custom);
+
+    let dedicated = plan
+        .container(NodeId::new(DEDICATED_ID))
+        .expect("dedicated-server container is present for id 1");
+    assert_eq!(
+        dedicated.env,
+        BTreeMap::from([
+            ("HC_NODE_ID".to_string(), "1".to_string()),
+            ("HC_LABEL".to_string(), "dedicated".to_string()),
+            ("HC_ROLE".to_string(), "control".to_string()),
+            ("HC_ADDR".to_string(), addr(DEDICATED_ID).to_string()),
+        ])
+    );
+    assert!(
+        !dedicated.env.contains_key("NODE_ID"),
+        "the plan must not fall back to the canonical key names"
+    );
+
+    let storage = plan
+        .container(NodeId::new(FIRST_STORAGE_ID))
+        .expect("first storage container is present for id 2");
+    assert_eq!(
+        storage.env,
+        BTreeMap::from([
+            ("HC_NODE_ID".to_string(), "2".to_string()),
+            ("HC_LABEL".to_string(), "storage-1".to_string()),
+            ("HC_ROLE".to_string(), "data".to_string()),
+            ("HC_ADDR".to_string(), addr(FIRST_STORAGE_ID).to_string()),
+        ])
     );
 }
 
