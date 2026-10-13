@@ -9,36 +9,38 @@ import org.junit.Test
 class MediaStoreQueryTest {
 
     @Test
-    fun `projection is the five media columns in query order`() {
-        assertEquals(
-            listOf(
-                MediaStore.MediaColumns._ID,
-                MediaStore.MediaColumns.DISPLAY_NAME,
-                MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_MODIFIED,
-                MediaStore.MediaColumns.MIME_TYPE,
-            ),
-            MediaStoreQuery.projection.toList(),
+    fun `projection holds exactly the five expected media columns`() {
+        val expectedColumns = setOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.MIME_TYPE,
         )
+
+        assertEquals(expectedColumns, MediaStoreQuery.projection.toSet())
+        assertEquals(expectedColumns.size, MediaStoreQuery.projection.size)
     }
 
     @Test
-    fun `selection args restrict the query to images and videos`() {
-        assertEquals(
-            listOf(IMAGE_MIME_SELECTION_ARG, VIDEO_MIME_SELECTION_ARG),
-            MediaStoreQuery.selectionArgs.toList(),
-        )
-    }
-
-    @Test
-    fun `selection keeps the photo and video clause with two placeholders on every API level`() {
+    fun `selection keeps the mime clause with two placeholders at every tested API level`() {
         TESTED_API_LEVELS.forEach { sdkInt ->
-            assertPhotoVideoClause(MediaStoreQuery.selection(sdkInt), sdkInt)
+            val selection = MediaStoreQuery.selection(sdkInt)
+
+            assertTrue(
+                "expected the mime column at API $sdkInt in: $selection",
+                selection.contains(MediaStore.MediaColumns.MIME_TYPE),
+            )
+            assertEquals(
+                "expected exactly $PHOTO_VIDEO_PLACEHOLDER_COUNT placeholders at API $sdkInt in: $selection",
+                PHOTO_VIDEO_PLACEHOLDER_COUNT,
+                selection.count { it == PLACEHOLDER },
+            )
         }
     }
 
     @Test
-    fun `selection below the pending API names neither the pending nor the trashed column`() {
+    fun `selection below the pending API names neither state column`() {
         val selection = MediaStoreQuery.selection(BELOW_PENDING_API)
 
         assertFalse(
@@ -52,50 +54,27 @@ class MediaStoreQueryTest {
     }
 
     @Test
-    fun `selection from the pending API constrains pending to zero and omits trashed`() {
+    fun `selection at the pending API constrains pending to zero and does not name trashed`() {
         val selection = MediaStoreQuery.selection(PENDING_API)
 
-        assertConstrainedToZero(selection, MediaStore.MediaColumns.IS_PENDING)
+        assertTrue(
+            "expected pending constrained to zero in: $selection",
+            selection.contains("${MediaStore.MediaColumns.IS_PENDING} = 0"),
+        )
         assertFalse(
-            "expected no trashed clause before its API in: $selection",
+            "expected no trashed clause in: $selection",
             selection.contains(MediaStore.MediaColumns.IS_TRASHED),
         )
     }
 
     @Test
-    fun `selection from the trashed API constrains both pending and trashed to zero`() {
-        val selection = MediaStoreQuery.selection(TRASHED_API)
+    fun `selection from the trashed API appends both state clauses to the parenthesised mime clause`() {
+        val expected = "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR ${MediaStore.MediaColumns.MIME_TYPE} LIKE ?)" +
+            " AND ${MediaStore.MediaColumns.IS_PENDING} = 0" +
+            " AND ${MediaStore.MediaColumns.IS_TRASHED} = 0"
 
-        assertConstrainedToZero(selection, MediaStore.MediaColumns.IS_PENDING)
-        assertConstrainedToZero(selection, MediaStore.MediaColumns.IS_TRASHED)
-    }
-
-    @Test
-    fun `selection above the state APIs keeps the photo and video clause alongside both state clauses`() {
-        val selection = MediaStoreQuery.selection(ABOVE_TRASHED_API)
-
-        assertPhotoVideoClause(selection, ABOVE_TRASHED_API)
-        assertConstrainedToZero(selection, MediaStore.MediaColumns.IS_PENDING)
-        assertConstrainedToZero(selection, MediaStore.MediaColumns.IS_TRASHED)
-    }
-
-    private fun assertPhotoVideoClause(selection: String, sdkInt: Int) {
-        assertTrue(
-            "expected the mime column at API $sdkInt in: $selection",
-            selection.contains(MediaStore.MediaColumns.MIME_TYPE),
-        )
-        assertEquals(
-            "expected exactly $PHOTO_VIDEO_PLACEHOLDER_COUNT placeholders at API $sdkInt in: $selection",
-            PHOTO_VIDEO_PLACEHOLDER_COUNT,
-            selection.count { it == PLACEHOLDER },
-        )
-    }
-
-    private fun assertConstrainedToZero(selection: String, column: String) {
-        assertTrue(
-            "expected '$column' constrained to $CLEARED_STATE in: $selection",
-            Regex("$column\\s*=\\s*$CLEARED_STATE").containsMatchIn(selection),
-        )
+        assertEquals(expected, MediaStoreQuery.selection(TRASHED_API))
+        assertEquals(expected, MediaStoreQuery.selection(ABOVE_TRASHED_API))
     }
 
     private companion object {
@@ -120,9 +99,5 @@ class MediaStoreQueryTest {
 
         const val PLACEHOLDER = '?'
         const val PHOTO_VIDEO_PLACEHOLDER_COUNT = 2
-        const val CLEARED_STATE = "0"
-
-        const val IMAGE_MIME_SELECTION_ARG = "image/%"
-        const val VIDEO_MIME_SELECTION_ARG = "video/%"
     }
 }

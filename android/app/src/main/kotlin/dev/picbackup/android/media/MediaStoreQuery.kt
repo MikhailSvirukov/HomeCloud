@@ -15,7 +15,7 @@ import android.provider.MediaStore
  */
 object MediaStoreQuery {
 
-    /** Columns read for every candidate row; order matches the index lookups. */
+    /** Columns read for every candidate row. */
     val projection: Array<String> = arrayOf(
         MediaStore.MediaColumns._ID,
         MediaStore.MediaColumns.DISPLAY_NAME,
@@ -45,12 +45,15 @@ object MediaStoreQuery {
         val clauses = buildList {
             add("($mimeColumn LIKE ? OR $mimeColumn LIKE ?)")
             if (sdkInt >= Build.VERSION_CODES.Q) {
-                add("${MediaStore.MediaColumns.IS_PENDING} = 0")
+                add("${MediaStore.MediaColumns.IS_PENDING} = $CLEARED_STATE")
             }
             if (sdkInt >= Build.VERSION_CODES.R) {
-                add("${MediaStore.MediaColumns.IS_TRASHED} = 0")
+                add("${MediaStore.MediaColumns.IS_TRASHED} = $CLEARED_STATE")
             }
         }
         return clauses.joinToString(" AND ")
     }
+
+    /** The value both state columns hold for a row that is published and not trashed. */
+    private const val CLEARED_STATE = "0"
 }
