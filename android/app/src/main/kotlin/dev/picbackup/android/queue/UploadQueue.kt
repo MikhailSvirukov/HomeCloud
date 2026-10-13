@@ -23,6 +23,13 @@ interface UploadQueue {
         dateModifiedEpochSeconds: Long,
     ): UploadQueueEntry
 
+    /**
+     * Replaces the tracked entries with the given persisted snapshot so a queue can continue after a
+     * restart. Each entry keeps its own state and attempt count; a later entry with an already
+     * present upload id replaces the earlier one.
+     */
+    fun restore(entries: List<UploadQueueEntry>)
+
     /** Returns an immutable snapshot of every tracked entry in insertion order. */
     fun entries(): List<UploadQueueEntry>
 
