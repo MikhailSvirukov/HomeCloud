@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use dedicated_server::identity::MAX_KEY_BYTES;
+
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
 /// Environment variable the binary reads the configuration path from.
@@ -150,6 +152,30 @@ fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
     assert!(
         error.contains(&missing.display().to_string()),
         "stderr must name the missing key: {error}"
+    );
+    assert!(
+        error.contains(&config.display().to_string()),
+        "stderr must name the configuration: {error}"
+    );
+}
+
+#[test]
+fn oversized_encryption_key_file_fails_and_names_key_and_config_paths() {
+    let dir = TempDir::new("oversized-encryption");
+    let oversized = vec![0x66_u8; MAX_KEY_BYTES + 1];
+    let encryption = dir.file("encryption.key");
+    let signing = dir.file("signing.key");
+    std::fs::write(&encryption, &oversized).expect("encryption key must be written");
+    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    let config = write_config(&dir, &encryption, &signing);
+
+    let output = run_with_config(&config);
+
+    assert!(!output.status.success(), "the process must exit non-zero");
+    let error = stderr_of(&output);
+    assert!(
+        error.contains(&encryption.display().to_string()),
+        "stderr must name the oversized key: {error}"
     );
     assert!(
         error.contains(&config.display().to_string()),

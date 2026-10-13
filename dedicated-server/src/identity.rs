@@ -12,6 +12,7 @@
 //! never printed.
 
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -104,6 +105,7 @@ pub enum IdentityError {
         /// Path that was read.
         path: PathBuf,
         /// Underlying I/O failure.
+        #[source]
         source: std::io::Error,
     },
     /// Reading the signing key file failed.
@@ -112,6 +114,7 @@ pub enum IdentityError {
         /// Path that was read.
         path: PathBuf,
         /// Underlying I/O failure.
+        #[source]
         source: std::io::Error,
     },
     /// The encryption key file was empty.
@@ -146,9 +149,22 @@ pub enum IdentityError {
     },
 }
 
+/// Read at most [`MAX_KEY_BYTES`] + 1 bytes from `path`.
+///
+/// The read is capped at one byte past the limit: that is enough to detect an
+/// oversized file, so a misconfigured path pointing at a huge file is rejected
+/// without being loaded into memory in full.
+fn read_bounded(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_KEY_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// Read the encryption key file, mapping I/O failures to [`IdentityError`].
 fn read_encryption_key(path: &Path) -> Result<Vec<u8>, IdentityError> {
-    std::fs::read(path).map_err(|source| IdentityError::ReadEncryptionKey {
+    read_bounded(path).map_err(|source| IdentityError::ReadEncryptionKey {
         path: path.to_path_buf(),
         source,
     })
@@ -156,7 +172,7 @@ fn read_encryption_key(path: &Path) -> Result<Vec<u8>, IdentityError> {
 
 /// Read the signing key file, mapping I/O failures to [`IdentityError`].
 fn read_signing_key(path: &Path) -> Result<Vec<u8>, IdentityError> {
-    std::fs::read(path).map_err(|source| IdentityError::ReadSigningKey {
+    read_bounded(path).map_err(|source| IdentityError::ReadSigningKey {
         path: path.to_path_buf(),
         source,
     })
@@ -211,6 +227,7 @@ mod tests {
                 "dedicated-server-identity-{}-{name}",
                 std::process::id()
             ));
+            let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).expect("test directory must be created");
             Self { path }
         }
@@ -333,6 +350,47 @@ mod tests {
             .expect_err("an oversized signing key must fail");
 
         assert!(matches!(error, IdentityError::OversizedSigningKey { path } if path == signing));
+    }
+
+    #[test]
+    fn load_accepts_an_encryption_key_of_exactly_the_max_size() {
+        let dir = TempDir::new("max-size-encryption");
+        let at_limit = vec![0x33_u8; MAX_KEY_BYTES];
+        let encryption = write_key(&dir, "encryption.key", &at_limit);
+        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
+
+        let loaded = ServerIdentity::load(&identity(encryption, signing))
+            .expect("a key of exactly MAX_KEY_BYTES must load");
+
+        assert_eq!(loaded.encryption_private_key().len(), MAX_KEY_BYTES);
+    }
+
+    #[test]
+    fn load_accepts_a_signing_key_of_exactly_the_max_size() {
+        let dir = TempDir::new("max-size-signing");
+        let at_limit = vec![0x44_u8; MAX_KEY_BYTES];
+        let encryption = write_key(&dir, "encryption.key", ENCRYPTION_MARKER.as_bytes());
+        let signing = write_key(&dir, "signing.key", &at_limit);
+
+        let loaded = ServerIdentity::load(&identity(encryption, signing))
+            .expect("a key of exactly MAX_KEY_BYTES must load");
+
+        assert_eq!(loaded.signing_private_key().len(), MAX_KEY_BYTES);
+    }
+
+    #[test]
+    fn load_rejects_a_far_oversized_encryption_key() {
+        let dir = TempDir::new("far-oversized-encryption");
+        let oversized = vec![0x55_u8; 4 * MAX_KEY_BYTES];
+        let encryption = write_key(&dir, "encryption.key", &oversized);
+        let signing = write_key(&dir, "signing.key", SIGNING_MARKER.as_bytes());
+
+        let error = ServerIdentity::load(&identity(encryption.clone(), signing))
+            .expect_err("a far oversized encryption key must fail");
+
+        assert!(
+            matches!(error, IdentityError::OversizedEncryptionKey { path } if path == encryption)
+        );
     }
 
     #[test]
