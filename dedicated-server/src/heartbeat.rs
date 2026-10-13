@@ -51,7 +51,7 @@ struct NodeState {
     in_flight_deadline: Option<Instant>,
 }
 
-/// Errors produced while recording heartbeat results.
+/// Errors produced by heartbeat tracking.
 #[derive(Debug, Error)]
 pub enum HeartbeatError {
     /// The requested label is not part of the cluster.
