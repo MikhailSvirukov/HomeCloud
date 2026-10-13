@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/harness-core",
+    "crates/harness-docker",
     "crates/harness-scenario",
 ]
 
@@ -15,4 +16,5 @@ publish = false
 
 [workspace.dependencies]
 harness-core = { path = "crates/harness-core" }
+harness-docker = { path = "crates/harness-docker" }
 thiserror = "2"

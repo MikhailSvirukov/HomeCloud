@@ -10,6 +10,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-docker"
+version = "0.1.0"
+dependencies = [
+ "harness-core",
+]
+
+[[package]]
 name = "harness-scenario"
 version = "0.1.0"
 dependencies = [
