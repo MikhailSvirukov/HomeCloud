@@ -8,9 +8,10 @@ addresses, labels, and public keys here, then send files straight to storage.
 
 ## Current status
 
-Only configuration loading and validation are implemented: the binary loads,
-validates, and exits. Networking, registration, topology responses, and
-heartbeats are not implemented yet.
+Configuration loading and validation are implemented, and the dedicated server
+tracks internal heartbeat state for the fixed cluster. The binary still only
+loads, validates, and exits: network I/O, registration, topology responses, and
+actually sending heartbeats over the wire are not implemented yet.
 
 ## Build, test, and run
 
@@ -67,6 +68,24 @@ address = "10.0.0.12:7100"
 encryption_public_key = "storage-2-encryption-public-key"
 signing_public_key = "storage-2-signing-public-key"
 ```
+
+## Heartbeat tracking
+
+`src/heartbeat.rs` holds the scheduling and consecutive-miss bookkeeping for the
+dedicated server's own heartbeat exchanges with the fixed cluster. It is a pure
+state machine: callers drive it with explicit `Instant` values, and it uses no
+timers, no I/O, and no async work.
+
+- Each node's next attempt is scheduled one `heartbeat.interval_ms` after a
+  response or a missed attempt; an in-flight attempt that is not answered within
+  `heartbeat.timeout_ms` counts as a miss.
+- A node is marked internally unavailable after `heartbeat.miss_threshold`
+  consecutive misses; a response clears the counter and marks it healthy again.
+- Per `docs/specification-v1.md`, this availability state stays internal to the
+  dedicated server and is never propagated to clients or storage nodes.
+
+The tracker only produces send/timeout actions; delivering heartbeats over the
+network is not implemented yet.
 
 ## Not in v1
 

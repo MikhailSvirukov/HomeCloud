@@ -4,3 +4,4 @@
 //! networking, registration and heartbeat runtime behavior are added later.
 
 pub mod config;
+pub mod heartbeat;
