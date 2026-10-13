@@ -5,21 +5,9 @@
 //! runtime. No Docker daemon or socket is touched.
 
 use harness_core::{NodeId, NodeRole};
-use harness_docker::{ClusterPlan, ClusterRuntime, FakeClusterRuntime, PlanSettings};
+use harness_docker::{ClusterPlan, ClusterRuntime, ContainerEnv, FakeClusterRuntime, PlanSettings};
 use harness_test_support::{addr, topology};
 
-/// Environment key carrying the node's numeric identifier.
-const ENV_NODE_ID: &str = "NODE_ID";
-/// Environment key carrying the node's unique label.
-const ENV_NODE_LABEL: &str = "NODE_LABEL";
-/// Environment key carrying the node's role.
-const ENV_NODE_ROLE: &str = "NODE_ROLE";
-/// Environment key carrying the node's listen address.
-const ENV_LISTEN_ADDRESS: &str = "LISTEN_ADDRESS";
-/// Environment value used for the dedicated-server role.
-const ROLE_DEDICATED_SERVER: &str = "dedicated-server";
-/// Environment value used for the storage role.
-const ROLE_STORAGE: &str = "storage";
 /// Network name configured for the isolated test cluster.
 const NETWORK: &str = "harness-net";
 /// Image configured for the dedicated-server container.
@@ -35,7 +23,19 @@ const STORAGE_NODES: u16 = 3;
 
 /// Builds the plan settings used across these tests.
 fn settings() -> PlanSettings {
-    PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE)
+    PlanSettings::new(
+        NETWORK,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        ContainerEnv {
+            node_id: "NODE_ID".to_string(),
+            node_label: "NODE_LABEL".to_string(),
+            node_role: "NODE_ROLE".to_string(),
+            listen_address: "LISTEN_ADDRESS".to_string(),
+            dedicated_server_role: "dedicated-server".to_string(),
+            storage_role: "storage".to_string(),
+        },
+    )
 }
 
 /// Derives a plan for one dedicated server and `storage` storage nodes.
@@ -93,39 +93,36 @@ fn container_environment_carries_node_identity_for_dedicated_and_storage() {
     let dedicated = plan
         .container(NodeId::new(DEDICATED_ID))
         .expect("dedicated-server container is present for id 1");
+    assert_eq!(dedicated.env.get("NODE_ID").map(String::as_str), Some("1"));
     assert_eq!(
-        dedicated.env.get(ENV_NODE_ID).map(String::as_str),
-        Some("1")
-    );
-    assert_eq!(
-        dedicated.env.get(ENV_NODE_LABEL).map(String::as_str),
+        dedicated.env.get("NODE_LABEL").map(String::as_str),
         Some("dedicated")
     );
     assert_eq!(
-        dedicated.env.get(ENV_NODE_ROLE).map(String::as_str),
-        Some(ROLE_DEDICATED_SERVER)
+        dedicated.env.get("NODE_ROLE").map(String::as_str),
+        Some("dedicated-server")
     );
     let dedicated_address = addr(DEDICATED_ID).to_string();
     assert_eq!(
-        dedicated.env.get(ENV_LISTEN_ADDRESS).map(String::as_str),
+        dedicated.env.get("LISTEN_ADDRESS").map(String::as_str),
         Some(dedicated_address.as_str())
     );
 
     let storage = plan
         .container(NodeId::new(FIRST_STORAGE_ID))
         .expect("first storage container is present for id 2");
-    assert_eq!(storage.env.get(ENV_NODE_ID).map(String::as_str), Some("2"));
+    assert_eq!(storage.env.get("NODE_ID").map(String::as_str), Some("2"));
     assert_eq!(
-        storage.env.get(ENV_NODE_LABEL).map(String::as_str),
+        storage.env.get("NODE_LABEL").map(String::as_str),
         Some("storage-1")
     );
     assert_eq!(
-        storage.env.get(ENV_NODE_ROLE).map(String::as_str),
-        Some(ROLE_STORAGE)
+        storage.env.get("NODE_ROLE").map(String::as_str),
+        Some("storage")
     );
     let storage_address = addr(FIRST_STORAGE_ID).to_string();
     assert_eq!(
-        storage.env.get(ENV_LISTEN_ADDRESS).map(String::as_str),
+        storage.env.get("LISTEN_ADDRESS").map(String::as_str),
         Some(storage_address.as_str())
     );
 }

@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use harness_core::NodeId;
 use harness_docker::{
-    ClusterPlan, ContainerPlan, PlanSettings, container_name, container_remove, container_run,
-    container_stop, network_create,
+    ClusterPlan, ContainerEnv, ContainerPlan, PlanSettings, container_name, container_remove,
+    container_run, container_stop, network_create,
 };
 use harness_test_support::topology;
 
@@ -54,7 +54,19 @@ const STORAGE_NODES: u16 = 3;
 
 /// Derives the plan settings used across these tests.
 fn settings() -> PlanSettings {
-    PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE)
+    PlanSettings::new(
+        NETWORK_NAME,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        ContainerEnv {
+            node_id: "NODE_ID".to_string(),
+            node_label: "NODE_LABEL".to_string(),
+            node_role: "NODE_ROLE".to_string(),
+            listen_address: "LISTEN_ADDRESS".to_string(),
+            dedicated_server_role: "dedicated-server".to_string(),
+            storage_role: "storage".to_string(),
+        },
+    )
 }
 
 /// Derives a plan for the shared test topology.
