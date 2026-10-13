@@ -5,8 +5,9 @@
 //! bounded, size-classed payload buffer pool
 //! ([`buffer_pool`]), the ordered payload chain and pooled chunk stream
 //! ([`payload`]), the validated node identity/configuration model
-//! ([`config`]), and the upload metadata model with the idempotent upload
-//! ledger ([`metadata`]). Networking, the Tokio actor runtime, the dedicated
+//! ([`config`]), the upload metadata model with the idempotent upload
+//! ledger ([`metadata`]), and the receive-side frame buffer
+//! ([`frame_buffer`]). Networking, the Tokio actor runtime, the dedicated
 //! `io_uring` disk thread, Raft, and the replication data plane arrive in later
 //! increments.
 //!
@@ -30,6 +31,7 @@
 pub mod buffer_pool;
 pub mod codec;
 pub mod config;
+pub mod frame_buffer;
 pub mod framing;
 pub mod metadata;
 pub mod payload;
@@ -40,6 +42,7 @@ pub use buffer_pool::{
 };
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
+pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
 };
