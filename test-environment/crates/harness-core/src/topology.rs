@@ -6,21 +6,16 @@ use std::net::SocketAddr;
 
 use crate::error::HarnessError;
 
-const DEDICATED: &str = "dedicated server";
-const STORAGE: &str = "storage";
+type Result<T> = core::result::Result<T, HarnessError>;
 
 /// Stable numeric identifier of a node in the test cluster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NodeId(u16);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId(pub u16);
 
 impl NodeId {
     /// Wraps a raw numeric identifier.
     pub fn new(value: u16) -> Self {
         Self(value)
-    }
-    /// Returns the inner numeric value.
-    pub fn get(self) -> u16 {
-        self.0
     }
 }
 
@@ -31,7 +26,7 @@ impl fmt::Display for NodeId {
 }
 
 /// The part a node plays in the cluster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRole {
     /// Registration/bootstrap and control-plane node.
     DedicatedServer,
@@ -39,8 +34,17 @@ pub enum NodeRole {
     Storage,
 }
 
+impl fmt::Display for NodeRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeRole::DedicatedServer => write!(f, "dedicated server"),
+            NodeRole::Storage => write!(f, "storage"),
+        }
+    }
+}
+
 /// A fully specified node, ready to be placed in a topology.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct NodeSpec {
     /// Numeric identifier, unique within a topology.
     pub id: NodeId,
@@ -73,8 +77,26 @@ impl NodeSpec {
     }
 }
 
+/// Fails when `keys` yields a repeated value.
+fn ensure_unique<K>(
+    keys: impl IntoIterator<Item = K>,
+    duplicate: impl Fn(K) -> HarnessError,
+) -> Result<()>
+where
+    K: Eq + std::hash::Hash,
+{
+    let mut seen = HashSet::new();
+    for key in keys {
+        if seen.contains(&key) {
+            return Err(duplicate(key));
+        }
+        seen.insert(key);
+    }
+    Ok(())
+}
+
 /// A validated v1 cluster: one dedicated server plus storage nodes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ClusterTopology {
     dedicated: NodeSpec,
     storage: Vec<NodeSpec>,
@@ -114,12 +136,7 @@ impl ClusterTopology {
         self.storage.len() / 2 + 1
     }
     /// Validates specs in a fixed order and assembles the topology.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`HarnessError`] on the first violated count, role, or
-    /// uniqueness constraint.
-    fn from_parts(dedicated: Vec<NodeSpec>, storage: Vec<NodeSpec>) -> Result<Self, HarnessError> {
+    fn from_parts(dedicated: Vec<NodeSpec>, storage: Vec<NodeSpec>) -> Result<Self> {
         let dedicated: [NodeSpec; 1] = dedicated.try_into().map_err(|excess: Vec<NodeSpec>| {
             HarnessError::DedicatedServerCount {
                 count: excess.len(),
@@ -128,15 +145,15 @@ impl ClusterTopology {
         let [dedicated] = dedicated;
         if dedicated.role != NodeRole::DedicatedServer {
             return Err(HarnessError::WrongNodeRole {
-                id: dedicated.id.get(),
-                expected: DEDICATED,
+                id: dedicated.id,
+                expected: NodeRole::DedicatedServer,
             });
         }
         for spec in &storage {
             if spec.role != NodeRole::Storage {
                 return Err(HarnessError::WrongNodeRole {
-                    id: spec.id.get(),
-                    expected: STORAGE,
+                    id: spec.id,
+                    expected: NodeRole::Storage,
                 });
             }
         }
@@ -146,34 +163,23 @@ impl ClusterTopology {
             });
         }
         let all: Vec<&NodeSpec> = std::iter::once(&dedicated).chain(storage.iter()).collect();
-        let mut ids = HashSet::new();
-        for spec in &all {
-            if !ids.insert(spec.id) {
-                return Err(HarnessError::DuplicateNodeId { id: spec.id.get() });
+        ensure_unique(all.iter().map(|spec| spec.id), |id| {
+            HarnessError::DuplicateNodeId { id }
+        })?;
+        ensure_unique(all.iter().map(|spec| spec.address), |address| {
+            HarnessError::DuplicateAddress { address }
+        })?;
+        ensure_unique(all.iter().map(|spec| spec.label.as_str()), |label| {
+            HarnessError::DuplicateLabel {
+                label: label.to_owned(),
             }
-        }
-        let mut addresses = HashSet::new();
-        for spec in &all {
-            if !addresses.insert(spec.address) {
-                return Err(HarnessError::DuplicateAddress {
-                    address: spec.address,
-                });
-            }
-        }
-        let mut labels = HashSet::new();
-        for spec in &all {
-            if !labels.insert(spec.label.as_str()) {
-                return Err(HarnessError::DuplicateLabel {
-                    label: spec.label.clone(),
-                });
-            }
-        }
+        })?;
         Ok(Self { dedicated, storage })
     }
 }
 
 /// Accumulates node specs before [`ClusterTopology`] validation.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ClusterTopologyBuilder {
     dedicated: Vec<NodeSpec>,
     storage: Vec<NodeSpec>,
@@ -195,11 +201,7 @@ impl ClusterTopologyBuilder {
         self
     }
     /// Validates and assembles the topology.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`HarnessError`] describing the first violated constraint.
-    pub fn build(self) -> Result<ClusterTopology, HarnessError> {
+    pub fn build(self) -> Result<ClusterTopology> {
         ClusterTopology::from_parts(self.dedicated, self.storage)
     }
 }
@@ -209,7 +211,7 @@ mod tests {
     use super::*;
     use crate::error::HarnessError as E;
 
-    type Build = Result<ClusterTopology, HarnessError>;
+    type Build = Result<ClusterTopology>;
     fn addr(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
     }
@@ -263,7 +265,7 @@ mod tests {
     #[test]
     fn duplicate_node_id_is_rejected() {
         let result = build(specs(&[(2, 7002), (2, 7003), (4, 7004)]));
-        assert!(matches!(result, Err(E::DuplicateNodeId { id: 2 })));
+        assert!(matches!(result, Err(E::DuplicateNodeId { id: NodeId(2) })));
     }
     #[test]
     fn duplicate_address_is_rejected() {
@@ -286,13 +288,19 @@ mod tests {
             Some(sto(1, "dedicated", 7001)),
             specs(&[(2, 7002), (3, 7003), (4, 7004)]),
         );
-        assert!(matches!(result, Err(E::WrongNodeRole { id: 1, .. })));
+        assert!(matches!(
+            result,
+            Err(E::WrongNodeRole { id: NodeId(1), .. })
+        ));
     }
     #[test]
     fn wrong_role_is_rejected_in_storage_slot() {
         let storage = vec![ded(2, "a", 7002), sto(3, "b", 7003), sto(4, "c", 7004)];
         let result = build(storage);
-        assert!(matches!(result, Err(E::WrongNodeRole { id: 2, .. })));
+        assert!(matches!(
+            result,
+            Err(E::WrongNodeRole { id: NodeId(2), .. })
+        ));
     }
     #[test]
     fn quorum_is_strict_majority_of_storage() {
@@ -310,7 +318,7 @@ mod tests {
             t.node(NodeId::new(3)).map(|s| s.label.as_str()),
             Some("s-3")
         );
-        assert_eq!(t.node(NodeId::new(99)), None);
+        assert!(t.node(NodeId::new(99)).is_none());
     }
     #[test]
     fn nodes_iterates_dedicated_server_first() {

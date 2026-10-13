@@ -7,8 +7,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use harness_core::{
-    ClusterTopology, FakeFaultInjector, Fault, FaultInjector, InMemoryNodeControl,
-    NetworkConditions, NodeControl, NodeId, NodeSpec, NodeState, PeerLink,
+    ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
+    LossPercent, NetworkConditions, NodeControl, NodeId, NodeSpec, NodeState, PeerLink,
 };
 use harness_scenario::{
     Action, Scenario, ScenarioReport, ScenarioRunner, link_degradation_recovery,
@@ -58,30 +58,24 @@ impl Cluster {
 
 /// Index of the first `StopNode`/`StartNode` step targeting `node`.
 fn node_transition_index(scenario: &Scenario, node: NodeId, start: bool) -> Option<usize> {
-    scenario
-        .steps()
-        .iter()
-        .position(|step| match step.action() {
-            Action::StopNode(id) => !start && *id == node,
-            Action::StartNode(id) => start && *id == node,
-            Action::ApplyFault(_) | Action::RevertFault(_) | Action::Check(_) => false,
-        })
+    scenario.steps.iter().position(|step| match &step.action {
+        Action::StopNode(id) => !start && *id == node,
+        Action::StartNode(id) => start && *id == node,
+        Action::ApplyFault(_) | Action::RevertFault(_) | Action::Check(_) => false,
+    })
 }
 
 /// Index of the first apply/revert step carrying a link-degradation fault.
 fn link_transition_index(scenario: &Scenario, link: PeerLink, apply: bool) -> Option<usize> {
-    scenario
-        .steps()
-        .iter()
-        .position(|step| match step.action() {
-            Action::ApplyFault(Fault::LinkDegradation { link: l, .. }) => apply && *l == link,
-            Action::RevertFault(Fault::LinkDegradation { link: l, .. }) => !apply && *l == link,
-            Action::ApplyFault(_)
-            | Action::RevertFault(_)
-            | Action::StopNode(_)
-            | Action::StartNode(_)
-            | Action::Check(_) => false,
-        })
+    scenario.steps.iter().position(|step| match &step.action {
+        Action::ApplyFault(Fault::LinkDegradation { link: l, .. }) => apply && *l == link,
+        Action::RevertFault(Fault::LinkDegradation { link: l, .. }) => !apply && *l == link,
+        Action::ApplyFault(_)
+        | Action::RevertFault(_)
+        | Action::StopNode(_)
+        | Action::StartNode(_)
+        | Action::Check(_) => false,
+    })
 }
 
 #[test]
@@ -96,7 +90,7 @@ fn node_shutdown_recovery_scenario_stops_then_restores_the_node() {
         "failed step: {:?}",
         report.failed_step().and_then(|step| step.error())
     );
-    assert_eq!(report.steps().len(), NODE_SHUTDOWN_STEP_COUNT);
+    assert_eq!(report.steps.len(), NODE_SHUTDOWN_STEP_COUNT);
     assert_eq!(cluster.nodes.state(node), Ok(NodeState::Running));
     assert!(cluster.faults.active_faults().is_empty());
 
@@ -114,8 +108,10 @@ fn node_shutdown_recovery_scenario_stops_then_restores_the_node() {
 fn link_degradation_recovery_scenario_heals_the_link() {
     let mut cluster = Cluster::new();
     let link = PeerLink::new(NodeId::new(2), NodeId::new(3));
-    let conditions =
-        NetworkConditions::new(Duration::from_millis(20), 5).expect("valid conditions");
+    let conditions = NetworkConditions::new(
+        Duration::from_millis(20),
+        LossPercent::new(5).expect("valid conditions"),
+    );
     let scenario = link_degradation_recovery(link, conditions);
     let report = cluster.run(&scenario);
 
@@ -124,7 +120,7 @@ fn link_degradation_recovery_scenario_heals_the_link() {
         "failed step: {:?}",
         report.failed_step().and_then(|step| step.error())
     );
-    assert_eq!(report.steps().len(), LINK_DEGRADATION_STEP_COUNT);
+    assert_eq!(report.steps.len(), LINK_DEGRADATION_STEP_COUNT);
     assert!(cluster.faults.active_faults().is_empty());
 
     let apply = link_transition_index(&scenario, link, true)
@@ -148,8 +144,11 @@ fn catalogue_scenario_fails_when_the_target_node_is_unknown() {
         .failed_step()
         .expect("an unknown node must fail the first catalogue step");
     assert!(
-        matches!(failure.error(), Some(error) if error.contains("unknown node id 99")),
-        "unexpected failure message: {:?}",
+        matches!(
+            failure.error(),
+            Some(HarnessError::UnknownNode { id }) if *id == NodeId::new(99)
+        ),
+        "unexpected failure: {:?}",
         failure.error()
     );
 }

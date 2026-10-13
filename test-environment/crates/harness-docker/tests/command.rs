@@ -129,38 +129,35 @@ fn network_create_matches_the_configured_network() {
     let plan = plan();
     let command = network_create(&plan);
 
-    assert_eq!(command.program(), DOCKER);
-    assert_eq!(
-        command.args(),
-        strings(&[NETWORK, CREATE, NETWORK_NAME]).as_slice()
-    );
-    assert_eq!(plan.network().name(), NETWORK_NAME);
+    assert_eq!(command.program, DOCKER);
+    assert_eq!(command.args, strings(&[NETWORK, CREATE, NETWORK_NAME]));
+    assert_eq!(plan.network.name, NETWORK_NAME);
 }
 
 #[test]
 fn container_run_is_consistent_with_each_plan_container() {
     let plan = plan();
 
-    for container in plan.containers() {
+    for container in &plan.containers {
         let run = container_run(&plan, container);
         let expected_name = container_name(&plan, container);
 
-        assert_eq!(run.program(), DOCKER);
-        assert_eq!(value_after(run.args(), NAME), expected_name.as_str());
+        assert_eq!(run.program, DOCKER);
+        assert_eq!(value_after(&run.args, NAME), expected_name.as_str());
         assert_eq!(
-            value_after(run.args(), HOSTNAME),
+            value_after(&run.args, HOSTNAME),
             container.hostname.as_str()
         );
         assert_eq!(
-            value_after(run.args(), HOSTNAME),
-            value_after(run.args(), NETWORK_ALIAS)
+            value_after(&run.args, HOSTNAME),
+            value_after(&run.args, NETWORK_ALIAS)
         );
-        assert_eq!(value_after(run.args(), NETWORK_FLAG), plan.network().name());
+        assert_eq!(value_after(&run.args, NETWORK_FLAG), plan.network.name);
         assert_eq!(
-            value_after(run.args(), NETWORK_ALIAS),
+            value_after(&run.args, NETWORK_ALIAS),
             container.hostname.as_str()
         );
-        assert_eq!(run.args().last(), Some(&container.image));
+        assert_eq!(run.args.last(), Some(&container.image));
     }
 }
 
@@ -172,19 +169,16 @@ fn container_run_passes_every_env_entry() {
         let run = container_run(&plan, container);
         let expected = env_args(&container.env);
         let start = run
-            .args()
+            .args
             .iter()
             .position(|arg| arg == ENV)
             .expect("a container run always renders at least one env flag");
 
         assert_eq!(
-            &run.args()[start..start + expected.len()],
+            &run.args[start..start + expected.len()],
             expected.as_slice()
         );
-        assert_eq!(
-            run.args().get(start + expected.len()),
-            Some(&container.image)
-        );
+        assert_eq!(run.args.get(start + expected.len()), Some(&container.image));
     }
 }
 
@@ -195,10 +189,10 @@ fn stop_and_remove_target_the_container_name() {
     let name = container_name(&plan, container);
 
     let stop = container_stop(&plan, container);
-    assert_eq!(stop.program(), DOCKER);
-    assert_eq!(stop.args(), strings(&[STOP, &name]).as_slice());
+    assert_eq!(stop.program, DOCKER);
+    assert_eq!(stop.args, strings(&[STOP, &name]));
 
     let remove = container_remove(&plan, container);
-    assert_eq!(remove.program(), DOCKER);
-    assert_eq!(remove.args(), strings(&[REMOVE, FORCE, &name]).as_slice());
+    assert_eq!(remove.program, DOCKER);
+    assert_eq!(remove.args, strings(&[REMOVE, FORCE, &name]));
 }

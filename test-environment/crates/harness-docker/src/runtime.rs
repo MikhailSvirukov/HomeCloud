@@ -8,35 +8,22 @@ use harness_core::{HarnessError, NodeId};
 
 use crate::plan::ClusterPlan;
 
+type Result<T> = core::result::Result<T, HarnessError>;
+
 /// Lifecycle operations a Docker-backed runtime must provide.
 pub trait ClusterRuntime {
     /// Starts every container in the plan; idempotent for running nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`HarnessError`] if the underlying runtime fails to start a
-    /// container.
-    fn start(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError>;
+    fn start(&mut self, plan: &ClusterPlan) -> Result<()>;
     /// Stops every container in the plan; idempotent.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`HarnessError`] if the underlying runtime fails to stop a
-    /// container.
-    fn stop(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError>;
+    fn stop(&mut self, plan: &ClusterPlan) -> Result<()>;
     /// Removes every container in the plan; idempotent.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`HarnessError`] if the underlying runtime fails to remove a
-    /// container.
-    fn remove(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError>;
+    fn remove(&mut self, plan: &ClusterPlan) -> Result<()>;
     /// Node ids whose containers are currently running, in start order.
     fn running_containers(&self) -> &[NodeId];
 }
 
 /// In-memory [`ClusterRuntime`] for tests that must not require Docker.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FakeClusterRuntime {
     running: Vec<NodeId>,
 }
@@ -49,19 +36,19 @@ impl FakeClusterRuntime {
 }
 
 impl ClusterRuntime for FakeClusterRuntime {
-    fn start(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError> {
-        for container in plan.containers() {
+    fn start(&mut self, plan: &ClusterPlan) -> Result<()> {
+        for container in &plan.containers {
             if !self.running.contains(&container.node) {
                 self.running.push(container.node);
             }
         }
         Ok(())
     }
-    fn stop(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError> {
+    fn stop(&mut self, plan: &ClusterPlan) -> Result<()> {
         self.running.retain(|node| plan.container(*node).is_none());
         Ok(())
     }
-    fn remove(&mut self, plan: &ClusterPlan) -> Result<(), HarnessError> {
+    fn remove(&mut self, plan: &ClusterPlan) -> Result<()> {
         self.stop(plan)
     }
     fn running_containers(&self) -> &[NodeId] {
@@ -105,7 +92,7 @@ mod tests {
     }
 
     fn plan_order(plan: &ClusterPlan) -> Vec<NodeId> {
-        plan.containers().iter().map(|c| c.node).collect()
+        plan.containers.iter().map(|c| c.node).collect()
     }
 
     #[test]
