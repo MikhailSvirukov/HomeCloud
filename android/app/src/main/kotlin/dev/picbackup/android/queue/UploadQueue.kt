@@ -79,6 +79,20 @@ interface UploadQueue {
     fun markFailed(uploadId: String)
 
     /**
+     * Starts a new retry cycle by moving every entry in [UploadQueueState.FAILED] back to
+     * [UploadQueueState.PENDING] and resetting its [UploadQueueEntry.attemptCount] to zero, so the
+     * entry receives a fresh attempt budget.
+     *
+     * This expresses the spec rule that when nodes report no quorum or all attempts time out, the
+     * work stays queued until the next cycle.
+     *
+     * Entries in any other state are left untouched.
+     *
+     * @return the number of entries that were moved back to [UploadQueueState.PENDING].
+     */
+    fun requeueFailed(): Int
+
+    /**
      * Counts the entries currently in [UploadQueueState.PENDING].
      *
      * @return the number of pending entries.

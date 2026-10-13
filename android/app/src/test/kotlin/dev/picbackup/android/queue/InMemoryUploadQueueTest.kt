@@ -126,6 +126,106 @@ class InMemoryUploadQueueTest {
     }
 
     @Test
+    fun requeueFailedMovesFailedEntryToPendingAndResetsAttempts() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+
+        queue.requeueFailed()
+
+        val entry = queue.entry(UPLOAD_ID_A)
+        assertEquals(UploadQueueState.PENDING, entry.state)
+        assertEquals(0, entry.attemptCount)
+    }
+
+    @Test
+    fun requeueFailedReturnsNumberOfReArmedEntries() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.enqueueUpload(UPLOAD_ID_B)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_B)
+        queue.markFailed(UPLOAD_ID_B)
+
+        val reArmed = queue.requeueFailed()
+
+        assertEquals(RE_ARMED_ENTRY_COUNT, reArmed)
+    }
+
+    @Test
+    fun requeueFailedReturnsZeroWhenNoEntryIsFailed() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.enqueueUpload(UPLOAD_ID_A)
+
+        val reArmed = queue.requeueFailed()
+
+        assertEquals(0, reArmed)
+    }
+
+    @Test
+    fun requeueFailedLeavesPendingInFlightAndCompletedEntriesUnchanged() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.enqueueUpload(UPLOAD_ID_B)
+        queue.markFailed(UPLOAD_ID_B)
+        queue.markInFlight(UPLOAD_ID_B)
+        queue.enqueueUpload(UPLOAD_ID_C)
+        queue.markInFlight(UPLOAD_ID_C)
+        queue.markCompleted(UPLOAD_ID_C)
+
+        queue.requeueFailed()
+
+        val pending = queue.entry(UPLOAD_ID_A)
+        assertEquals(UploadQueueState.PENDING, pending.state)
+        assertEquals(ATTEMPTS_AFTER_ONE_FAILURE, pending.attemptCount)
+
+        val inFlight = queue.entry(UPLOAD_ID_B)
+        assertEquals(UploadQueueState.IN_FLIGHT, inFlight.state)
+        assertEquals(ATTEMPTS_AFTER_ONE_FAILURE, inFlight.attemptCount)
+
+        val completed = queue.entry(UPLOAD_ID_C)
+        assertEquals(UploadQueueState.COMPLETED, completed.state)
+        assertEquals(0, completed.attemptCount)
+    }
+
+    @Test
+    fun requeueFailedMakesEntrySelectableByNextPendingAgain() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        assertNull(queue.nextPending())
+
+        queue.requeueFailed()
+
+        assertEquals(UPLOAD_ID_A, queue.nextPending()?.uploadId)
+    }
+
+    @Test
+    fun requeueFailedRestoresFullAttemptBudget() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+        queue.markFailed(UPLOAD_ID_A)
+
+        queue.requeueFailed()
+        queue.markFailed(UPLOAD_ID_A)
+
+        val afterFirstFailure = queue.entry(UPLOAD_ID_A)
+        assertEquals(ATTEMPTS_AFTER_ONE_FAILURE, afterFirstFailure.attemptCount)
+        assertEquals(UploadQueueState.PENDING, afterFirstFailure.state)
+
+        queue.markFailed(UPLOAD_ID_A)
+
+        val afterSecondFailure = queue.entry(UPLOAD_ID_A)
+        assertEquals(MAX_ATTEMPTS_TWO, afterSecondFailure.attemptCount)
+        assertEquals(UploadQueueState.FAILED, afterSecondFailure.state)
+    }
+
+    @Test
     fun markCompletedSetsCompletedAndReducesPendingCount() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         queue.enqueueUpload(UPLOAD_ID_A)
@@ -209,5 +309,6 @@ class InMemoryUploadQueueTest {
 
         const val ATTEMPTS_AFTER_ONE_FAILURE = 1
         const val PENDING_BEFORE_COMPLETION = 2
+        const val RE_ARMED_ENTRY_COUNT = 2
     }
 }
