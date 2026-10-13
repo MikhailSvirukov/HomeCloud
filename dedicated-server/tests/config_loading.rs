@@ -41,9 +41,9 @@ fn load_missing_file_reports_read_error_with_path() {
 }
 
 #[test]
-fn load_rule_violating_fixture_returns_typed_variant() {
+fn load_rejects_unknown_top_level_key() {
     assert!(matches!(
-        ServerConfig::load(&fixture("invalid/empty_identity_label.toml")),
-        Err(ConfigError::EmptyIdentityLabel)
+        ServerConfig::load(&fixture("invalid/unknown_top_level_key.toml")),
+        Err(ConfigError::Parse { .. })
     ));
 }

@@ -1,0 +1,24 @@
+listen = "10.0.0.1:7000"
+unexpected = "value"
+
+[identity]
+label = "dedicated-1"
+encryption_private_key = "/etc/picbackup/dedicated/encryption.key"
+signing_private_key = "/etc/picbackup/dedicated/signing.key"
+
+[heartbeat]
+interval_ms = 1000
+timeout_ms = 500
+miss_threshold = 3
+
+[[cluster.nodes]]
+label = "storage-1"
+address = "10.0.0.11:7100"
+encryption_public_key = "storage-1-encryption-public-key"
+signing_public_key = "storage-1-signing-public-key"
+
+[[cluster.nodes]]
+label = "storage-2"
+address = "10.0.0.12:7100"
+encryption_public_key = "storage-2-encryption-public-key"
+signing_public_key = "storage-2-signing-public-key"

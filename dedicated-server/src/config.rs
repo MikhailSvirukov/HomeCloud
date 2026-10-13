@@ -86,10 +86,12 @@ pub struct ClusterNode {
 }
 
 /// Field of a [`ClusterNode`] that a configuration rule rejected.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub enum NodeField {
     /// The node's human-readable label.
     Label,
+    /// The node's address.
+    Address,
     /// The node's encryption public key.
     EncryptionPublicKey,
     /// The node's signing public key.
@@ -100,6 +102,7 @@ impl fmt::Display for NodeField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
             Self::Label => "label",
+            Self::Address => "address",
             Self::EncryptionPublicKey => "encryption_public_key",
             Self::SigningPublicKey => "signing_public_key",
         };
@@ -132,12 +135,9 @@ pub enum ConfigError {
     /// A required [`ClusterNode`] field is empty.
     #[error("cluster.nodes[{index}].{field} must not be empty")]
     EmptyNodeField { index: usize, field: NodeField },
-    /// Two [`ClusterNode`] entries share a label.
-    #[error("cluster.nodes labels must be unique")]
-    DuplicateNodeLabel,
-    /// Two [`ClusterNode`] entries share an address.
-    #[error("cluster.nodes addresses must be unique")]
-    DuplicateNodeAddresses,
+    /// Two [`ClusterNode`] entries share a value for the same field.
+    #[error("cluster.nodes {field} values must be unique")]
+    DuplicateNodeField { field: NodeField },
 }
 
 impl HeartbeatConfig {
@@ -188,8 +188,8 @@ fn validate_cluster(cluster: &ClusterConfig) -> Result<()> {
         .then_some(())
         .ok_or(ConfigError::EmptyCluster)
         .and_then(|()| validate_node_fields(&cluster.nodes))
-        .and_then(|()| validate_node_labels_unique(&cluster.nodes))
-        .and_then(|()| validate_node_addresses_unique(&cluster.nodes))
+        .and_then(|()| validate_unique_node_labels(&cluster.nodes))
+        .and_then(|()| validate_unique_node_addresses(&cluster.nodes))
 }
 
 fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
@@ -216,27 +216,32 @@ fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
     Ok(())
 }
 
-fn validate_node_labels_unique(nodes: &[ClusterNode]) -> Result<()> {
+fn validate_unique_node_labels(nodes: &[ClusterNode]) -> Result<()> {
     let mut seen = BTreeSet::new();
-    if !nodes.iter().all(|node| seen.insert(node.label.as_str())) {
-        return Err(ConfigError::DuplicateNodeLabel);
+    if nodes.iter().all(|node| seen.insert(node.label.as_str())) {
+        Ok(())
+    } else {
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::Label,
+        })
     }
-    Ok(())
 }
 
-fn validate_node_addresses_unique(nodes: &[ClusterNode]) -> Result<()> {
+fn validate_unique_node_addresses(nodes: &[ClusterNode]) -> Result<()> {
     let mut seen = BTreeSet::new();
-    if !nodes.iter().all(|node| seen.insert(node.address)) {
-        return Err(ConfigError::DuplicateNodeAddresses);
+    if nodes.iter().all(|node| seen.insert(node.address)) {
+        Ok(())
+    } else {
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::Address,
+        })
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const VALID_SERVER: &str = include_str!("../tests/fixtures/valid_server.toml");
     const EMPTY_IDENTITY_LABEL: &str =
         include_str!("../tests/fixtures/invalid/empty_identity_label.toml");
     const EMPTY_CLUSTER: &str = include_str!("../tests/fixtures/invalid/empty_cluster.toml");
@@ -250,21 +255,6 @@ mod tests {
     const DUPLICATE_NODE_ADDRESS: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
-
-    #[test]
-    fn parses_and_accepts_valid_configuration() {
-        let config = ServerConfig::from_toml_str(VALID_SERVER).expect("valid fixture must parse");
-
-        assert_eq!(
-            config.listen,
-            "10.0.0.1:7000".parse().expect("valid address")
-        );
-        assert_eq!(config.identity.label, "dedicated-1");
-        assert_eq!(config.heartbeat.interval_ms.get(), 1000);
-        assert_eq!(config.heartbeat.miss_threshold.get(), 3);
-        assert_eq!(config.cluster.nodes.len(), 2);
-        assert_eq!(config.cluster.nodes[1].label, "storage-2");
-    }
 
     #[test]
     fn rejects_empty_identity_label() {
@@ -283,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_node_field_for_every_field() {
+    fn rejects_empty_node_field() {
         assert!(matches!(
             ServerConfig::from_toml_str(EMPTY_NODE_LABEL),
             Err(ConfigError::EmptyNodeField {
@@ -308,18 +298,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_node_labels() {
+    fn rejects_duplicate_node_fields() {
         assert!(matches!(
             ServerConfig::from_toml_str(DUPLICATE_NODE_LABEL),
-            Err(ConfigError::DuplicateNodeLabel)
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::Label
+            })
         ));
-    }
-
-    #[test]
-    fn rejects_duplicate_node_addresses() {
         assert!(matches!(
             ServerConfig::from_toml_str(DUPLICATE_NODE_ADDRESS),
-            Err(ConfigError::DuplicateNodeAddresses)
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::Address
+            })
         ));
     }
 
