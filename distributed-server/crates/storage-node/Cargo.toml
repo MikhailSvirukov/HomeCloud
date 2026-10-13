@@ -19,3 +19,7 @@ path = "src/main.rs"
 
 [dependencies]
 thiserror = "2"
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "rt"] }

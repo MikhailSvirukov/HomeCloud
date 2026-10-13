@@ -4,8 +4,10 @@
 //! whole-frame encode/decode over byte slices, a bounded, size-classed payload
 //! buffer pool, the ordered payload chain and pooled chunk stream, the
 //! validated node identity/configuration model, the upload metadata model with
-//! the idempotent upload ledger, the receive-side frame buffer, and the typed
-//! upload outcome codes ([`UploadStatus`] and [`ResponseError`]).
+//! the idempotent upload ledger, the receive-side frame buffer, the typed
+//! upload outcome codes ([`UploadStatus`] and [`ResponseError`]), and the
+//! frame-only connection ([`FrameConnection`]) that reads and writes whole
+//! frames over an async byte stream.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -27,6 +29,7 @@
 mod buffer_pool;
 mod codec;
 mod config;
+mod connection;
 mod frame_buffer;
 mod framing;
 mod metadata;
@@ -39,6 +42,7 @@ pub use buffer_pool::{
 };
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
+pub use connection::{ConnectionError, FrameConnection};
 pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
