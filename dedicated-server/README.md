@@ -8,11 +8,12 @@ addresses, labels, and public keys here, then send files straight to storage.
 
 ## Current status
 
-Configuration loading and validation, internal heartbeat tracking for the fixed
-cluster, and the in-memory account registration model are implemented. The
-binary still only loads, validates, and exits: network I/O, registration
-requests over the wire, cluster replication, topology responses, and actually
-sending heartbeats are not implemented yet.
+Configuration loading and validation, key-identity loading for the server's own
+key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
+account registration model are implemented. The binary loads the configuration
+and the key identity, prints a one-line startup summary, and exits. Network I/O,
+the wire protocol, registration over the network, cluster replication, and
+topology responses are not implemented yet.
 
 ## Build, test, and run
 
@@ -69,6 +70,18 @@ address = "10.0.0.12:7100"
 encryption_public_key = "storage-2-encryption-public-key"
 signing_public_key = "storage-2-signing-public-key"
 ```
+
+## Key identity
+
+`src/identity.rs` loads the server's own key pair for startup. The identity is
+read from the two private-key files named by `identity.encryption_private_key`
+and `identity.signing_private_key`; the bytes stay opaque because key encoding
+and algorithms are still open parameters in `docs/specification-v1.md`. Loading
+fails when either file cannot be read, is empty, is larger than `MAX_KEY_BYTES`
+(64 KiB), or when the same material would serve both the decryption and the
+signing role. The configured `identity.label` is bound to the loaded identity
+and is used as the node's sender label. `ServerIdentity`'s `Debug` output
+deliberately reports only the label and key lengths, never the key bytes.
 
 ## Heartbeat tracking
 

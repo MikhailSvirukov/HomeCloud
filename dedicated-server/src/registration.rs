@@ -26,8 +26,10 @@ const ALLOWED_LOGIN_SYMBOLS: [char; 3] = ['-', '_', '.'];
 /// A validated cluster-unique login.
 ///
 /// A login names the account and, per the v1 specification, the server-side
-/// namespace; it is restricted to a conservative ASCII subset so it is safe to
-/// use as an identifier.
+/// namespace. It is restricted to a conservative ASCII subset for use as a
+/// namespace component; callers that build filesystem paths must treat the
+/// login as an opaque component and never as a path (`.` and `..` are accepted
+/// by the character rule).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Login(String);
 
