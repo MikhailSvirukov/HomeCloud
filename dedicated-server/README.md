@@ -8,10 +8,11 @@ addresses, labels, and public keys here, then send files straight to storage.
 
 ## Current status
 
-Configuration loading and validation are implemented, and the dedicated server
-tracks internal heartbeat state for the fixed cluster. The binary still only
-loads, validates, and exits: network I/O, registration, topology responses, and
-actually sending heartbeats over the wire are not implemented yet.
+Configuration loading and validation, internal heartbeat tracking for the fixed
+cluster, and the in-memory account registration model are implemented. The
+binary still only loads, validates, and exits: network I/O, registration
+requests over the wire, cluster replication, topology responses, and actually
+sending heartbeats are not implemented yet.
 
 ## Build, test, and run
 
@@ -86,6 +87,23 @@ timers, no I/O, and no async work.
 
 The tracker only produces send/timeout actions; delivering heartbeats over the
 network is not implemented yet.
+
+## Account registration
+
+`src/registration.rs` holds the in-memory account model behind client
+registration. It is pure state: no I/O, not async, and no cryptography.
+
+- `Login` is a validated, cluster-unique identifier. It must be non-empty, at
+  most `MAX_LOGIN_LENGTH` (64) characters, and use only the conservative ASCII
+  subset `[A-Za-z0-9._-]`.
+- `RegistrationRequest` carries the login plus two opaque byte strings: the
+  password verifier and the client's encryption public key.
+- `AccountRegistry` stores `AccountRecord`s. Registering an already-taken login
+  is rejected and leaves the registry unchanged. `records()` yields accounts in
+  login order so replication to the cluster is deterministic.
+- The password-hashing scheme and the key encodings are still open parameters
+  in `docs/specification-v1.md`; this module only carries those bytes and
+  implements no crypto.
 
 ## Not in v1
 
