@@ -41,10 +41,11 @@ test-environment/
   `FakeClusterRuntime`, so lifecycle logic is testable without Docker.
 - `harness-scenario`: `Scenario`/`ScenarioBuilder` (ordered `Action`s), the
   `ScenarioCheck` extension point for new recovery assertions, `ScenarioRunner`
-  (per-step `ScenarioReport`, stops at first failure), and a library of reusable
+  (per-step `ScenarioReport`, stops at first failure), a library of reusable
   checks (`checks`: all nodes running, node running/stopped, storage quorum
-  held/lost, fault active, no active faults) so recovery scenarios are composed
-  from shared blocks.
+  held/lost, fault active, no active faults), and a standard scenario catalogue
+  (`catalogue`: node-shutdown and link-degradation recovery) so fault/recovery
+  scenarios are composed from shared blocks.
 
 ## Gates
 

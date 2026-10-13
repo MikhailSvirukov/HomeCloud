@@ -6,9 +6,11 @@
 //! assertions be added without rewriting the runner, as required by the v1
 //! test-environment brief.
 
+pub mod catalogue;
 pub mod checks;
 pub mod scenario;
 
+pub use catalogue::{link_degradation_recovery, node_shutdown_recovery};
 pub use checks::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost,
     StorageQuorumHeld,
