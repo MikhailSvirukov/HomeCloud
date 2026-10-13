@@ -1,0 +1,26 @@
+name: distributed-server
+
+on:
+  push:
+    paths:
+      - "distributed-server/**"
+      - ".github/workflows/distributed-server.yml"
+  pull_request:
+    paths:
+      - "distributed-server/**"
+      - ".github/workflows/distributed-server.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: area gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - name: Run distributed-server area gate
+        working-directory: distributed-server
+        run: ./ci/check.sh
