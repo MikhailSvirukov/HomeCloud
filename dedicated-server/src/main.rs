@@ -26,7 +26,11 @@ fn main() -> ExitCode {
         Err(error) => return report_failure(CONFIG_CONTEXT, &path, &error),
     };
 
-    let identity = match ServerIdentity::load(&config.identity) {
+    let identity = match ServerIdentity::load(
+        &config.identity.label,
+        &config.identity.encryption_private_key,
+        &config.identity.signing_private_key,
+    ) {
         Ok(identity) => identity,
         Err(error) => return report_failure(IDENTITY_CONTEXT, &path, &error),
     };
