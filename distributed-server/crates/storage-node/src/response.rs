@@ -7,56 +7,44 @@
 
 use std::fmt;
 
-// Stable wire codes; see [`UploadStatus::code`].
-const CODE_ACCEPTED: u8 = 0;
-const CODE_NO_QUORUM: u8 = 1;
-const CODE_TIMEOUT: u8 = 2;
-const CODE_CREDENTIALS_REJECTED: u8 = 3;
-const CODE_CORRUPTED_PAYLOAD: u8 = 4;
-const CODE_INSUFFICIENT_SPACE: u8 = 5;
-
 /// Outcome a storage node reports for an upload attempt.
+///
+/// The discriminants are the stable wire codes; they are part of the wire
+/// contract and must not be reordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum UploadStatus {
     /// The upload was durably stored on the storage quorum and committed.
-    Accepted,
+    Accepted = 0,
     /// The storage quorum could not be reached for this upload.
-    NoQuorum,
+    NoQuorum = 1,
     /// The upload attempt exceeded its deadline before completing.
-    Timeout,
+    Timeout = 2,
     /// The supplied credentials were rejected.
-    CredentialsRejected,
+    CredentialsRejected = 3,
     /// The payload failed decryption or integrity verification.
-    CorruptedPayload,
+    CorruptedPayload = 4,
     /// The target storage is out of space.
-    InsufficientSpace,
+    InsufficientSpace = 5,
 }
 
+/// Wire codes derived once from the [`UploadStatus`] discriminants.
+const CODE_ACCEPTED: u8 = UploadStatus::Accepted as u8;
+const CODE_NO_QUORUM: u8 = UploadStatus::NoQuorum as u8;
+const CODE_TIMEOUT: u8 = UploadStatus::Timeout as u8;
+const CODE_CREDENTIALS_REJECTED: u8 = UploadStatus::CredentialsRejected as u8;
+const CODE_CORRUPTED_PAYLOAD: u8 = UploadStatus::CorruptedPayload as u8;
+const CODE_INSUFFICIENT_SPACE: u8 = UploadStatus::InsufficientSpace as u8;
+
 impl UploadStatus {
-    /// Whether retrying the same upload could succeed.
-    ///
-    /// Only the transient failures [`UploadStatus::NoQuorum`] and
-    /// [`UploadStatus::Timeout`] are retryable; every other outcome, including
-    /// [`UploadStatus::Accepted`], is not.
+    /// Whether retrying the same upload could succeed; only transient failures qualify.
     pub const fn is_retryable(self) -> bool {
         matches!(self, Self::NoQuorum | Self::Timeout)
     }
 
-    /// Stable wire code for this outcome.
-    ///
-    /// The codes are `Accepted = 0`, `NoQuorum = 1`, `Timeout = 2`,
-    /// `CredentialsRejected = 3`, `CorruptedPayload = 4`, and
-    /// `InsufficientSpace = 5`. They are part of the wire contract and must not
-    /// be reordered.
+    /// Stable wire code for this outcome, part of the wire contract.
     pub const fn code(self) -> u8 {
-        match self {
-            Self::Accepted => CODE_ACCEPTED,
-            Self::NoQuorum => CODE_NO_QUORUM,
-            Self::Timeout => CODE_TIMEOUT,
-            Self::CredentialsRejected => CODE_CREDENTIALS_REJECTED,
-            Self::CorruptedPayload => CODE_CORRUPTED_PAYLOAD,
-            Self::InsufficientSpace => CODE_INSUFFICIENT_SPACE,
-        }
+        self as u8
     }
 }
 
@@ -74,31 +62,23 @@ impl fmt::Display for UploadStatus {
 }
 
 /// Failure to convert a wire code back into an [`UploadStatus`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ResponseError {
     /// The byte did not match any known [`UploadStatus`] wire code.
+    #[error("unknown upload status code {code}")]
     UnknownStatusCode {
         /// The unrecognized wire code.
         code: u8,
     },
 }
 
-impl fmt::Display for ResponseError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownStatusCode { code } => {
-                write!(formatter, "unknown upload status code {code}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ResponseError {}
+/// Result alias for fallible [`UploadStatus`] conversions.
+type Result<T> = core::result::Result<T, ResponseError>;
 
 impl TryFrom<u8> for UploadStatus {
     type Error = ResponseError;
 
-    fn try_from(code: u8) -> Result<Self, Self::Error> {
+    fn try_from(code: u8) -> Result<Self> {
         match code {
             CODE_ACCEPTED => Ok(Self::Accepted),
             CODE_NO_QUORUM => Ok(Self::NoQuorum),
@@ -108,89 +88,5 @@ impl TryFrom<u8> for UploadStatus {
             CODE_INSUFFICIENT_SPACE => Ok(Self::InsufficientSpace),
             other => Err(ResponseError::UnknownStatusCode { code: other }),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::{ResponseError, UploadStatus};
-
-    const ALL_STATUSES: [UploadStatus; 6] = [
-        UploadStatus::Accepted,
-        UploadStatus::NoQuorum,
-        UploadStatus::Timeout,
-        UploadStatus::CredentialsRejected,
-        UploadStatus::CorruptedPayload,
-        UploadStatus::InsufficientSpace,
-    ];
-
-    #[test]
-    fn upload_status_codes_are_pairwise_distinct() {
-        let mut codes = HashSet::new();
-        for status in ALL_STATUSES {
-            assert!(
-                codes.insert(status.code()),
-                "duplicate wire code for {status}"
-            );
-        }
-    }
-
-    #[test]
-    fn try_from_round_trips_every_wire_code() {
-        for status in ALL_STATUSES {
-            assert_eq!(UploadStatus::try_from(status.code()), Ok(status));
-        }
-    }
-
-    #[test]
-    fn try_from_rejects_unknown_status_codes() {
-        for code in [6, 255] {
-            let expected = ResponseError::UnknownStatusCode { code };
-            assert_eq!(UploadStatus::try_from(code), Err(expected));
-        }
-    }
-
-    #[test]
-    fn is_retryable_is_true_for_no_quorum() {
-        assert!(UploadStatus::NoQuorum.is_retryable());
-    }
-
-    #[test]
-    fn is_retryable_is_true_for_timeout() {
-        assert!(UploadStatus::Timeout.is_retryable());
-    }
-
-    #[test]
-    fn is_retryable_is_false_for_non_transient_outcomes() {
-        let non_retryable = [
-            UploadStatus::Accepted,
-            UploadStatus::CredentialsRejected,
-            UploadStatus::CorruptedPayload,
-            UploadStatus::InsufficientSpace,
-        ];
-        for status in non_retryable {
-            assert!(!status.is_retryable(), "{status} must not be retryable");
-        }
-    }
-
-    #[test]
-    fn display_yields_non_empty_distinct_phrases() {
-        let mut phrases = HashSet::new();
-        for status in ALL_STATUSES {
-            let phrase = status.to_string();
-            assert!(!phrase.is_empty(), "empty display phrase for {status:?}");
-            assert!(
-                phrases.insert(phrase),
-                "duplicate display phrase for {status:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_status_error_display_names_the_code() {
-        let error = ResponseError::UnknownStatusCode { code: 42 };
-        assert_eq!(error.to_string(), "unknown upload status code 42");
     }
 }

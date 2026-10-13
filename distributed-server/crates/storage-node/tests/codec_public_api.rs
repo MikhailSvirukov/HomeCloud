@@ -9,6 +9,7 @@ use storage_node::{
 fn encode_then_decode_round_trips() {
     let input = b"round trip payload".as_slice();
     let encoded = encode_frame(input).expect("payload is within the limit");
+    assert_eq!(encoded[0], PROTOCOL_VERSION);
 
     match decode_frame(&encoded) {
         Ok(DecodeOutcome::Complete {
@@ -19,7 +20,6 @@ fn encode_then_decode_round_trips() {
             assert_eq!(consumed, FRAME_HEADER_LEN + input.len());
             assert_eq!(payload, input);
             assert_eq!(header.payload_len(), input.len() as u32);
-            assert_eq!(header.version(), PROTOCOL_VERSION);
         }
         other => panic!("expected a complete frame, got {other:?}"),
     }

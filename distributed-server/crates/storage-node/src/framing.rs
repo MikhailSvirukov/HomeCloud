@@ -19,34 +19,22 @@ pub const FRAME_HEADER_LEN: usize = 5;
 /// Largest accepted payload length, 16 MiB.
 pub const MAX_FRAME_PAYLOAD_LEN: u32 = 16 * 1024 * 1024;
 
+type Result<T> = core::result::Result<T, FramingError>;
+
 /// Decoded frame header of the storage-node wire protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameHeader {
-    version: u8,
     payload_len: u32,
 }
 
 impl FrameHeader {
-    /// Creates a header for [`PROTOCOL_VERSION`].
-    ///
-    /// # Errors
-    ///
-    /// [`FramingError::PayloadTooLarge`] when `payload_len` exceeds
-    /// [`MAX_FRAME_PAYLOAD_LEN`].
-    pub fn new(payload_len: u32) -> Result<Self, FramingError> {
+    /// Creates a header carrying `payload_len` bytes for [`PROTOCOL_VERSION`].
+    pub fn new(payload_len: u32) -> Result<Self> {
         if payload_len > MAX_FRAME_PAYLOAD_LEN {
             Err(FramingError::PayloadTooLarge)
         } else {
-            Ok(Self {
-                version: PROTOCOL_VERSION,
-                payload_len,
-            })
+            Ok(Self { payload_len })
         }
-    }
-
-    /// Protocol version carried by this header.
-    pub const fn version(&self) -> u8 {
-        self.version
     }
 
     /// Payload length in bytes.
@@ -57,59 +45,41 @@ impl FrameHeader {
     /// Encodes the header into its fixed-size wire representation.
     pub fn encode(&self) -> [u8; FRAME_HEADER_LEN] {
         let length = self.payload_len.to_be_bytes();
-        [self.version, length[0], length[1], length[2], length[3]]
+        [PROTOCOL_VERSION, length[0], length[1], length[2], length[3]]
     }
 
     /// Decodes a header from the start of `bytes`, ignoring trailing bytes.
-    ///
-    /// # Errors
-    ///
-    /// [`FramingError::TruncatedHeader`] when `bytes` is shorter than
-    /// [`FRAME_HEADER_LEN`], [`FramingError::UnsupportedVersion`] when the
-    /// version byte is not [`PROTOCOL_VERSION`], or
-    /// [`FramingError::PayloadTooLarge`] when the declared length exceeds
-    /// [`MAX_FRAME_PAYLOAD_LEN`].
-    pub fn decode(bytes: &[u8]) -> Result<Self, FramingError> {
-        if bytes.len() < FRAME_HEADER_LEN {
-            Err(FramingError::TruncatedHeader)
-        } else if bytes[0] != PROTOCOL_VERSION {
-            Err(FramingError::UnsupportedVersion)
-        } else {
-            let payload_len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-            if payload_len > MAX_FRAME_PAYLOAD_LEN {
-                Err(FramingError::PayloadTooLarge)
-            } else {
-                Ok(Self {
-                    version: bytes[0],
-                    payload_len,
-                })
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        match bytes {
+            [PROTOCOL_VERSION, rest @ ..] if rest.len() >= FRAME_HEADER_LEN - 1 => {
+                let payload_len = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+                if payload_len > MAX_FRAME_PAYLOAD_LEN {
+                    Err(FramingError::PayloadTooLarge)
+                } else {
+                    Ok(Self { payload_len })
+                }
             }
+            [version, ..] if *version != PROTOCOL_VERSION && bytes.len() >= FRAME_HEADER_LEN => {
+                Err(FramingError::UnsupportedVersion)
+            }
+            _ => Err(FramingError::TruncatedHeader),
         }
     }
 }
 
 /// Failure modes when building or parsing a [`FrameHeader`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FramingError {
     /// Fewer than [`FRAME_HEADER_LEN`] bytes were supplied.
+    #[error("frame header truncated")]
     TruncatedHeader,
     /// The wire version is not [`PROTOCOL_VERSION`].
+    #[error("unsupported protocol version")]
     UnsupportedVersion,
     /// The declared payload length exceeds [`MAX_FRAME_PAYLOAD_LEN`].
+    #[error("payload length exceeds maximum")]
     PayloadTooLarge,
 }
-
-impl std::fmt::Display for FramingError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TruncatedHeader => write!(formatter, "frame header truncated"),
-            Self::UnsupportedVersion => write!(formatter, "unsupported protocol version"),
-            Self::PayloadTooLarge => write!(formatter, "payload length exceeds maximum"),
-        }
-    }
-}
-
-impl std::error::Error for FramingError {}
 
 #[cfg(test)]
 mod tests {
@@ -125,7 +95,6 @@ mod tests {
         assert_eq!(encoded.len(), FRAME_HEADER_LEN);
         assert_eq!(encoded[0], PROTOCOL_VERSION);
         assert_eq!(FrameHeader::decode(&encoded), Ok(header));
-        assert_eq!(header.version(), PROTOCOL_VERSION);
         assert_eq!(header.payload_len(), 1024);
     }
 
