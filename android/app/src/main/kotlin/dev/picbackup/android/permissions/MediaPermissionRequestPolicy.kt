@@ -33,12 +33,9 @@ object MediaPermissionRequestPolicy {
         MediaPermissionPolicy.requiredPermissions(sdkInt).filterNot(granted::contains)
 
     /**
-     * Decides how the caller should continue. [MediaPermissionStatus.GRANTED] means nothing is
-     * missing and no prompt is needed; [MediaPermissionStatus.REQUESTABLE] means the caller may ask
-     * for the pending permissions once; [MediaPermissionStatus.BLOCKED] means a still-missing
-     * required permission was permanently refused, so the caller must send the user to the system
-     * settings instead of asking again. A permanently denied permission that is already granted does
-     * not block.
+     * Reports the permission status for the given API level, granted set and permanently refused
+     * set, in that precedence order: nothing pending wins, then a refused pending permission, then
+     * the ordinary request case.
      */
     fun status(
         sdkInt: Int,

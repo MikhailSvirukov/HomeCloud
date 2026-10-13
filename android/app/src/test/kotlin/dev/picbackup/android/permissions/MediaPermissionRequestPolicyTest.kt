@@ -70,6 +70,18 @@ class MediaPermissionRequestPolicyTest {
     }
 
     @Test
+    fun `status is blocked when a granted permission is mixed with a permanently denied missing one`() {
+        assertEquals(
+            MediaPermissionStatus.BLOCKED,
+            MediaPermissionRequestPolicy.status(
+                MODERN_SDK_INT,
+                setOf(MediaPermissionPolicy.READ_MEDIA_IMAGES),
+                setOf(MediaPermissionPolicy.READ_MEDIA_VIDEO),
+            ),
+        )
+    }
+
+    @Test
     fun `status stays granted when a permanently denied permission is already granted`() {
         assertEquals(
             MediaPermissionStatus.GRANTED,
