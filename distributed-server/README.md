@@ -20,17 +20,19 @@ for clients; it does not relay Raft or blob traffic.
 
 - `Cargo.toml` — workspace manifest.
 - `crates/storage-node/` — the node crate, with `src/framing.rs`,
-  `src/buffer_pool.rs`, `src/payload.rs` (logical payload chain / chunked streaming
+  `src/codec.rs` (whole-frame encode/decode over byte slices), `src/buffer_pool.rs`,
+  `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/config.rs` (node identity/configuration), and
   `src/metadata.rs` (idempotent upload ledger: upload id, content hash, upload
   record).
 - `crates/storage-node/tests/` — public API integration tests
-  (`public_api.rs`, `payload_public_api.rs`, `config_public_api.rs`,
-  `upload_ledger_public_api.rs`).
+  (`public_api.rs`, `codec_public_api.rs`, `payload_public_api.rs`,
+  `config_public_api.rs`, `upload_ledger_public_api.rs`).
 
 ## Status
 
-Early bootstrap increment: framing and buffer-pool building blocks, the logical
+Early bootstrap increment: framing, the frame codec (whole-frame encode/decode
+over byte slices), buffer-pool building blocks, the logical
 payload chain with chunked streaming/backpressure, the node
 identity/configuration model, and the idempotent upload ledger (upload id, content
 hash, upload record). Networking, actors, and `io_uring` are not implemented yet.
