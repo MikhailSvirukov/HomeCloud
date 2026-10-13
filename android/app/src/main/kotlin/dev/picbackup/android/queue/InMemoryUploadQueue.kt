@@ -72,6 +72,19 @@ class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
     override fun pendingCount(): Int =
         entriesById.values.count { it.state == UploadQueueState.PENDING }
 
+    override fun requeueFailed(): Int {
+        val failedUploadIds =
+            entriesById.values
+                .filter { it.state == UploadQueueState.FAILED }
+                .map { it.uploadId }
+        failedUploadIds.forEach { uploadId ->
+            update(uploadId) { entry ->
+                entry.copy(attemptCount = 0, state = UploadQueueState.PENDING)
+            }
+        }
+        return failedUploadIds.size
+    }
+
     private fun update(uploadId: String, transform: (UploadQueueEntry) -> UploadQueueEntry) {
         val existing =
             entriesById[uploadId]
