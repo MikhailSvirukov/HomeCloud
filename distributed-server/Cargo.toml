@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/storage-node"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99"
+license = "MIT"
+description = "PicBackup distributed storage nodes"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
