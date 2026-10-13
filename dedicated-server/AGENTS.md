@@ -25,8 +25,8 @@ protocol/contract changes through `contracts/` and an issue.
 - Prefer `match` over nested conditionals.
 - Keep trait bounds and generics to the minimum.
 - Put long inputs (TOML documents, templates, keys) in files rather than inline.
-- Document intent only: no `# Errors`/`# Returns` sections and no argument-by-argument narration.
-- Write scenario-based tests: one case per scenario, no duplicate scenarios across unit and integration layers, and no tests for constructors, static data, pure conversions, or check ordering.
+- Document intent only; for this area that narrows the root documentation rule: no `# Errors`/`# Returns` sections and no argument-by-argument narration.
+- Write scenario-based tests: one case per scenario, no duplicate scenarios across unit and integration layers, and no tests for constructors or static data with no behavioural logic.
 
 ## Quality gates
 
