@@ -21,7 +21,7 @@ Read the root `/workspace/AGENTS.md` first for repository-wide process rules; it
 - Do not propagate local file deletion to the server. A deleted local file does not delete the server copy.
 - Never log plaintext passwords, filenames, or payload contents. Do not place them in network logs, crash reports, or analytics.
 - Use vetted cryptographic libraries and standard schemes. Never implement custom cryptographic primitives.
-- The planned background mechanism is Android WorkManager, introduced together with the upload/queue work; it is not part of the scaffold.
+- The upload/queue domain model now exists; the background scheduling mechanism (Android WorkManager) is still to be introduced by a later issue.
 
 ## Quality gate
 
