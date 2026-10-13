@@ -16,6 +16,8 @@ x-agent: &agent
     GIT_COMMITTER_NAME: ${GIT_AUTHOR_NAME:-PicBackup Agent}
     GIT_COMMITTER_EMAIL: ${GIT_AUTHOR_EMAIL:-picbackup-agent@users.noreply.github.com}
     DEFAULT_BRANCH: ${DEFAULT_BRANCH:-main}
+    AGENT_MAX_TASKS: ${AGENT_MAX_TASKS:-20}
+    AGENT_MAX_RUN_SECONDS: ${AGENT_MAX_RUN_SECONDS:-3600}
     GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:?Set GITHUB_MCP_TOKEN in .env}
     DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY in .env}
   command:
@@ -25,9 +27,10 @@ x-agent: &agent
     - orchestrator
     - --auto
     - >-
-      Read the current daily review and this workstream's saved state, then execute the
+      Read all review notes for the newest date and this workstream's saved state, then execute the
       orchestrator workflow for this run. Do not wait for interactive input. Complete
-      no more than 20 sequential issue/PR work items, subject to the 60-minute safe
+      no more than ${AGENT_MAX_TASKS:-20} sequential issue/PR work items, subject to
+      the ${AGENT_MAX_RUN_SECONDS:-3600}-second safe
       checkpoint limit in your instructions, then summarize the result and exit.
   volumes:
     - opencode-data-android:/home/opencode/.local/share/opencode

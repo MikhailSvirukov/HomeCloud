@@ -93,17 +93,22 @@ The current shared model is `deepseek/deepseek-flash`. To change it, edit the to
 
 ## Daily review files
 
-Keep a permanent archive with one file per date under `agent-feedback/reviews/`. This directory is host-side, ignored by Git, and mounted read-only at `/workspace/.agent-feedback` in each service. Orchestrators and reviewers read `latest-review.md` and `standing-guidance.md` at the beginning of every invocation.
+Keep a permanent archive under `agent-feedback/reviews/`, with one numbered file per review: `YYYY-MM-DD-NN.md`. This directory is host-side, ignored by Git, and mounted read-only at `/workspace/.agent-feedback` in each service. At startup, orchestrators and reviewers read all files for the newest date in ascending filename order, plus `latest-review.md` and `standing-guidance.md`.
 
 For each new day, from `/home/mikhail/workdir/backup`:
 
 ```sh
 review_date=$(date +%F)
-cp agent-feedback/review-template.md "agent-feedback/reviews/$review_date.md"
-ln -sfn "reviews/$review_date.md" agent-feedback/latest-review.md
+review_number=1
+while [ -e "agent-feedback/reviews/$review_date-$(printf '%02d' "$review_number").md" ]; do
+  review_number=$((review_number + 1))
+done
+review_file=$(printf 'agent-feedback/reviews/%s-%02d.md' "$review_date" "$review_number")
+cp agent-feedback/review-template.md "$review_file"
+ln -sfn "reviews/$(basename "$review_file")" agent-feedback/latest-review.md
 ```
 
-Write that day's feedback in `agent-feedback/reviews/YYYY-MM-DD.md`. Keep the dated file after the cycle; do not overwrite yesterday's file. Put recurring rules in `standing-guidance.md` only after you approve them. Exact line-level comments can still go directly on a GitHub PR.
+Fill each new numbered file with that review's feedback; do not overwrite earlier notes from the same day. Keep all dated files after the cycle. Put recurring rules in `standing-guidance.md` only after you approve them. Exact line-level comments can still go directly on a GitHub PR.
 
 ## Start a daily work cycle
 
@@ -115,7 +120,7 @@ docker compose run --rm android
 
 Other service names are `distributed-server`, `dedicated-server`, and `test-environment`. Each service runs `opencode run --continue --agent orchestrator --auto` using its own named data volume, so it resumes that workstream's latest saved OpenCode session. The run reads the latest daily review, resumes the issue in `.agent-state/project-state.md` if there is one, checks the open GitHub issue queue, and claims a clearly matching issue. It creates a new issue only if no suitable owner-created issue exists. Ambiguous or cross-workstream issues are left for you to classify. OpenCode runs without the TUI; progress and the final summary appear in the `docker compose` output.
 
-The orchestrator can process up to 20 issue/PR work items in the run, one active cycle at a time. After each merge it records state and may pick up the next clear issue while the task and time budgets remain. On a safe checkpoint it records the issue, branch, progress, and blocker in the workstream state file. `docker compose run --rm` removes the run container when OpenCode exits, while the checkout and separate named volumes preserve workstream state and session history. Run a new container after updating the next day's review; the resumed session is instructed to read the latest review. It does not watch GitHub or the review directory in the background.
+Defaults are 20 issue/PR work items and 3600 seconds (60 minutes) per invocation. Set `AGENT_MAX_TASKS` and `AGENT_MAX_RUN_SECONDS` in `.env` to change them; for example, `AGENT_MAX_TASKS=3` and `AGENT_MAX_RUN_SECONDS=1800` caps a run at three items and 30 minutes. The task limit is counted when an issue is claimed. The time limit is a soft model-instructed checkpoint, not a hard Docker timeout. After each merge the orchestrator records state and may pick up the next clear issue while both limits allow. On a safe checkpoint it records the issue, branch, progress, and blocker in the workstream state file. `docker compose run --rm` removes the run container when OpenCode exits, while the checkout and separate named volumes preserve workstream state and session history. Run a new container after updating the review; the resumed session reads all notes for the newest date. It does not watch GitHub or the review directory in the background.
 
 Do not use `docker compose up -d` for this operator workflow: that starts a long-running service container. Avoid `docker compose down -v` unless you intend to delete the OpenCode named volumes, including session history and any credentials added interactively in the future.
 
