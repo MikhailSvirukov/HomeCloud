@@ -218,8 +218,9 @@ mod tests {
         let start = Instant::now();
         let mut tracker = HeartbeatTracker::new(&LABELS, TIMING, start);
         tracker.poll(start);
+        tracker.poll(start + TIMEOUT);
 
-        let actions = tracker.poll(start + TIMEOUT - Duration::from_millis(1));
+        let actions = tracker.poll(start + TIMEOUT + INTERVAL - Duration::from_millis(1));
 
         assert!(actions.is_empty());
     }

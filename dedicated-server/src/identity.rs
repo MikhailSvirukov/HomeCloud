@@ -63,7 +63,7 @@ impl ServerIdentity {
         validate_key(KeyRole::Encryption, encryption_key, &encryption_private_key)?;
         validate_key(KeyRole::Signing, signing_key, &signing_private_key)?;
 
-        if encryption_key == signing_key || encryption_private_key == signing_private_key {
+        if encryption_private_key == signing_private_key {
             return Err(IdentityError::SharedKeyMaterial {
                 path: encryption_key.to_path_buf(),
             });
