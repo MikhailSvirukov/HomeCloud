@@ -79,9 +79,12 @@ and `identity.signing_private_key`; the bytes stay opaque because key encoding
 and algorithms are still open parameters in `docs/specification-v1.md`. Loading
 fails when either file cannot be read, is empty, is larger than `MAX_KEY_BYTES`
 (64 KiB), or when the same material would serve both the decryption and the
-signing role. The configured `identity.label` is bound to the loaded identity
-and is used as the node's sender label. `ServerIdentity`'s `Debug` output
-deliberately reports only the label and key lengths, never the key bytes.
+signing role. At most `MAX_KEY_BYTES + 1` bytes of each file are read, so an
+oversized file is rejected without being loaded in full, and an identity failure
+names both the configuration file and the offending key file. The configured
+`identity.label` is bound to the loaded identity and is used as the node's
+sender label. `ServerIdentity`'s `Debug` output deliberately reports only the
+label and key lengths, never the key bytes.
 
 ## Heartbeat tracking
 

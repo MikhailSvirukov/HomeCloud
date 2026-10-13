@@ -14,8 +14,13 @@ use dedicated_server::config::{ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FIL
 use dedicated_server::identity::ServerIdentity;
 
 /// Error context describing a configuration load failure.
+///
+/// The configuration path is printed as the error context for this failure.
 const CONFIG_CONTEXT: &str = "load configuration";
 /// Error context describing a key identity load failure.
+///
+/// The configuration path is printed as the error context for this failure
+/// too; the offending key file is named inside the error chain.
 const IDENTITY_CONTEXT: &str = "load key identity";
 
 fn main() -> ExitCode {
@@ -62,7 +67,11 @@ fn print_summary(config: &ServerConfig, identity: &ServerIdentity) {
     );
 }
 
-/// Print the failing path, the context and the full error chain to stderr.
+/// Print the given path as the error context and then the full error chain.
+///
+/// The `path` passed in is always printed as the error context; for identity
+/// failures that path is the configuration file, and the offending key file is
+/// named inside the error chain (so both paths appear in the output).
 fn report_error(context: &str, path: &Path, error: &impl Error) {
     eprintln!(
         "dedicated-server: failed to {context} '{}': {error}",
