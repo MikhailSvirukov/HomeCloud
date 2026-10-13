@@ -18,7 +18,14 @@ pub(crate) const MAX_LOGIN_LENGTH: usize = 64;
 /// alphanumerics.
 const ALLOWED_LOGIN_SYMBOLS: [char; 3] = ['-', '_', '.'];
 
+/// Relative path components that name the current or parent namespace and are
+/// therefore never valid account logins.
+const RESERVED_LOGIN_NAMES: [&str; 2] = [".", ".."];
+
 /// A validated cluster-unique login.
+///
+/// A login is a validated namespace component: the relative path components
+/// `.` and `..` are rejected.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Login(String);
 
@@ -33,6 +40,9 @@ impl Login {
         }
         if let Some(character) = value.chars().find(|c| !is_allowed_login_character(*c)) {
             return Err(LoginError::InvalidCharacter(character));
+        }
+        if RESERVED_LOGIN_NAMES.contains(&value) {
+            return Err(LoginError::Reserved);
         }
         Ok(Self(value.to_string()))
     }
@@ -61,6 +71,9 @@ pub enum LoginError {
     /// The login contained a character outside the allowed ASCII subset.
     #[error("login contains a character that is not allowed: {0:?}")]
     InvalidCharacter(char),
+    /// The login was a reserved relative path component.
+    #[error("login must not be '.' or '..'")]
+    Reserved,
 }
 
 /// A registered account: its login, password verifier and client encryption key.
@@ -183,6 +196,12 @@ mod tests {
             Login::parse("user/name"),
             Err(LoginError::InvalidCharacter('/'))
         ));
+    }
+
+    #[test]
+    fn parse_rejects_reserved_namespace_components() {
+        assert!(matches!(Login::parse("."), Err(LoginError::Reserved)));
+        assert!(matches!(Login::parse(".."), Err(LoginError::Reserved)));
     }
 
     #[test]
