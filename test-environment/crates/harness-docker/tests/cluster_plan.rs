@@ -71,7 +71,7 @@ fn plan_with_storage(storage: u16) -> ClusterPlan {
 
 /// The node ids in plan (topology) order.
 fn plan_order(plan: &ClusterPlan) -> Vec<NodeId> {
-    plan.containers().iter().map(|c| c.node).collect()
+    plan.containers.iter().map(|c| c.node).collect()
 }
 
 #[test]
@@ -79,20 +79,20 @@ fn plan_places_dedicated_server_first_and_uses_role_images() {
     let plan = plan_with_storage(3);
 
     assert_eq!(
-        plan.container_count(),
+        plan.containers.len(),
         4,
         "1 dedicated + 3 storage => 4 containers"
     );
 
     let dedicated = plan
-        .containers()
+        .containers
         .first()
         .expect("a plan always has exactly one dedicated-server container first");
     assert_eq!(dedicated.node, NodeId::new(DEDICATED_ID));
     assert_eq!(dedicated.role, NodeRole::DedicatedServer);
     assert_eq!(dedicated.image, SERVER_IMAGE);
 
-    for container in plan.containers().iter().skip(1) {
+    for container in plan.containers.iter().skip(1) {
         assert_eq!(container.role, NodeRole::Storage);
         assert_eq!(container.image, STORAGE_IMAGE);
     }
@@ -102,14 +102,14 @@ fn plan_places_dedicated_server_first_and_uses_role_images() {
 fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
     let plan = plan_with_storage(3);
 
-    for container in plan.containers() {
+    for container in &plan.containers {
         assert_eq!(
             container.hostname, container.label,
             "container hostname must equal its node label"
         );
     }
 
-    assert_eq!(plan.network().name(), NETWORK);
+    assert_eq!(plan.network.name, NETWORK);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
 
         let expected = usize::from(storage) + 1;
         assert_eq!(
-            plan.container_count(),
+            plan.containers.len(),
             expected,
             "1 dedicated + {storage} storage => {expected} containers"
         );

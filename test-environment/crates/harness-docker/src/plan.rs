@@ -24,9 +24,9 @@ const ROLE_DEDICATED_SERVER: &str = "dedicated-server";
 const ROLE_STORAGE: &str = "storage";
 
 /// Name of the isolated Docker network the test cluster runs in.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkPlan {
-    name: String,
+    /// The network name.
+    pub name: String,
 }
 
 impl NetworkPlan {
@@ -34,18 +34,16 @@ impl NetworkPlan {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
     }
-    /// The network name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
 }
 
 /// Images and network used to build a [`ClusterPlan`].
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanSettings {
-    network: String,
-    dedicated_server_image: String,
-    storage_image: String,
+    /// The target network name.
+    pub network: String,
+    /// Image used for the dedicated server container.
+    pub dedicated_server_image: String,
+    /// Image used for storage node containers.
+    pub storage_image: String,
 }
 
 impl PlanSettings {
@@ -61,18 +59,6 @@ impl PlanSettings {
             storage_image: storage_image.into(),
         }
     }
-    /// The target network name.
-    pub fn network(&self) -> &str {
-        &self.network
-    }
-    /// Image used for the dedicated server container.
-    pub fn dedicated_server_image(&self) -> &str {
-        &self.dedicated_server_image
-    }
-    /// Image used for storage node containers.
-    pub fn storage_image(&self) -> &str {
-        &self.storage_image
-    }
     /// Image for a node role.
     fn image_for(&self, role: NodeRole) -> &str {
         match role {
@@ -83,7 +69,7 @@ impl PlanSettings {
 }
 
 /// One node container in the isolated network.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ContainerPlan {
     /// Identifier of the node this container runs.
     pub node: NodeId,
@@ -102,10 +88,11 @@ pub struct ContainerPlan {
 }
 
 /// Complete description of the cluster: one network plus one container per node.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClusterPlan {
-    network: NetworkPlan,
-    containers: Vec<ContainerPlan>,
+    /// The shared isolated network.
+    pub network: NetworkPlan,
+    /// Containers in topology order (dedicated server first, then storage).
+    pub containers: Vec<ContainerPlan>,
 }
 
 impl ClusterPlan {
@@ -124,27 +111,15 @@ impl ClusterPlan {
             })
             .collect();
         Self {
-            network: NetworkPlan::new(settings.network()),
+            network: NetworkPlan::new(settings.network.clone()),
             containers,
         }
-    }
-    /// The shared isolated network.
-    pub fn network(&self) -> &NetworkPlan {
-        &self.network
-    }
-    /// Containers in topology order (dedicated server first, then storage).
-    pub fn containers(&self) -> &[ContainerPlan] {
-        &self.containers
     }
     /// Looks up a container by node id.
     pub fn container(&self, node: NodeId) -> Option<&ContainerPlan> {
         self.containers
             .iter()
             .find(|container| container.node == node)
-    }
-    /// Number of containers.
-    pub fn container_count(&self) -> usize {
-        self.containers.len()
     }
 }
 
@@ -159,7 +134,7 @@ fn role_value(role: NodeRole) -> &'static str {
 /// Builds the four fixed environment entries for a node spec.
 fn env_for(spec: &NodeSpec) -> BTreeMap<String, String> {
     BTreeMap::from([
-        (ENV_NODE_ID.to_string(), spec.id.get().to_string()),
+        (ENV_NODE_ID.to_string(), spec.id.0.to_string()),
         (ENV_NODE_LABEL.to_string(), spec.label.clone()),
         (ENV_NODE_ROLE.to_string(), role_value(spec.role).to_string()),
         (ENV_LISTEN_ADDRESS.to_string(), spec.address.to_string()),
@@ -198,14 +173,13 @@ mod tests {
     #[test]
     fn plan_for_one_dedicated_and_three_storage_has_four_containers() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        assert_eq!(plan.container_count(), 4);
-        assert_eq!(plan.containers().len(), 4);
+        assert_eq!(plan.containers.len(), 4);
     }
 
     #[test]
     fn dedicated_server_is_first_and_uses_dedicated_image() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        let first = plan.containers().first().expect("at least one container");
+        let first = plan.containers.first().expect("at least one container");
         assert_eq!(first.node, NodeId::new(1));
         assert_eq!(first.role, NodeRole::DedicatedServer);
         assert_eq!(first.image, "server:1");
@@ -214,7 +188,7 @@ mod tests {
     #[test]
     fn storage_containers_use_storage_image() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        for container in plan.containers().iter().skip(1) {
+        for container in plan.containers.iter().skip(1) {
             assert_eq!(container.role, NodeRole::Storage);
             assert_eq!(container.image, "storage:1");
         }
@@ -223,7 +197,7 @@ mod tests {
     #[test]
     fn hostname_equals_label() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        for container in plan.containers() {
+        for container in &plan.containers {
             assert_eq!(container.hostname, container.label);
         }
     }
@@ -231,11 +205,11 @@ mod tests {
     #[test]
     fn every_container_sets_all_four_env_keys() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        for container in plan.containers() {
+        for container in &plan.containers {
             assert_eq!(container.env.len(), 4);
             assert_eq!(
                 container.env.get(ENV_NODE_ID),
-                Some(&container.node.get().to_string())
+                Some(&container.node.0.to_string())
             );
             assert_eq!(container.env.get(ENV_NODE_LABEL), Some(&container.label));
             assert_eq!(
@@ -248,12 +222,12 @@ mod tests {
     #[test]
     fn env_role_reflects_node_role() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        let dedicated = plan.containers().first().expect("at least one container");
+        let dedicated = plan.containers.first().expect("at least one container");
         assert_eq!(
             dedicated.env.get(ENV_NODE_ROLE).map(String::as_str),
             Some(ROLE_DEDICATED_SERVER)
         );
-        for container in plan.containers().iter().skip(1) {
+        for container in plan.containers.iter().skip(1) {
             assert_eq!(
                 container.env.get(ENV_NODE_ROLE).map(String::as_str),
                 Some(ROLE_STORAGE)
@@ -273,20 +247,20 @@ mod tests {
     #[test]
     fn container_lookup_misses_unknown_id() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        assert_eq!(plan.container(NodeId::new(99)), None);
+        assert!(plan.container(NodeId::new(99)).is_none());
     }
 
     #[test]
     fn network_name_is_carried_through() {
         let plan = ClusterPlan::from_topology(&topology(3), &settings());
-        assert_eq!(plan.network().name(), "harness-net");
+        assert_eq!(plan.network.name, "harness-net");
     }
 
     #[test]
     fn container_count_tracks_storage_count() {
         for n in [1, 3, 5] {
             let plan = ClusterPlan::from_topology(&topology(n), &settings());
-            assert_eq!(plan.container_count(), usize::from(n) + 1);
+            assert_eq!(plan.containers.len(), usize::from(n) + 1);
         }
     }
 }

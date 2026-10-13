@@ -66,8 +66,8 @@ mod tests {
     use std::net::SocketAddr;
 
     use harness_core::{
-        ClusterTopology, FakeFaultInjector, FaultInjector, InMemoryNodeControl, NodeControl,
-        NodeSpec, NodeState,
+        ClusterTopology, FakeFaultInjector, FaultInjector, HarnessError, InMemoryNodeControl,
+        NodeControl, NodeSpec, NodeState,
     };
 
     use super::*;
@@ -127,7 +127,7 @@ mod tests {
         let scenario = node_shutdown_recovery(NodeId::new(2));
         let report = fixture.run(&scenario);
 
-        assert_eq!(scenario.steps().len(), NODE_SHUTDOWN_STEP_COUNT);
+        assert_eq!(scenario.steps.len(), NODE_SHUTDOWN_STEP_COUNT);
         assert!(
             report.is_success(),
             "failed step: {:?}",
@@ -142,7 +142,7 @@ mod tests {
         let report = fixture.run(&scenario);
 
         let stop_check = report
-            .steps()
+            .steps
             .get(2)
             .expect("scenario has a stopped-node check at index 2");
         assert!(stop_check.is_ok());
@@ -157,7 +157,7 @@ mod tests {
         let scenario = link_degradation_recovery(link, NetworkConditions::healthy());
         let report = fixture.run(&scenario);
 
-        assert_eq!(scenario.steps().len(), LINK_DEGRADATION_STEP_COUNT);
+        assert_eq!(scenario.steps.len(), LINK_DEGRADATION_STEP_COUNT);
         assert!(
             report.is_success(),
             "failed step: {:?}",
@@ -170,7 +170,7 @@ mod tests {
     fn link_degradation_recovery_name_mentions_the_link() {
         let link = PeerLink::new(NodeId::new(2), NodeId::new(3));
         let scenario = link_degradation_recovery(link, NetworkConditions::healthy());
-        assert!(scenario.name().contains(&link.to_string()));
+        assert!(scenario.name.contains(&link.to_string()));
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod tests {
             .expect("unknown node must fail the first step");
         assert!(matches!(
             failure.error(),
-            Some(error) if error.contains("unknown node id 99")
+            Some(HarnessError::UnknownNode { id }) if *id == NodeId::new(99)
         ));
     }
 }

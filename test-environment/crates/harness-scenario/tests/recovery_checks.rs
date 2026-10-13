@@ -8,7 +8,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use harness_core::{
     ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
-    NetworkConditions, NodeId, NodeSpec, PeerLink,
+    LossPercent, NetworkConditions, NodeId, NodeSpec, PeerLink,
 };
 use harness_scenario::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost, Scenario,
@@ -46,8 +46,10 @@ fn shutdown(node: u16) -> Fault {
 fn degradation(a: u16, b: u16) -> Fault {
     Fault::LinkDegradation {
         link: PeerLink::new(NodeId::new(a), NodeId::new(b)),
-        conditions: NetworkConditions::new(Duration::from_millis(25), 10)
-            .expect("10% loss is within the accepted range"),
+        conditions: NetworkConditions::new(
+            Duration::from_millis(25),
+            LossPercent::new(10).expect("10% loss is within the accepted range"),
+        ),
     }
 }
 
@@ -72,7 +74,7 @@ fn node_shutdown_recovery_restores_quorum_and_running_state() {
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(report.is_success());
-    assert_eq!(report.steps().len(), 9);
+    assert_eq!(report.steps.len(), 9);
     assert!(report.failed_step().is_none());
 }
 
@@ -108,20 +110,23 @@ fn quorum_lost_check_fails_on_a_healthy_cluster() {
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(!report.is_success());
-    assert_eq!(report.steps().len(), 3);
+    assert_eq!(report.steps.len(), 3);
     let failed = report
         .failed_step()
         .expect("the quorum check fails while all storage nodes run");
-    assert_eq!(failed.description(), "quorum is lost");
-    let expected = HarnessError::CheckFailed {
-        message: "quorum not lost: 3 of 3 storage nodes running, quorum 2".to_string(),
-    }
-    .to_string();
-    assert_eq!(failed.error(), Some(expected.as_str()));
+    assert_eq!(failed.description, "quorum is lost");
+    assert_eq!(
+        failed.error(),
+        Some(&HarnessError::StorageQuorumNotLost {
+            running: 3,
+            total: 3,
+            quorum: 2,
+        })
+    );
 }
 
 #[test]
-fn runner_stops_at_first_failing_check_with_check_failed_message() {
+fn runner_stops_at_first_failing_check_with_typed_error() {
     let (topology, mut nodes, mut faults) = fixture();
     let scenario = Scenario::builder("failing check stops the run")
         .check(Box::new(FaultActive(shutdown(3))), "a fault is active")
@@ -129,14 +134,13 @@ fn runner_stops_at_first_failing_check_with_check_failed_message() {
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(!report.is_success());
-    assert_eq!(report.steps().len(), 1);
+    assert_eq!(report.steps.len(), 1);
     let failed = report
         .failed_step()
         .expect("the first check fails before the second step runs");
-    assert_eq!(failed.description(), "a fault is active");
-    let expected = HarnessError::CheckFailed {
-        message: "expected active fault: node shutdown 3".to_string(),
-    }
-    .to_string();
-    assert_eq!(failed.error(), Some(expected.as_str()));
+    assert_eq!(failed.description, "a fault is active");
+    assert_eq!(
+        failed.error(),
+        Some(&HarnessError::FaultExpectedActive { fault: shutdown(3) })
+    );
 }

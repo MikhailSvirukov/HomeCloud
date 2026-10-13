@@ -2,12 +2,14 @@
 //!
 //! Each type implements one small, composable assertion over a
 //! [`ScenarioContext`] so scenario tests build recovery expectations from
-//! library blocks instead of rewriting the same logic. Failures are reported as
-//! [`HarnessError::CheckFailed`] with a message that names the observed state.
+//! library blocks instead of rewriting the same logic. Failures carry the
+//! typed [`HarnessError`] variant that matches the assertion.
 
 use harness_core::{Fault, HarnessError, NodeId, NodeState};
 
 use crate::{ScenarioCheck, ScenarioContext};
+
+type Result<T> = core::result::Result<T, HarnessError>;
 
 const NAME_ALL_NODES_RUNNING: &str = "all nodes running";
 const NAME_NODE_RUNNING: &str = "node running";
@@ -17,57 +19,15 @@ const NAME_QUORUM_LOST: &str = "quorum lost";
 const NAME_FAULT_ACTIVE: &str = "fault active";
 const NAME_NO_ACTIVE_FAULTS: &str = "no active faults";
 
-const STATE_RUNNING: &str = "running";
-const STATE_STOPPED: &str = "stopped";
-
-const NODE_PREFIX: &str = "node";
-const EXPECTED: &str = "expected";
-
-const QUORUM_HELD_FAILURE: &str = "storage quorum not held";
-const QUORUM_LOST_FAILURE: &str = "quorum not lost";
-const STORAGE: &str = "storage";
-const QUORUM: &str = "quorum";
-
-const FAULT_ACTIVE_FAILURE: &str = "expected active fault";
-const NO_ACTIVE_FAULTS_FAILURE: &str = "expected no active faults";
-
-/// Lower-case label for a node state, kept stable across failure messages.
-fn state_label(state: NodeState) -> &'static str {
-    match state {
-        NodeState::Running => STATE_RUNNING,
-        NodeState::Stopped => STATE_STOPPED,
-    }
-}
-
-/// Builds the shared "node `<id>` is `<observed>`, expected `<expected>`" failure.
-fn node_state_failure(node: NodeId, observed: NodeState, expected: &str) -> HarnessError {
-    HarnessError::CheckFailed {
-        message: format!(
-            "{NODE_PREFIX} {node} is {}, {EXPECTED} {expected}",
-            state_label(observed)
-        ),
-    }
-}
-
 /// Counts storage nodes currently [`NodeState::Running`].
-fn running_storage_count(context: &ScenarioContext<'_>) -> Result<usize, HarnessError> {
+fn running_storage_count(context: &ScenarioContext<'_>) -> Result<usize> {
     let mut running = 0;
-    for spec in context.topology().storage_nodes() {
-        if context.nodes().state(spec.id)? == NodeState::Running {
+    for spec in context.topology.storage_nodes() {
+        if context.nodes.state(spec.id)? == NodeState::Running {
             running += 1;
         }
     }
     Ok(running)
-}
-
-/// Builds the shared quorum failure naming the running count and quorum size.
-fn quorum_failure(prefix: &str, running: usize, total: usize, quorum: usize) -> HarnessError {
-    HarnessError::CheckFailed {
-        message: format!(
-            "{prefix}: {running} of {total} {STORAGE} nodes {}, {QUORUM} {quorum}",
-            STATE_RUNNING
-        ),
-    }
 }
 
 /// Fails unless every node in the topology is running.
@@ -77,24 +37,25 @@ impl ScenarioCheck for AllNodesRunning {
     fn name(&self) -> &str {
         NAME_ALL_NODES_RUNNING
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let failure: Option<(NodeId, NodeState)> =
-            context.topology().nodes().try_fold(None, |failure, spec| {
-                if failure.is_some() {
-                    Ok(failure)
-                } else {
-                    let state = context.nodes().state(spec.id)?;
-                    Ok(if state == NodeState::Running {
-                        None
-                    } else {
-                        Some((spec.id, state))
-                    })
-                }
-            })?;
-        match failure {
-            Some((node, observed)) => Err(node_state_failure(node, observed, STATE_RUNNING)),
-            None => Ok(()),
-        }
+            context
+                .topology
+                .nodes()
+                .try_fold(None, |failure, spec| match failure {
+                    Some(_) => Ok(failure),
+                    None => {
+                        let observed = context.nodes.state(spec.id)?;
+                        Ok((observed != NodeState::Running).then_some((spec.id, observed)))
+                    }
+                })?;
+        failure.map_or(Ok(()), |(node, observed)| {
+            Err(HarnessError::NodeStateMismatch {
+                node,
+                observed,
+                expected: NodeState::Running,
+            })
+        })
     }
 }
 
@@ -105,13 +66,15 @@ impl ScenarioCheck for NodeRunning {
     fn name(&self) -> &str {
         NAME_NODE_RUNNING
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        let observed = context.nodes().state(self.0)?;
-        if observed == NodeState::Running {
-            Ok(())
-        } else {
-            Err(node_state_failure(self.0, observed, STATE_RUNNING))
-        }
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        let observed = context.nodes.state(self.0)?;
+        (observed == NodeState::Running)
+            .then_some(())
+            .ok_or(HarnessError::NodeStateMismatch {
+                node: self.0,
+                observed,
+                expected: NodeState::Running,
+            })
     }
 }
 
@@ -122,13 +85,15 @@ impl ScenarioCheck for NodeStopped {
     fn name(&self) -> &str {
         NAME_NODE_STOPPED
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        let observed = context.nodes().state(self.0)?;
-        if observed == NodeState::Stopped {
-            Ok(())
-        } else {
-            Err(node_state_failure(self.0, observed, STATE_STOPPED))
-        }
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        let observed = context.nodes.state(self.0)?;
+        (observed == NodeState::Stopped)
+            .then_some(())
+            .ok_or(HarnessError::NodeStateMismatch {
+                node: self.0,
+                observed,
+                expected: NodeState::Stopped,
+            })
     }
 }
 
@@ -139,19 +104,17 @@ impl ScenarioCheck for StorageQuorumHeld {
     fn name(&self) -> &str {
         NAME_STORAGE_QUORUM_HELD
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        let quorum = context.topology().quorum();
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        let quorum = context.topology.quorum();
         let running = running_storage_count(context)?;
-        if running >= quorum {
-            Ok(())
-        } else {
-            Err(quorum_failure(
-                QUORUM_HELD_FAILURE,
+        let total = context.topology.storage_nodes().len();
+        (running >= quorum)
+            .then_some(())
+            .ok_or(HarnessError::StorageQuorumNotHeld {
                 running,
-                context.topology().storage_nodes().len(),
+                total,
                 quorum,
-            ))
-        }
+            })
     }
 }
 
@@ -162,19 +125,17 @@ impl ScenarioCheck for QuorumLost {
     fn name(&self) -> &str {
         NAME_QUORUM_LOST
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        let quorum = context.topology().quorum();
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        let quorum = context.topology.quorum();
         let running = running_storage_count(context)?;
-        if running < quorum {
-            Ok(())
-        } else {
-            Err(quorum_failure(
-                QUORUM_LOST_FAILURE,
+        let total = context.topology.storage_nodes().len();
+        (running < quorum)
+            .then_some(())
+            .ok_or(HarnessError::StorageQuorumNotLost {
                 running,
-                context.topology().storage_nodes().len(),
+                total,
                 quorum,
-            ))
-        }
+            })
     }
 }
 
@@ -185,14 +146,15 @@ impl ScenarioCheck for FaultActive {
     fn name(&self) -> &str {
         NAME_FAULT_ACTIVE
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        if context.faults().active_faults().contains(&self.0) {
-            Ok(())
-        } else {
-            Err(HarnessError::CheckFailed {
-                message: format!("{FAULT_ACTIVE_FAILURE}: {}", self.0),
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        context
+            .faults
+            .active_faults()
+            .contains(&self.0)
+            .then_some(())
+            .ok_or_else(|| HarnessError::FaultExpectedActive {
+                fault: self.0.clone(),
             })
-        }
     }
 }
 
@@ -203,11 +165,11 @@ impl ScenarioCheck for NoActiveFaults {
     fn name(&self) -> &str {
         NAME_NO_ACTIVE_FAULTS
     }
-    fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        match context.faults().active_faults().first() {
+    fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
+        match context.faults.active_faults().first() {
             None => Ok(()),
-            Some(fault) => Err(HarnessError::CheckFailed {
-                message: format!("{NO_ACTIVE_FAULTS_FAILURE}, found {fault}"),
+            Some(fault) => Err(HarnessError::FaultUnexpectedlyActive {
+                fault: fault.clone(),
             }),
         }
     }
@@ -243,8 +205,8 @@ mod tests {
             .fold(builder, |builder, id| {
                 builder.storage_node(NodeSpec::storage(
                     id,
-                    format!("storage-{}", id.get()),
-                    addr(7001 + id.get()),
+                    format!("storage-{}", id.0),
+                    addr(7001 + id.0),
                 ))
             })
             .build()
@@ -302,11 +264,14 @@ mod tests {
         let mut fixture = Fixture::new(3);
         assert_eq!(fixture.nodes.stop(NodeId::new(2)), Ok(()));
         let result = AllNodesRunning.check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "node 2 is stopped, expected running"
-        ));
+            Err(HarnessError::NodeStateMismatch {
+                node: NodeId::new(2),
+                observed: NodeState::Stopped,
+                expected: NodeState::Running,
+            })
+        );
     }
 
     #[test]
@@ -317,7 +282,7 @@ mod tests {
         let context = ScenarioContext::new(&topology, &nodes, &faults);
         assert_eq!(
             AllNodesRunning.check(&context),
-            Err(HarnessError::UnknownNode { id: 2 })
+            Err(HarnessError::UnknownNode { id: NodeId::new(2) })
         );
     }
 
@@ -335,11 +300,14 @@ mod tests {
         let mut fixture = Fixture::new(3);
         assert_eq!(fixture.nodes.stop(NodeId::new(3)), Ok(()));
         let result = NodeRunning(NodeId::new(3)).check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "node 3 is stopped, expected running"
-        ));
+            Err(HarnessError::NodeStateMismatch {
+                node: NodeId::new(3),
+                observed: NodeState::Stopped,
+                expected: NodeState::Running,
+            })
+        );
     }
 
     #[test]
@@ -347,7 +315,9 @@ mod tests {
         let fixture = Fixture::new(3);
         assert_eq!(
             NodeRunning(NodeId::new(99)).check(&fixture.context()),
-            Err(HarnessError::UnknownNode { id: 99 })
+            Err(HarnessError::UnknownNode {
+                id: NodeId::new(99)
+            })
         );
     }
 
@@ -365,11 +335,14 @@ mod tests {
     fn node_stopped_fails_for_a_running_node() {
         let fixture = Fixture::new(3);
         let result = NodeStopped(NodeId::new(4)).check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "node 4 is running, expected stopped"
-        ));
+            Err(HarnessError::NodeStateMismatch {
+                node: NodeId::new(4),
+                observed: NodeState::Running,
+                expected: NodeState::Stopped,
+            })
+        );
     }
 
     #[test]
@@ -385,11 +358,14 @@ mod tests {
         assert_eq!(fixture.nodes.stop(NodeId::new(2)), Ok(()));
         assert_eq!(fixture.nodes.stop(NodeId::new(3)), Ok(()));
         let result = StorageQuorumHeld.check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "storage quorum not held: 1 of 3 storage nodes running, quorum 2"
-        ));
+            Err(HarnessError::StorageQuorumNotHeld {
+                running: 1,
+                total: 3,
+                quorum: 2,
+            })
+        );
     }
 
     #[test]
@@ -405,11 +381,14 @@ mod tests {
         let mut fixture = Fixture::new(3);
         assert_eq!(fixture.nodes.stop(NodeId::new(2)), Ok(()));
         let result = QuorumLost.check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "quorum not lost: 2 of 3 storage nodes running, quorum 2"
-        ));
+            Err(HarnessError::StorageQuorumNotLost {
+                running: 2,
+                total: 3,
+                quorum: 2,
+            })
+        );
     }
 
     #[test]
@@ -424,11 +403,10 @@ mod tests {
     fn fault_active_fails_when_the_fault_is_not_active() {
         let fixture = Fixture::new(3);
         let result = FaultActive(shutdown(2)).check(&fixture.context());
-        assert!(matches!(
+        assert_eq!(
             result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "expected active fault: node shutdown 2"
-        ));
+            Err(HarnessError::FaultExpectedActive { fault: shutdown(2) })
+        );
     }
 
     #[test]
@@ -443,10 +421,6 @@ mod tests {
         let fault = shutdown(2);
         assert_eq!(fixture.faults.apply(&fault), Ok(()));
         let result = NoActiveFaults.check(&fixture.context());
-        assert!(matches!(
-            result,
-            Err(HarnessError::CheckFailed { message })
-                if message == "expected no active faults, found node shutdown 2"
-        ));
+        assert_eq!(result, Err(HarnessError::FaultUnexpectedlyActive { fault }));
     }
 }

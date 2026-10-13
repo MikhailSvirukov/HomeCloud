@@ -25,10 +25,11 @@ const REMOVE: &str = "rm";
 const FORCE: &str = "--force";
 
 /// One external command: a program plus its ordered arguments.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
-    program: String,
-    args: Vec<String>,
+    /// The program to execute.
+    pub program: String,
+    /// The ordered arguments.
+    pub args: Vec<String>,
 }
 
 impl Command {
@@ -39,19 +40,11 @@ impl Command {
             args: args.into_iter().collect(),
         }
     }
-    /// The program to execute.
-    pub fn program(&self) -> &str {
-        &self.program
-    }
-    /// The ordered arguments.
-    pub fn args(&self) -> &[String] {
-        &self.args
-    }
 }
 
 /// Deterministic container name for a node: `<network>-<label>`.
 pub fn container_name(plan: &ClusterPlan, container: &ContainerPlan) -> String {
-    format!("{}-{}", plan.network().name(), container.label)
+    format!("{}-{}", plan.network.name, container.label)
 }
 
 /// `docker network create <network>`.
@@ -61,7 +54,7 @@ pub fn network_create(plan: &ClusterPlan) -> Command {
         [
             NETWORK.to_string(),
             CREATE.to_string(),
-            plan.network().name().to_string(),
+            plan.network.name.clone(),
         ],
     )
 }
@@ -76,7 +69,7 @@ pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
         HOSTNAME.to_string(),
         container.hostname.clone(),
         NETWORK_FLAG.to_string(),
-        plan.network().name().to_string(),
+        plan.network.name.clone(),
         NETWORK_ALIAS.to_string(),
         container.hostname.clone(),
     ];
@@ -145,13 +138,13 @@ mod tests {
     }
 
     fn dedicated(plan: &ClusterPlan) -> &ContainerPlan {
-        plan.containers()
+        plan.containers
             .first()
             .expect("plan has a dedicated container")
     }
 
     fn storage(plan: &ClusterPlan) -> &ContainerPlan {
-        plan.containers()
+        plan.containers
             .get(1)
             .expect("plan has a storage container")
     }
@@ -162,14 +155,14 @@ mod tests {
 
     #[test]
     fn network_create_uses_docker_program() {
-        assert_eq!(network_create(&plan()).program(), DOCKER);
+        assert_eq!(network_create(&plan()).program, DOCKER);
     }
 
     #[test]
     fn network_create_pins_subcommand_and_network_name() {
         assert_eq!(
-            network_create(&plan()).args(),
-            strings(&[NETWORK, CREATE, NETWORK_NAME]).as_slice()
+            network_create(&plan()).args,
+            strings(&[NETWORK, CREATE, NETWORK_NAME])
         );
     }
 
@@ -208,8 +201,8 @@ mod tests {
             NETWORK_ALIAS,
             &container.hostname,
         ]);
-        assert_eq!(run.program(), DOCKER);
-        assert_eq!(&run.args()[..expected.len()], expected.as_slice());
+        assert_eq!(run.program, DOCKER);
+        assert_eq!(&run.args[..expected.len()], expected.as_slice());
     }
 
     #[test]
@@ -217,7 +210,7 @@ mod tests {
         let plan = plan();
         let container = storage(&plan);
         let run = container_run(&plan, container);
-        assert_eq!(run.args().last(), Some(&container.image));
+        assert_eq!(run.args.last(), Some(&container.image));
     }
 
     #[test]
@@ -231,12 +224,12 @@ mod tests {
             .flat_map(|(key, value)| [ENV.to_string(), format!("{key}={value}")])
             .collect();
         let start = run
-            .args()
+            .args
             .iter()
             .position(|arg| arg == ENV)
             .expect("run args contain an env flag");
         assert_eq!(
-            &run.args()[start..start + expected.len()],
+            &run.args[start..start + expected.len()],
             expected.as_slice()
         );
     }
@@ -247,10 +240,10 @@ mod tests {
         let dedicated_run = container_run(&plan, dedicated(&plan));
         let storage_run = container_run(&plan, storage(&plan));
         assert_eq!(
-            dedicated_run.args().last(),
+            dedicated_run.args.last(),
             Some(&DEDICATED_IMAGE.to_string())
         );
-        assert_eq!(storage_run.args().last(), Some(&STORAGE_IMAGE.to_string()));
+        assert_eq!(storage_run.args.last(), Some(&STORAGE_IMAGE.to_string()));
     }
 
     #[test]
@@ -258,8 +251,8 @@ mod tests {
         let plan = plan();
         let container = storage(&plan);
         assert_eq!(
-            container_stop(&plan, container).args(),
-            strings(&[STOP, &container_name(&plan, container)]).as_slice()
+            container_stop(&plan, container).args,
+            strings(&[STOP, &container_name(&plan, container)])
         );
     }
 
@@ -268,8 +261,8 @@ mod tests {
         let plan = plan();
         let container = dedicated(&plan);
         assert_eq!(
-            container_remove(&plan, container).args(),
-            strings(&[REMOVE, FORCE, &container_name(&plan, container)]).as_slice()
+            container_remove(&plan, container).args,
+            strings(&[REMOVE, FORCE, &container_name(&plan, container)])
         );
     }
 }
