@@ -5,7 +5,7 @@
 use storage_node::{
     encode_frame, ConnectionError, FrameConnection, FramingError, MAX_FRAME_PAYLOAD_LEN,
 };
-use tokio::io::{duplex, AsyncWriteExt, DuplexStream};
+use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt, DuplexStream};
 
 /// Encodes `payload`, asserting the test payload is within the frame limit.
 fn frame(payload: &[u8]) -> Vec<u8> {
@@ -84,8 +84,48 @@ async fn frame_split_across_writes_is_reassembled() {
 }
 
 #[tokio::test]
+async fn max_size_frame_followed_by_another_is_read_whole() {
+    let big_payload = vec![0xAB; MAX_FRAME_PAYLOAD_LEN as usize];
+    let big_frame = frame(&big_payload);
+    let small_frame = frame(b"tail");
+
+    let (mut writer, mut reader) = connected_pair(64 * 1024);
+
+    let write_both = async {
+        writer
+            .send_frame(&big_payload)
+            .await
+            .expect("in-memory duplex write cannot fail");
+        writer
+            .send_frame(b"tail")
+            .await
+            .expect("in-memory duplex write cannot fail");
+    };
+
+    let read_both = async {
+        let first = reader
+            .next_frame()
+            .await
+            .expect("in-memory duplex read cannot fail")
+            .expect("the maximum-size frame was written");
+        let second = reader
+            .next_frame()
+            .await
+            .expect("in-memory duplex read cannot fail")
+            .expect("the trailing frame was written");
+        (first, second)
+    };
+
+    let ((), (first, second)) = tokio::join!(write_both, read_both);
+
+    assert_eq!(first, big_frame);
+    assert_eq!(second, small_frame);
+}
+
+#[tokio::test]
 async fn send_frame_rejects_oversized_payload() {
-    let (mut writer, _reader) = connected_pair(64);
+    let (mut peer, writer_half) = duplex(64);
+    let mut writer = FrameConnection::new(writer_half);
     let payload = vec![0u8; MAX_FRAME_PAYLOAD_LEN as usize + 1];
 
     let error = writer
@@ -97,4 +137,12 @@ async fn send_frame_rejects_oversized_payload() {
         error,
         ConnectionError::Framing(FramingError::PayloadTooLarge)
     ));
+
+    drop(writer);
+    let mut byte = [0u8; 1];
+    let read = peer
+        .read(&mut byte)
+        .await
+        .expect("in-memory duplex read cannot fail");
+    assert_eq!(read, 0, "rejected payload must write no bytes");
 }
