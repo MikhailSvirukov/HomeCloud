@@ -1,8 +1,6 @@
 package dev.picbackup.android.backup
 
 import dev.picbackup.android.media.MediaDiscovery
-import dev.picbackup.android.media.MediaItem
-import dev.picbackup.android.media.MediaRowSource
 import dev.picbackup.android.media.RawMediaEntry
 import dev.picbackup.android.queue.FileUploadQueueStore
 import dev.picbackup.android.queue.InMemoryUploadQueue
@@ -10,6 +8,9 @@ import dev.picbackup.android.queue.UploadQueueEntry
 import dev.picbackup.android.queue.UploadQueueState
 import dev.picbackup.android.queue.UploadQueueStore
 import dev.picbackup.android.queue.UploadQueueStoreException
+import dev.picbackup.android.testsupport.FakeMediaRowSource
+import dev.picbackup.android.testsupport.FakeUploadIdFactory
+import dev.picbackup.android.testsupport.MediaTestData
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -68,7 +69,7 @@ class BackupCycleRunnerTest {
             runnerFor(
                 store = store,
                 queue = queue,
-                rows = listOf(candidateRow(id = CANDIDATE_ID, mimeType = IMAGE_MIME_TYPE)),
+                rows = listOf(MediaTestData.row(id = CANDIDATE_ID, mimeType = MediaTestData.IMAGE_MIME_TYPE)),
             )
 
         val result = runner.runOnce()
@@ -137,24 +138,14 @@ class BackupCycleRunnerTest {
         rows: List<RawMediaEntry> = imageAndVideoRows(),
     ): BackupCycleRunner {
         val planner =
-            MediaBackupPlanner(MediaDiscovery(FixedMediaRowSource(rows)), FakeUploadIdFactory(), queue)
+            MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), FakeUploadIdFactory(), queue)
         return BackupCycleRunner(planner = planner, store = store)
     }
 
     private fun imageAndVideoRows(): List<RawMediaEntry> =
         listOf(
-            candidateRow(id = IMAGE_ID, mimeType = IMAGE_MIME_TYPE),
-            candidateRow(id = VIDEO_ID, mimeType = VIDEO_MIME_TYPE),
-        )
-
-    private fun candidateRow(id: Long, mimeType: String): RawMediaEntry =
-        RawMediaEntry(
-            id = id,
-            uri = "$MEDIA_URI_PREFIX$id",
-            displayName = "$DISPLAY_NAME_PREFIX$id",
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = mimeType,
+            MediaTestData.row(id = IMAGE_ID, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+            MediaTestData.row(id = VIDEO_ID, mimeType = MediaTestData.VIDEO_MIME_TYPE),
         )
 
     private fun entry(
@@ -165,26 +156,13 @@ class BackupCycleRunnerTest {
         UploadQueueEntry(
             uploadId = uploadId,
             sourceId = CANDIDATE_ID,
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
+            sizeBytes = MediaTestData.SIZE_BYTES,
+            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
             attemptCount = attemptCount,
             state = state,
         )
 
     private fun storeFile(): File = File(temporaryFolder.newFolder(), STORE_FILE_NAME)
-
-    private class FixedMediaRowSource(private val rows: List<RawMediaEntry>) : MediaRowSource {
-
-        override fun readAll(): List<RawMediaEntry> = rows
-    }
-
-    private class FakeUploadIdFactory(
-        private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
-    ) : UploadIdFactory {
-
-        override fun uploadIdFor(item: MediaItem): String =
-            uploadIdsBySourceId[item.id] ?: "$UPLOAD_ID_PREFIX${item.id}"
-    }
 
     private class FakeUploadQueueStore(
         private val readFailure: UploadQueueStoreException? = null,
@@ -204,14 +182,6 @@ class BackupCycleRunnerTest {
     }
 
     private companion object {
-        const val IMAGE_MIME_TYPE = "image/jpeg"
-        const val VIDEO_MIME_TYPE = "video/mp4"
-
-        const val MEDIA_URI_PREFIX = "content://media/external/file/"
-        const val DISPLAY_NAME_PREFIX = "item-"
-        const val SIZE_BYTES = 1_024L
-        const val DATE_MODIFIED_EPOCH_SECONDS = 1_700_000_000L
-
         const val IMAGE_ID = 1L
         const val VIDEO_ID = 2L
         const val CANDIDATE_ID = 3L
