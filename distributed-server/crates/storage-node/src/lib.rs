@@ -1,16 +1,11 @@
 //! PicBackup distributed storage-node crate.
 //!
-//! Structural increments so far: the frame header for the frame-only TCP actor
-//! ([`framing`]), whole-frame encode/decode over byte slices ([`codec`]), a
-//! bounded, size-classed payload buffer pool
-//! ([`buffer_pool`]), the ordered payload chain and pooled chunk stream
-//! ([`payload`]), the validated node identity/configuration model
-//! ([`config`]), the upload metadata model with the idempotent upload
-//! ledger ([`metadata`]), the receive-side frame buffer ([`frame_buffer`]),
-//! and the typed upload outcome codes ([`UploadStatus`] and
-//! [`ResponseError`]). Networking, the Tokio actor runtime, the dedicated
-//! `io_uring` disk thread, Raft, and the replication data plane arrive in later
-//! increments.
+//! Structural increments so far: the frame header for the frame-only TCP actor,
+//! whole-frame encode/decode over byte slices, a bounded, size-classed payload
+//! buffer pool, the ordered payload chain and pooled chunk stream, the
+//! validated node identity/configuration model, the upload metadata model with
+//! the idempotent upload ledger, the receive-side frame buffer, and the typed
+//! upload outcome codes ([`UploadStatus`] and [`ResponseError`]).
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -29,14 +24,14 @@
 //! - The hot path must not synchronize through a shared `Mutex`/`RwLock`, and
 //!   `tokio-uring` is not used.
 
-pub mod buffer_pool;
-pub mod codec;
-pub mod config;
-pub mod frame_buffer;
-pub mod framing;
-pub mod metadata;
-pub mod payload;
-pub mod response;
+mod buffer_pool;
+mod codec;
+mod config;
+mod frame_buffer;
+mod framing;
+mod metadata;
+mod payload;
+mod response;
 
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,

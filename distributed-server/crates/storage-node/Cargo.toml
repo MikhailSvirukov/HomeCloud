@@ -18,3 +18,4 @@ name = "storage-node"
 path = "src/main.rs"
 
 [dependencies]
+thiserror = "2"
