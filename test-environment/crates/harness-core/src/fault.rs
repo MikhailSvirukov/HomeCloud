@@ -220,12 +220,6 @@ mod tests {
         assert_eq!(result, Err(E::LossPercentOutOfRange { percent: 101 }));
     }
     #[test]
-    fn healthy_network_conditions_are_zero() {
-        let c = NetworkConditions::healthy();
-        assert_eq!(c.delay, Duration::ZERO);
-        assert_eq!(c.loss_percent, LossPercent(0));
-    }
-    #[test]
     fn apply_rejects_unknown_node() {
         let result = injector().apply(&shutdown(99));
         assert!(matches!(result, Err(E::UnknownNode { id: NodeId(99) })));

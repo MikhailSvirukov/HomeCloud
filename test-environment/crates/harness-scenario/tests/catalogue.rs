@@ -4,23 +4,20 @@
 //! `link_degradation_recovery` entries exactly as a downstream harness user
 //! would, running them through [`ScenarioRunner`] over the in-memory fakes.
 
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use harness_core::{
     ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
-    LossPercent, NetworkConditions, NodeControl, NodeId, NodeSpec, NodeState, PeerLink,
+    LossPercent, NetworkConditions, NodeControl, NodeId, NodeState, PeerLink,
 };
 use harness_scenario::{
     Action, Scenario, ScenarioReport, ScenarioRunner, link_degradation_recovery,
     node_shutdown_recovery,
 };
+use harness_test_support::{faults, nodes, topology};
 
 const NODE_SHUTDOWN_STEP_COUNT: usize = 8;
 const LINK_DEGRADATION_STEP_COUNT: usize = 5;
-
-fn addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
 
 /// A 1 dedicated + 3 storage cluster with all nodes running and no faults.
 struct Cluster {
@@ -31,23 +28,13 @@ struct Cluster {
 
 impl Cluster {
     fn new() -> Self {
-        let topology = ClusterTopology::builder()
-            .dedicated_server(NodeSpec::dedicated_server(
-                NodeId::new(1),
-                "dedicated",
-                addr(7001),
-            ))
-            .storage_node(NodeSpec::storage(NodeId::new(2), "storage-2", addr(7002)))
-            .storage_node(NodeSpec::storage(NodeId::new(3), "storage-3", addr(7003)))
-            .storage_node(NodeSpec::storage(NodeId::new(4), "storage-4", addr(7004)))
-            .build()
-            .expect("one dedicated plus three storage nodes is valid");
-        let nodes = InMemoryNodeControl::new(topology.nodes().map(|spec| spec.id));
-        let faults = FakeFaultInjector::new(topology.clone());
+        let cluster = topology(3);
+        let node_control = nodes(&cluster);
+        let fault_injector = faults(&cluster);
         Self {
-            topology,
-            nodes,
-            faults,
+            topology: cluster,
+            nodes: node_control,
+            faults: fault_injector,
         }
     }
 

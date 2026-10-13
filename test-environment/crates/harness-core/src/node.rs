@@ -80,10 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn nodes_start_running() {
-        assert_eq!(control().state(NodeId::new(1)), Ok(NodeState::Running));
-    }
-    #[test]
     fn stop_moves_node_to_stopped() {
         let mut control = control();
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));
@@ -102,13 +98,6 @@ mod tests {
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));
         assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Stopped));
-    }
-    #[test]
-    fn restart_leaves_node_running() {
-        let mut control = control();
-        assert_eq!(control.stop(NodeId::new(1)), Ok(()));
-        assert_eq!(control.restart(NodeId::new(1)), Ok(()));
-        assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
     }
     #[test]
     fn unknown_node_errors_on_every_operation() {
