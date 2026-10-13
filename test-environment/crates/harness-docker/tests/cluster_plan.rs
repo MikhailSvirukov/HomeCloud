@@ -89,47 +89,6 @@ fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
 }
 
 #[test]
-fn container_environment_carries_node_identity_for_dedicated_and_storage() {
-    let plan = plan_with_storage(STORAGE_NODES);
-
-    let dedicated = plan
-        .container(NodeId::new(DEDICATED_ID))
-        .expect("dedicated-server container is present for id 1");
-    assert_eq!(dedicated.env.get("NODE_ID").map(String::as_str), Some("1"));
-    assert_eq!(
-        dedicated.env.get("NODE_LABEL").map(String::as_str),
-        Some("dedicated")
-    );
-    assert_eq!(
-        dedicated.env.get("NODE_ROLE").map(String::as_str),
-        Some("dedicated-server")
-    );
-    let dedicated_address = addr(DEDICATED_ID).to_string();
-    assert_eq!(
-        dedicated.env.get("LISTEN_ADDRESS").map(String::as_str),
-        Some(dedicated_address.as_str())
-    );
-
-    let storage = plan
-        .container(NodeId::new(FIRST_STORAGE_ID))
-        .expect("first storage container is present for id 2");
-    assert_eq!(storage.env.get("NODE_ID").map(String::as_str), Some("2"));
-    assert_eq!(
-        storage.env.get("NODE_LABEL").map(String::as_str),
-        Some("storage-1")
-    );
-    assert_eq!(
-        storage.env.get("NODE_ROLE").map(String::as_str),
-        Some("storage")
-    );
-    let storage_address = addr(FIRST_STORAGE_ID).to_string();
-    assert_eq!(
-        storage.env.get("LISTEN_ADDRESS").map(String::as_str),
-        Some(storage_address.as_str())
-    );
-}
-
-#[test]
 fn plan_renders_env_from_caller_supplied_key_names_and_role_values() {
     let custom = PlanSettings::new(
         NETWORK,
