@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/harness-core",
+    "crates/harness-scenario",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/MikhailSvirukov/HomeCloud"
+publish = false
+
+[workspace.dependencies]
+harness-core = { path = "crates/harness-core" }
+thiserror = "2"
