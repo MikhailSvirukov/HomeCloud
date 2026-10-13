@@ -3,8 +3,9 @@
 //! Structural increments so far: the frame header for the frame-only TCP actor
 //! ([`framing`]), a bounded, size-classed payload buffer pool
 //! ([`buffer_pool`]), the ordered payload chain and pooled chunk stream
-//! ([`payload`]), and the validated node identity/configuration model
-//! ([`config`]). Networking, the Tokio actor runtime, the dedicated
+//! ([`payload`]), the validated node identity/configuration model
+//! ([`config`]), and the upload metadata model with the idempotent upload
+//! ledger ([`metadata`]). Networking, the Tokio actor runtime, the dedicated
 //! `io_uring` disk thread, Raft, and the replication data plane arrive in later
 //! increments.
 //!
@@ -20,12 +21,15 @@
 //!   headers, control frames, and metadata use separate small buffers.
 //! - Buffer shortage yields backpressure or a controlled error, never unbounded
 //!   memory growth.
+//! - Repeated `upload_id` values are idempotent: the [`UploadLedger`] keeps the
+//!   first recorded version and later retries return the stored result.
 //! - The hot path must not synchronize through a shared `Mutex`/`RwLock`, and
 //!   `tokio-uring` is not used.
 
 pub mod buffer_pool;
 pub mod config;
 pub mod framing;
+pub mod metadata;
 pub mod payload;
 
 pub use buffer_pool::{
@@ -35,5 +39,9 @@ pub use buffer_pool::{
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
+};
+pub use metadata::{
+    ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
+    CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
 };
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
