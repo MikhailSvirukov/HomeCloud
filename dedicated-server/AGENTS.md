@@ -14,6 +14,20 @@ Do not read or modify other workstream areas (`android/`,
 `distributed-server/`, `test-environment/`). Coordinate shared
 protocol/contract changes through `contracts/` and an issue.
 
+## Code style
+
+- Keep the public surface minimal: private modules re-exported with `pub use` from the crate root, fields internal unless a consumer needs them.
+- Prefer public fields over accessors that only return a field; keep an accessor only when it guards an invariant.
+- Derive only the traits that are used, and never derive `Debug` for a type that renders a collection or secret material.
+- Model errors with `thiserror`, one variant per rule, and carry a small enum when rules differ only by field or role.
+- Use `NonZero*` types instead of runtime zero checks.
+- Use a module-local result alias, chain with `and_then`, and return early instead of `else if`.
+- Prefer `match` over nested conditionals.
+- Keep trait bounds and generics to the minimum.
+- Put long inputs (TOML documents, templates, keys) in files rather than inline.
+- Document intent only: no `# Errors`/`# Returns` sections and no argument-by-argument narration.
+- Write scenario-based tests: one case per scenario, no duplicate scenarios across unit and integration layers, and no tests for constructors, static data, pure conversions, or check ordering.
+
 ## Quality gates
 
 - `bash scripts/ci.sh` (fmt, clippy with `-D warnings`, tests) must pass before

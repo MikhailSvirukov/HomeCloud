@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use dedicated_server::config::CONFIG_PATH_ENV;
+use dedicated_server::CONFIG_PATH_ENV;
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");

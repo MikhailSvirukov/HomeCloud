@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Maximum key file size accepted, in bytes.
-pub const MAX_KEY_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_KEY_BYTES: usize = 64 * 1024;
 
 /// Result of loading or validating a [`ServerIdentity`].
 type Result<T> = core::result::Result<T, IdentityError>;

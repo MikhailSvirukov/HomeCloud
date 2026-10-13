@@ -30,59 +30,59 @@ type Result<T> = core::result::Result<T, ConfigError>;
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Address the control plane listens on.
-    pub listen: SocketAddr,
+    pub(crate) listen: SocketAddr,
     /// Key identity of this dedicated server.
-    pub identity: IdentityConfig,
+    pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
-    pub heartbeat: HeartbeatConfig,
+    pub(crate) heartbeat: HeartbeatConfig,
     /// Fixed storage cluster bootstrap information.
-    pub cluster: ClusterConfig,
+    pub(crate) cluster: ClusterConfig,
 }
 
 /// Key identity of the dedicated server.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct IdentityConfig {
+pub(crate) struct IdentityConfig {
     /// Human-readable label identifying this node.
-    pub label: String,
+    pub(crate) label: String,
     /// Path to the private key used to decrypt incoming messages.
-    pub encryption_private_key: PathBuf,
+    pub(crate) encryption_private_key: PathBuf,
     /// Path to the private key used to sign outgoing messages.
-    pub signing_private_key: PathBuf,
+    pub(crate) signing_private_key: PathBuf,
 }
 
 /// Heartbeat timing towards the storage cluster.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HeartbeatConfig {
+pub(crate) struct HeartbeatConfig {
     /// Send interval in milliseconds.
-    pub interval_ms: NonZeroU64,
+    pub(crate) interval_ms: NonZeroU64,
     /// Time to wait for a response before a heartbeat counts as missed, in milliseconds.
-    pub timeout_ms: NonZeroU64,
+    pub(crate) timeout_ms: NonZeroU64,
     /// Number of consecutive missed heartbeats tolerated before the node is considered down.
-    pub miss_threshold: NonZeroU32,
+    pub(crate) miss_threshold: NonZeroU32,
 }
 
 /// Fixed storage cluster bootstrap information.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterConfig {
+pub(crate) struct ClusterConfig {
     /// Storage nodes that make up the cluster.
-    pub nodes: Vec<ClusterNode>,
+    pub(crate) nodes: Vec<ClusterNode>,
 }
 
 /// A single storage node known at bootstrap.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterNode {
+pub(crate) struct ClusterNode {
     /// Human-readable label identifying the node.
-    pub label: String,
+    pub(crate) label: String,
     /// Address of the node.
-    pub address: SocketAddr,
+    pub(crate) address: SocketAddr,
     /// Public key used to encrypt messages for the node.
-    pub encryption_public_key: String,
+    pub(crate) encryption_public_key: String,
     /// Public key used to verify messages signed by the node.
-    pub signing_public_key: String,
+    pub(crate) signing_public_key: String,
 }
 
 /// Field of a [`ClusterNode`] that a configuration rule rejected.
@@ -142,12 +142,12 @@ pub enum ConfigError {
 
 impl HeartbeatConfig {
     /// Heartbeat send interval.
-    pub fn interval(&self) -> Duration {
+    pub(crate) fn interval(&self) -> Duration {
         Duration::from_millis(self.interval_ms.get())
     }
 
     /// Time to wait for a heartbeat response before it counts as missed.
-    pub fn timeout(&self) -> Duration {
+    pub(crate) fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms.get())
     }
 }
@@ -168,6 +168,15 @@ impl ServerConfig {
                 source,
             })
             .and_then(|input| Self::from_toml_str(&input))
+    }
+
+    /// Label and private key paths needed to load this server's identity.
+    pub fn identity_key_material(&self) -> (&str, &Path, &Path) {
+        (
+            &self.identity.label,
+            &self.identity.encryption_private_key,
+            &self.identity.signing_private_key,
+        )
     }
 
     /// Apply every structural validation rule to the parsed configuration.
@@ -242,6 +251,7 @@ fn validate_unique_node_addresses(nodes: &[ClusterNode]) -> Result<()> {
 mod tests {
     use super::*;
 
+    const VALID_SERVER: &str = include_str!("../tests/fixtures/valid_server.toml");
     const EMPTY_IDENTITY_LABEL: &str =
         include_str!("../tests/fixtures/invalid/empty_identity_label.toml");
     const EMPTY_CLUSTER: &str = include_str!("../tests/fixtures/invalid/empty_cluster.toml");
@@ -255,6 +265,23 @@ mod tests {
     const DUPLICATE_NODE_ADDRESS: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
+
+    #[test]
+    fn parses_valid_fixture_with_expected_meaningful_values() {
+        let config = ServerConfig::from_toml_str(VALID_SERVER).expect("valid fixture must parse");
+
+        assert_eq!(
+            config.listen,
+            "10.0.0.1:7000".parse().expect("valid listen address")
+        );
+        assert_eq!(config.identity.label, "dedicated-1");
+        assert_eq!(config.heartbeat.interval().as_millis(), 1000);
+        assert_eq!(config.heartbeat.timeout().as_millis(), 500);
+        assert_eq!(config.heartbeat.miss_threshold.get(), 3);
+        assert_eq!(config.cluster.nodes.len(), 2);
+        assert_eq!(config.cluster.nodes[0].label, "storage-1");
+        assert_eq!(config.cluster.nodes[1].label, "storage-2");
+    }
 
     #[test]
     fn rejects_empty_identity_label() {
