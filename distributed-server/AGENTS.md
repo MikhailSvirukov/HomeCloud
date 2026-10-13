@@ -41,6 +41,8 @@ These follow the daily review notes and apply to every Rust change here.
   `type Result<T> = core::result::Result<T, ErrorKind>;` alias.
 - Prefer guard-style `if ... { return Err(..) }` groups and `match` over `else if` chains
   and nested `if`/`else` (this refines the root guide's general `if`/`else` preference).
+- When a chain of fallible steps only propagates errors with `?`, express it as an
+  `and_then` chain where that reads more clearly.
 - Enums with stable wire values use explicit `#[repr(u8)]` discriminants or
   `From`/`TryFrom` conversions rather than parallel `match` tables.
 - Document behaviour only. Do not add `# Errors`/`# Returns` sections or per-argument
@@ -51,6 +53,8 @@ These follow the daily review notes and apply to every Rust change here.
   in both layers.
 - Pass limits, sizes, keys, and addresses in explicitly; do not hide required inputs
   inside constants.
+- Keep long static data (large certificates, key material, fixtures) in separate files
+  read at runtime; do not embed it in code.
 
 ## Pull requests and issues
 
