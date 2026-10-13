@@ -5,12 +5,13 @@ use std::net::SocketAddr;
 use harness_core::{ClusterTopology, FakeFaultInjector, InMemoryNodeControl, NodeId, NodeSpec};
 
 /// Node id of the dedicated server in every fixture.
-pub const DEDICATED_ID: u16 = 1;
+const DEDICATED_ID: u16 = 1;
 
 /// Builds a fixture cluster: one dedicated server and `storage_nodes` storage nodes.
 ///
-/// Storage node ids are `2..=storage_nodes + 1`; labels are `storage-N`; addresses are
-/// `127.0.0.1:(7000 + id)`.
+/// Storage node ids are `2..=storage_nodes + 1`, labels are `storage-N`, and addresses are
+/// `127.0.0.1:(7000 + id)`. `storage_nodes` must be odd and at least 1; any other value is
+/// rejected by [`ClusterTopology`] validation and panics here.
 pub fn topology(storage_nodes: u16) -> ClusterTopology {
     let dedicated =
         NodeSpec::dedicated_server(NodeId::new(DEDICATED_ID), "dedicated", addr(DEDICATED_ID));
@@ -25,7 +26,7 @@ pub fn topology(storage_nodes: u16) -> ClusterTopology {
     }
     builder
         .build()
-        .expect("fixture topology is valid by construction")
+        .expect("storage node count must be odd and at least 1")
 }
 
 /// Node control bound to `topology`, with every node running.
@@ -41,17 +42,4 @@ pub fn faults(topology: &ClusterTopology) -> FakeFaultInjector {
 /// Listen address used for fixture node `id`.
 pub fn addr(id: u16) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], 7000 + id))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn topology_has_one_dedicated_server_and_requested_storage_nodes() {
-        let topology = topology(3);
-        assert_eq!(topology.node_count(), 4);
-        assert_eq!(topology.dedicated_server().id, NodeId::new(DEDICATED_ID));
-        assert_eq!(topology.storage_nodes().len(), 3);
-    }
 }

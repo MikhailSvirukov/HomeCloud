@@ -19,6 +19,10 @@ const DOCKER: &str = "docker";
 const NETWORK: &str = "network";
 /// `network create` subcommand.
 const CREATE: &str = "create";
+/// `docker run` subcommand.
+const RUN: &str = "run";
+/// Detach flag for `docker run`.
+const DETACH: &str = "--detach";
 /// Container-name flag.
 const NAME: &str = "--name";
 /// Container-hostname flag.
@@ -164,4 +168,13 @@ fn stop_and_remove_target_the_container_name() {
     let remove = container_remove(&plan, container);
     assert_eq!(remove.program, DOCKER);
     assert_eq!(remove.args, strings(&[REMOVE, FORCE, &name]));
+}
+
+#[test]
+fn container_run_leads_with_run_and_detach() {
+    let plan = plan();
+    let run = container_run(&plan, storage(&plan));
+
+    assert_eq!(run.args.first().map(String::as_str), Some(RUN));
+    assert_eq!(run.args.get(1).map(String::as_str), Some(DETACH));
 }

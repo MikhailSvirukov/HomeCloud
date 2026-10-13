@@ -93,6 +93,13 @@ mod tests {
         assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
     }
     #[test]
+    fn restart_returns_stopped_node_to_running() {
+        let mut control = control();
+        assert_eq!(control.stop(NodeId::new(1)), Ok(()));
+        assert_eq!(control.restart(NodeId::new(1)), Ok(()));
+        assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
+    }
+    #[test]
     fn stop_is_idempotent() {
         let mut control = control();
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));

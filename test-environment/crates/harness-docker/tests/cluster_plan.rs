@@ -174,3 +174,10 @@ fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
         }
     }
 }
+
+#[test]
+fn container_lookup_misses_an_unknown_node_id() {
+    let plan = plan_with_storage(STORAGE_NODES);
+
+    assert!(plan.container(NodeId::new(99)).is_none());
+}

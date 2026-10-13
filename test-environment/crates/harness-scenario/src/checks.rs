@@ -274,4 +274,17 @@ mod tests {
             assert_eq!(case().unwrap_err(), expected, "case {index}");
         }
     }
+
+    #[test]
+    fn quorum_lost_passes_when_two_of_three_storage_nodes_stop() {
+        let cluster = topology(3);
+        let mut control = nodes(&cluster);
+        let injector = faults(&cluster);
+        assert_eq!(control.stop(NodeId::new(2)), Ok(()));
+        assert_eq!(control.stop(NodeId::new(3)), Ok(()));
+        assert_eq!(
+            QuorumLost.check(&ScenarioContext::new(&cluster, &control, &injector)),
+            Ok(())
+        );
+    }
 }

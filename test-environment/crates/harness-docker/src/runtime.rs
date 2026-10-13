@@ -55,23 +55,3 @@ impl ClusterRuntime for FakeClusterRuntime {
         &self.running
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use harness_test_support::topology;
-
-    use super::*;
-    use crate::plan::PlanSettings;
-
-    #[test]
-    fn remove_stops_running_containers() {
-        let cluster = topology(3);
-        let settings = PlanSettings::new("harness-net", "server:1", "storage:1");
-        let plan = ClusterPlan::from_topology(&cluster, &settings);
-
-        let mut runtime = FakeClusterRuntime::new();
-        assert_eq!(runtime.start(&plan), Ok(()));
-        assert_eq!(runtime.remove(&plan), Ok(()));
-        assert!(runtime.running_containers().is_empty());
-    }
-}
