@@ -1,8 +1,9 @@
 //! PicBackup distributed storage-node crate.
 //!
-//! First structural increment: the frame header for the frame-only TCP actor
-//! ([`framing`]) and a bounded, size-classed payload buffer pool
-//! ([`buffer_pool`]). Networking, the Tokio actor runtime, the dedicated
+//! Structural increments so far: the frame header for the frame-only TCP actor
+//! ([`framing`]), a bounded, size-classed payload buffer pool
+//! ([`buffer_pool`]), and the validated node identity/configuration model
+//! ([`config`]). Networking, the Tokio actor runtime, the dedicated
 //! `io_uring` disk thread, Raft, and the replication data plane arrive in later
 //! increments.
 //!
@@ -20,12 +21,14 @@
 //!   `tokio-uring` is not used.
 
 pub mod buffer_pool;
+pub mod config;
 pub mod framing;
 
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
     DEFAULT_CLASS_CAPACITIES,
 };
+pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
 };
