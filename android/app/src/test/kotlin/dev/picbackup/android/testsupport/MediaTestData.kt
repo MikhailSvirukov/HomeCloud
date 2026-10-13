@@ -20,11 +20,9 @@ object MediaTestData {
     /** The mime type of an unsupported audio row. */
     const val AUDIO_MIME_TYPE: String = "audio/mpeg"
 
-    /** The prefix every raw media uri is built from. */
-    const val MEDIA_URI_PREFIX: String = "content://media/external/file/"
+    private const val MEDIA_URI_PREFIX: String = "content://media/external/file/"
 
-    /** The prefix every raw display name is built from. */
-    const val DISPLAY_NAME_PREFIX: String = "item-"
+    private const val DISPLAY_NAME_PREFIX: String = "item-"
 
     /** The default size of a raw row in bytes. */
     const val SIZE_BYTES: Long = 1_024
@@ -75,7 +73,7 @@ class FakeUploadIdFactory(
     private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
 ) : UploadIdFactory {
 
-    /** Returns the mapped id, or "upload-<item id>". */
+    /** Maps a registered item id to its configured upload id, falling back to a deterministic id. */
     override fun uploadIdFor(item: MediaItem): String =
         uploadIdsBySourceId[item.id] ?: ("upload-" + item.id)
 }
