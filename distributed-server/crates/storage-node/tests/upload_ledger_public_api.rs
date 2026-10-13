@@ -82,12 +82,12 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
     )
     .expect("record with non-blank fields is valid");
 
-    assert_eq!(record.upload_id(), &upload_id());
-    assert_eq!(record.login(), "alice");
-    assert_eq!(record.original_name(), "photo.jpg");
-    assert_eq!(record.size_bytes(), 4_096);
-    assert_eq!(record.content_hash(), hash);
-    assert_eq!(record.accepted_at_ms(), 1_700_000_000_000);
+    assert_eq!(record.upload_id, upload_id());
+    assert_eq!(record.login, "alice");
+    assert_eq!(record.original_name, "photo.jpg");
+    assert_eq!(record.size_bytes, 4_096);
+    assert_eq!(record.content_hash, hash);
+    assert_eq!(record.accepted_at_ms, 1_700_000_000_000);
 
     assert_eq!(
         UploadRecord::new(upload_id(), "   ", "photo.jpg", 1, hash, 0),
@@ -117,11 +117,11 @@ fn ledger_records_first_upload_and_keeps_it_on_retry() {
     assert_eq!(ledger.len(), 1);
 
     let stored = ledger.get(&upload_id()).expect("first record is stored");
-    assert_eq!(stored.login(), "alice");
-    assert_eq!(stored.original_name(), "a.txt");
-    assert_eq!(stored.size_bytes(), 10);
-    assert_eq!(stored.content_hash(), first_hash);
-    assert_eq!(stored.accepted_at_ms(), 1_000);
+    assert_eq!(stored.login, "alice");
+    assert_eq!(stored.original_name, "a.txt");
+    assert_eq!(stored.size_bytes, 10);
+    assert_eq!(stored.content_hash, first_hash);
+    assert_eq!(stored.accepted_at_ms, 1_000);
 }
 
 #[test]

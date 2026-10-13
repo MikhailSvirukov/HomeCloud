@@ -14,10 +14,10 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     ])
     .expect("valid pairs build a config");
 
-    assert_eq!(config.node_id().as_str(), "node-1");
-    assert_eq!(config.listen_addr(), "0.0.0.0:9000");
-    assert_eq!(config.data_dir(), PathBuf::from("/var/lib/storage-node"));
-    assert_eq!(config.peers(), ["10.0.0.2:9000", "10.0.0.3:9000"]);
+    assert_eq!(config.node_id.as_str(), "node-1");
+    assert_eq!(config.listen_addr, "0.0.0.0:9000");
+    assert_eq!(config.data_dir, PathBuf::from("/var/lib/storage-node"));
+    assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
 }
 
 #[test]
@@ -42,6 +42,23 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         result,
         Err(ConfigError::InvalidListenAddr {
             value: "10.0.0.1".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
+    let result = NodeConfig::from_pairs(&[
+        ("node_id", "node-1"),
+        ("listen_addr", "0.0.0.0:9000"),
+        ("data_dir", "/var/lib/storage-node"),
+        ("peers", "10.0.0.2"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidPeerAddr {
+            value: "10.0.0.2".to_owned(),
         })
     );
 }
