@@ -1,0 +1,32 @@
+# Self-contained, isolated Docker Engine for Rust Testcontainers integration tests.
+services:
+  test-docker:
+    image: docker:29.9.0-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - docker-client-certs:/certs/client
+      - test-docker-data:/var/lib/docker
+    networks: [test-environment-net]
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  test-environment:
+    depends_on:
+      test-docker:
+        condition: service_healthy
+    environment:
+      DOCKER_HOST: tcp://test-docker:2376
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /certs/client
+    volumes:
+      - docker-client-certs:/certs/client:ro
+
+volumes:
+  docker-client-certs:
+  test-docker-data:

@@ -1,0 +1,183 @@
+x-agent: &agent
+  init: true
+  working_dir: /workspace
+  user: "1000:1000"
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 768
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=1g
+  environment: &agent-environment
+    GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-PicBackup Agent}
+    GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-picbackup-agent@users.noreply.github.com}
+    GIT_COMMITTER_NAME: ${GIT_AUTHOR_NAME:-PicBackup Agent}
+    GIT_COMMITTER_EMAIL: ${GIT_AUTHOR_EMAIL:-picbackup-agent@users.noreply.github.com}
+    DEFAULT_BRANCH: ${DEFAULT_BRANCH:-main}
+    GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:?Set GITHUB_MCP_TOKEN in .env}
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY in .env}
+  command:
+    - run
+    - --continue
+    - --agent
+    - orchestrator
+    - --auto
+    - >-
+      Read the current daily review and this workstream's saved state, then execute the
+      orchestrator workflow for this run. Do not wait for interactive input. Complete
+      no more than 20 sequential issue/PR work items, subject to the 60-minute safe
+      checkpoint limit in your instructions, then summarize the result and exit.
+  volumes:
+    - opencode-data-android:/home/opencode/.local/share/opencode
+    - opencode-config-android:/home/opencode/.config/opencode
+    - ${ANDROID_CHECKOUT:-../homecloud-clones/android}:/workspace
+    - ./agent-state/android:/workspace/.agent-state
+    - ./agent-feedback:/workspace/.agent-feedback:ro
+    - opencode-state-android:/home/opencode/.local/state/opencode
+    - cargo-cache-android:/home/opencode/.cargo/registry
+    - cargo-git-android:/home/opencode/.cargo/git
+    - gradle-cache-android:/home/opencode/.gradle
+    - android-cache-android:/home/opencode/.android
+    - general-cache-android:/home/opencode/.cache
+
+services:
+  android:
+    <<: *agent
+    image: picbackup-android-agent:${OPENCODE_VERSION:-2.0.27}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      target: android
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-2.0.27}
+        ANDROID_COMMANDLINE_TOOLS_VERSION: ${ANDROID_COMMANDLINE_TOOLS_VERSION:-15859902}
+    environment:
+      <<: *agent-environment
+      AGENT_SCOPE: android
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+    networks: [android-net]
+
+  distributed-server:
+    <<: *agent
+    image: picbackup-distributed-server-agent:${OPENCODE_VERSION:-2.0.27}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      target: rust-agent
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-2.0.27}
+        RUST_VERSION: ${RUST_VERSION:-1.99.0}
+    environment:
+      <<: *agent-environment
+      AGENT_SCOPE: distributed-server
+    networks: [distributed-server-net]
+    volumes:
+      - opencode-data-distributed:/home/opencode/.local/share/opencode
+      - opencode-config-distributed:/home/opencode/.config/opencode
+      - ${DISTRIBUTED_SERVER_CHECKOUT:-../homecloud-clones/distributed-server}:/workspace
+      - ./agent-state/distributed-server:/workspace/.agent-state
+      - ./agent-feedback:/workspace/.agent-feedback:ro
+      - opencode-state-distributed:/home/opencode/.local/state/opencode
+      - cargo-cache-distributed:/home/opencode/.cargo/registry
+      - cargo-git-distributed:/home/opencode/.cargo/git
+      - gradle-cache-distributed:/home/opencode/.gradle
+      - android-cache-distributed:/home/opencode/.android
+      - general-cache-distributed:/home/opencode/.cache
+
+  dedicated-server:
+    <<: *agent
+    image: picbackup-dedicated-server-agent:${OPENCODE_VERSION:-2.0.27}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      target: rust-agent
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-2.0.27}
+        RUST_VERSION: ${RUST_VERSION:-1.99.0}
+    environment:
+      <<: *agent-environment
+      AGENT_SCOPE: dedicated-server
+    networks: [dedicated-server-net]
+    volumes:
+      - opencode-data-dedicated:/home/opencode/.local/share/opencode
+      - opencode-config-dedicated:/home/opencode/.config/opencode
+      - ${DEDICATED_SERVER_CHECKOUT:-../homecloud-clones/dedicated-server}:/workspace
+      - ./agent-state/dedicated-server:/workspace/.agent-state
+      - ./agent-feedback:/workspace/.agent-feedback:ro
+      - opencode-state-dedicated:/home/opencode/.local/state/opencode
+      - cargo-cache-dedicated:/home/opencode/.cargo/registry
+      - cargo-git-dedicated:/home/opencode/.cargo/git
+      - gradle-cache-dedicated:/home/opencode/.gradle
+      - android-cache-dedicated:/home/opencode/.android
+      - general-cache-dedicated:/home/opencode/.cache
+
+  test-environment:
+    <<: *agent
+    image: picbackup-test-environment-agent:${OPENCODE_VERSION:-2.0.27}
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      target: test-environment
+      args:
+        OPENCODE_VERSION: ${OPENCODE_VERSION:-2.0.27}
+        RUST_VERSION: ${RUST_VERSION:-1.99.0}
+    environment:
+      <<: *agent-environment
+      AGENT_SCOPE: test-environment
+    networks: [test-environment-net]
+    volumes:
+      - opencode-data-test:/home/opencode/.local/share/opencode
+      - opencode-config-test:/home/opencode/.config/opencode
+      - ${TEST_ENVIRONMENT_CHECKOUT:-../homecloud-clones/test-environment}:/workspace
+      - ./agent-state/test-environment:/workspace/.agent-state
+      - ./agent-feedback:/workspace/.agent-feedback:ro
+      - opencode-state-test:/home/opencode/.local/state/opencode
+      - cargo-cache-test:/home/opencode/.cargo/registry
+      - cargo-git-test:/home/opencode/.cargo/git
+      - gradle-cache-test:/home/opencode/.gradle
+      - android-cache-test:/home/opencode/.android
+      - general-cache-test:/home/opencode/.cache
+
+networks:
+  android-net:
+  distributed-server-net:
+  dedicated-server-net:
+  test-environment-net:
+
+volumes:
+  opencode-data-android:
+  opencode-config-android:
+  opencode-state-android:
+  cargo-cache-android:
+  cargo-git-android:
+  gradle-cache-android:
+  android-cache-android:
+  general-cache-android:
+  opencode-data-distributed:
+  opencode-config-distributed:
+  opencode-state-distributed:
+  cargo-cache-distributed:
+  cargo-git-distributed:
+  gradle-cache-distributed:
+  android-cache-distributed:
+  general-cache-distributed:
+  opencode-data-dedicated:
+  opencode-config-dedicated:
+  opencode-state-dedicated:
+  cargo-cache-dedicated:
+  cargo-git-dedicated:
+  gradle-cache-dedicated:
+  android-cache-dedicated:
+  general-cache-dedicated:
+  opencode-data-test:
+  opencode-config-test:
+  opencode-state-test:
+  cargo-cache-test:
+  cargo-git-test:
+  gradle-cache-test:
+  android-cache-test:
+  general-cache-test:

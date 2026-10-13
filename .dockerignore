@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+!.env.example
+agent-feedback/reviews
+agent-state
+**/target
+**/build
+**/.gradle
+**/.idea
+**/.kotlin
+**/node_modules

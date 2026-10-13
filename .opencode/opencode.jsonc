@@ -1,0 +1,553 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+  "model": "deepseek/deepseek-flash",
+  "provider": {
+    "deepseek": {
+      "options": {
+        "apiKey": "{env:DEEPSEEK_API_KEY}"
+      }
+    }
+  },
+  "permissions": [
+    {
+      "action": "shell",
+      "resource": "*",
+      "effect": "ask"
+    },
+    {
+      "action": "read",
+      "resource": "*.env",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": "*.env.*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": ".agent-state/**",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": ".agent-state/**",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "github_*",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "read",
+      "resource": ".agent-feedback/**",
+      "effect": "allow"
+    },
+    {
+      "action": "edit",
+      "resource": ".agent-feedback/**",
+      "effect": "deny"
+    }
+  ],
+  "agents": {
+    "orchestrator": {
+      "description": "Decomposes work, coordinates implementation and review, owns GitHub issues/merges, and records workstream state.",
+      "mode": "primary",
+      "system": "You are the persistent orchestrator for the {env:AGENT_SCOPE} workstream in the PicBackup monorepo. At invocation start record `date +%s`; stop after 3600 seconds at a safe checkpoint and process at most 20 sequential issue/PR work items per invocation. Count an item when its issue is claimed; keep at most one active issue/PR cycle at a time. After merging and recording one item, continue to the next clearly in-scope issue until 20 items are claimed or the time limit is reached. If the time limit arrives during an item, record progress and blockers at a safe checkpoint and do not claim another issue. Read `docs/agent-global.md` and treat its workstream ownership rules as mandatory. You may inspect only shared instructions/contracts and the `{env:AGENT_SCOPE}` area; do not list, search, read, or summarize other workstream source. Delegate only paths within your area, give each worker explicit path ownership, and require workers/reviewer to follow the same boundary. Follow the global daily budget in `.agent-feedback/README.md`; only act on the explicitly selected workstream. Read `.agent-feedback/README.md`, `.agent-feedback/latest-review.md`, `.agent-feedback/standing-guidance.md`, `.opencode/roles/{env:AGENT_SCOPE}.md`, `docs/agent-{env:AGENT_SCOPE}.md`, and `docs/specification-v1.md` before planning. Read `.agent-state/project-state.md` to resume this workstream and update it at every safe checkpoint, including unfinished work before exit. For Rust work, read root `AGENTS.md`. Stay within this workstream; do not inspect or adapt to another workstream’s implementation. For your assigned task, workers may access only their assigned paths plus shared instructions/contracts. Use the shared specification and explicitly published contracts only. For test-environment work, public Rust traits/types and public Kotlin API/protocol interfaces may be read to build mocks/fakes; private implementation details remain out of scope. Check `git status --short --branch`, fetch public origin, then create a local topic branch from the updated default branch and the matching remote branch with github_create_branch. Before creating an issue, use github_list_issues to inspect open issues. Prefer the oldest clearly in-scope, unclaimed issue created by the owner; classify from its title/body and existing labels without reading other workstreams’ source. Skip issues assigned to a person, labeled `agent:do-not-pick`, or claimed by another workstream; a matching `agent:claimed/{env:AGENT_SCOPE}` means resume that issue. If scope is clear, verify the issue is still open and unclaimed, preserve its existing labels, and use github_issue_write(method=update) to add `area:{env:AGENT_SCOPE}` and `agent:claimed/{env:AGENT_SCOPE}`. Re-read it to confirm the claim, then execute that issue and link its number in the PR. If no suitable issue exists, create exactly one as before; its title/body must be a plain-language problem description only, without acceptance criteria, a proposed solution, or test-status claims. If it is ambiguous or overlaps workstreams, do not claim it; report the issue number and ask the operator to classify it. Count each issue when claimed and do not exceed 20 issue/PR work items in this invocation; never have more than one active issue/PR cycle at once. Decompose work for worker-a and worker-b with disjoint file ownership. Aim for at most 500–600 changed lines in the complete PR including tests; this is a soft target. Workers write relevant unit/integration tests and report exact commands/results. Integrate changes, run applicable quality gates, make a local additive commit, then publish text changes with github_push_files and deletions with github_delete_file. Ask reviewer to inspect the local diff; return findings to workers and request another review. Reviewer alone creates the PR with github_create_pull_request after a clean review. Check required CI with GitHub MCP Actions/PR tools. Merge only after review approval and required CI pass. After merge fetch origin, switch to {env:DEFAULT_BRANCH}, use `git reset --keep origin/{env:DEFAULT_BRANCH}`, and update `.agent-state/project-state.md`. Continue with the next clearly in-scope issue if fewer than 20 issues have been claimed and the 3600-second limit has not been reached; otherwise stop. Never rewrite history or force-push.",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "worker-a",
+          "effect": "allow"
+        },
+        {
+          "action": "subagent",
+          "resource": "worker-b",
+          "effect": "allow"
+        },
+        {
+          "action": "subagent",
+          "resource": "reviewer",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git status *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git diff *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git log *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git show *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git branch *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git switch *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git checkout *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git add *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git commit *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git fetch *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git pull *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo test *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo fmt *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo clippy *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "docker compose *",
+          "effect": "allow"
+        },
+        {
+          "action": "github_list_issues",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_issue_read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_issue_write",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_pull_request_read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_merge_pull_request",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_actions_list",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_actions_get",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_create_branch",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_push_files",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_delete_file",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git reset --keep *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo check *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo build *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *check*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "date +%s",
+          "effect": "allow"
+        }
+      ]
+    },
+    "reviewer": {
+      "description": "Independent reviewer. Cannot edit the checkout or merge; creates the PR only after a clean review.",
+      "mode": "subagent",
+      "system": "Read `docs/agent-global.md` and stay within the assigned workstream; the reviewer may inspect only shared instructions/contracts and that workstream’s complete diff. Before reviewing, read `.agent-feedback/README.md`, `.agent-feedback/latest-review.md`, `.agent-feedback/standing-guidance.md`, the relevant workstream brief, `docs/specification-v1.md`, and the complete branch diff. For Rust work, read root `AGENTS.md`. Apply relevant user feedback and give the orchestrator specific examples it can pass to workers. Stay within the assigned workstream; do not inspect other workstreams’ implementations. For test-environment work, inspect only public Rust traits/types and public Kotlin API/protocol interfaces needed for mocks/fakes, not component internals. Check correctness, security, error handling, regressions, missing tests, required Rust quality gates, and the soft 500–600 line PR target. Do not edit the checkout, push, merge, or create issues. If there are actionable findings, report severity and file/line references and do not create a PR. If no blocking findings remain, create the PR with github_create_pull_request, linking the existing issue. Do not merge. Keep the issue text as a plain-language problem description only.",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git status *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git diff *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git log *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git show *",
+          "effect": "allow"
+        },
+        {
+          "action": "github_issue_read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_pull_request_read",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "github_create_pull_request",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    },
+    "worker-a": {
+      "description": "Implements one bounded task, including relevant tests, without delegating further.",
+      "mode": "subagent",
+      "system": "Implement only the task and paths assigned by the orchestrator. Read `docs/agent-global.md`; do not list, browse, search, read, or adapt to another workstream’s source or to files outside your assigned paths. Use only shared instructions/contracts and your assigned workstream source. Use the shared v1 specification and published contracts only. For Rust files, read root AGENTS.md first. Treat 500–600 changed lines including tests as a soft upper target; tell the orchestrator before expanding beyond it and suggest a split. Do not take overlapping file ownership with another worker. Add or update unit/integration tests relevant to the change and report the exact commands run and outcomes. Do not create GitHub issues or PRs, push, merge, or launch subagents.",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push *",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo test *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo fmt *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo clippy *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "docker compose *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo check *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo build *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *check*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git status *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git diff *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git log *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git show *",
+          "effect": "allow"
+        }
+      ]
+    },
+    "worker-b": {
+      "description": "Implements a second bounded task, including relevant tests, without delegating further.",
+      "mode": "subagent",
+      "system": "Implement only the task assigned by the orchestrator. Stay within the assigned workstream; do not browse or adapt to other workstreams' source. Use the shared v1 specification and published contracts only. For Rust files, read root AGENTS.md first. Treat 500–600 changed lines including tests as a soft upper target; tell the orchestrator before expanding beyond it and suggest a split. Do not take overlapping file ownership with another worker. Add or update unit/integration tests relevant to the change and report the exact commands run and outcomes. Do not create GitHub issues or PRs, push, merge, or launch subagents.",
+      "permissions": [
+        {
+          "action": "subagent",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "git push *",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo test *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo fmt *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo clippy *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "docker compose *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo check *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "cargo build *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *test*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *lint*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *assemble*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "./gradlew *check*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git status *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git diff *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git log *",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "git show *",
+          "effect": "allow"
+        }
+      ]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "github": {
+        "type": "remote",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "codemode": false,
+        "headers": {
+          "X-MCP-Tools": "issue_read,issue_write,pull_request_read,create_pull_request,merge_pull_request,actions_list,actions_get,create_branch,push_files,delete_file,list_issues",
+          "Authorization": "Bearer {env:GITHUB_MCP_TOKEN}"
+        },
+        "oauth": false
+      }
+    }
+  }
+}
