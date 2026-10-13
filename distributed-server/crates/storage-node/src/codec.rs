@@ -5,10 +5,12 @@
 //! front of a byte buffer without consuming it: any trailing bytes belong to the
 //! next frame and are reported as unconsumed through [`DecodeOutcome`].
 
+use std::fmt;
+
 use crate::framing::{FrameHeader, FramingError, FRAME_HEADER_LEN};
 
 /// Result of decoding one frame from the front of a byte buffer.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum DecodeOutcome<'buf> {
     /// A complete frame was read: its header, its payload bytes, and the total
     /// number of buffer bytes it occupied (header plus payload).
@@ -22,13 +24,34 @@ pub enum DecodeOutcome<'buf> {
     Incomplete { needed: usize },
 }
 
+impl fmt::Debug for DecodeOutcome<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Complete {
+                header,
+                payload,
+                consumed,
+            } => formatter
+                .debug_struct("Complete")
+                .field("header", header)
+                .field("payload_len", &payload.len())
+                .field("consumed", consumed)
+                .finish(),
+            Self::Incomplete { needed } => formatter
+                .debug_struct("Incomplete")
+                .field("needed", needed)
+                .finish(),
+        }
+    }
+}
+
 /// Encodes a frame as its 5-byte header followed by `payload`.
 ///
 /// # Errors
 ///
 /// [`FramingError::PayloadTooLarge`] when `payload` is longer than
-/// [`crate::framing::MAX_FRAME_PAYLOAD_LEN`] or does not fit in the header's
-/// length field.
+/// [`crate::MAX_FRAME_PAYLOAD_LEN`] or does not fit in the header's length
+/// field.
 pub fn encode_frame(payload: &[u8]) -> Result<Vec<u8>, FramingError> {
     let payload_len = u32::try_from(payload.len()).map_err(|_| FramingError::PayloadTooLarge)?;
     let header = FrameHeader::new(payload_len)?;
@@ -161,5 +184,21 @@ mod tests {
         let oversized = vec![0u8; MAX_FRAME_PAYLOAD_LEN as usize + 1];
 
         assert_eq!(encode_frame(&oversized), Err(FramingError::PayloadTooLarge));
+    }
+
+    #[test]
+    fn debug_reports_payload_length_without_payload_bytes() {
+        let payload = b"SECRET-PAYLOAD".as_slice();
+        let outcome = DecodeOutcome::Complete {
+            header: FrameHeader::new(payload.len() as u32)
+                .expect("small payload is within the limit"),
+            payload,
+            consumed: FRAME_HEADER_LEN + payload.len(),
+        };
+
+        let text = format!("{outcome:?}");
+
+        assert!(text.contains("payload_len: 14"));
+        assert!(!text.contains("SECRET"));
     }
 }

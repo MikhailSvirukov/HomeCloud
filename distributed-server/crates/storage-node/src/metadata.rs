@@ -206,9 +206,18 @@ pub enum RecordOutcome {
 }
 
 /// Idempotency ledger mapping an `upload_id` to the first recorded upload.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct UploadLedger {
     records: HashMap<UploadId, UploadRecord>,
+}
+
+impl fmt::Debug for UploadLedger {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UploadLedger")
+            .field("len", &self.records.len())
+            .finish()
+    }
 }
 
 impl UploadLedger {
@@ -494,5 +503,13 @@ mod tests {
 
         assert!(!ledger.is_empty());
         assert_eq!(ledger.len(), 1);
+    }
+
+    #[test]
+    fn ledger_debug_reports_only_entry_count() {
+        let mut ledger = UploadLedger::new();
+        ledger.record(record("upload-1", "secret-login", "secret-name.txt"));
+
+        assert_eq!(format!("{ledger:?}"), "UploadLedger { len: 1 }");
     }
 }

@@ -169,23 +169,19 @@ impl PayloadBufferPool {
             });
         };
 
-        let chosen = self.classes[first..]
-            .iter()
-            .position(|class| !class.free.is_empty())
-            .map(|offset| first + offset);
-
-        let Some(index) = chosen else {
-            return Err(PoolError::Exhausted {
+        match self.classes[first..]
+            .iter_mut()
+            .find_map(|class| class.free.pop())
+        {
+            Some(mut buffer) => {
+                buffer.len = 0;
+                self.in_use += 1;
+                Ok(buffer)
+            }
+            None => Err(PoolError::Exhausted {
                 requested: min_capacity,
-            });
-        };
-
-        let mut buffer = self.classes[index].free.pop().ok_or(PoolError::Exhausted {
-            requested: min_capacity,
-        })?;
-        buffer.len = 0;
-        self.in_use += 1;
-        Ok(buffer)
+            }),
+        }
     }
 
     /// Returns a buffer to its originating size class, resetting its logical
@@ -324,5 +320,20 @@ mod tests {
             PayloadBufferPool::new(&classes).err(),
             Some(PoolError::SizeClassesNotIncreasing)
         );
+    }
+
+    #[test]
+    fn buffer_debug_reports_capacity_and_len_without_bytes() {
+        let mut pool = default_pool();
+        let mut buffer = pool.acquire(1).expect("smallest class has free buffers");
+        buffer
+            .set_len(4)
+            .expect("length within capacity is allowed");
+        buffer.as_mut_slice().copy_from_slice(b"SECR");
+
+        let text = format!("{buffer:?}");
+
+        assert!(text.contains("len: 4"));
+        assert!(!text.contains("SECR"));
     }
 }
