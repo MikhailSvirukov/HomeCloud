@@ -14,3 +14,6 @@ interface UploadQueueStore {
     /** Replaces the stored snapshot with [entries]. */
     fun write(entries: List<UploadQueueEntry>)
 }
+
+/** Signals that the persisted upload queue could not be read or written. */
+class UploadQueueStoreException(message: String, cause: Throwable? = null) : Exception(message, cause)

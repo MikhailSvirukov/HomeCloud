@@ -68,6 +68,25 @@ class FileUploadQueueStoreTest {
     }
 
     @Test
+    fun uploadIdWithCarriageReturnRoundTripsExactly() {
+        val store = FileUploadQueueStore(storeFile())
+        val entry = entry(uploadId = CARRIAGE_RETURN_UPLOAD_ID)
+
+        store.write(listOf(entry))
+
+        assertEquals(listOf(entry), store.read())
+    }
+
+    @Test
+    fun readThrowsWhenUploadIdEscapingIsMalformed() {
+        val trailingEscape = storeWithRawText(rawLine(uploadId = TRAILING_ESCAPE_UPLOAD_ID))
+        val unknownEscape = storeWithRawText(rawLine(uploadId = UNKNOWN_ESCAPE_UPLOAD_ID))
+
+        assertThrows(UploadQueueStoreException::class.java) { trailingEscape.read() }
+        assertThrows(UploadQueueStoreException::class.java) { unknownEscape.read() }
+    }
+
+    @Test
     fun readThrowsWhenLineHasWrongFieldCount() {
         val file = storeFile()
         val store = FileUploadQueueStore(file)
@@ -167,6 +186,9 @@ class FileUploadQueueStoreTest {
         const val ATTEMPT_COUNT = 3
 
         const val ESCAPED_UPLOAD_ID = "tab\tnewline\nbackslash\\"
+        const val CARRIAGE_RETURN_UPLOAD_ID = "carriage\rreturn"
+        const val TRAILING_ESCAPE_UPLOAD_ID = "trailing\\"
+        const val UNKNOWN_ESCAPE_UPLOAD_ID = "unknown\\x"
         const val WRONG_FIELD_COUNT_LINE = UPLOAD_ID_A
         const val MALFORMED_LINE_NUMBER = 2
         const val NOT_A_NUMBER = "not-a-number"

@@ -12,11 +12,12 @@ import java.nio.file.StandardCopyOption
  * The file holds one entry per line, separated by `\n`, with tab-separated fields in the order
  * `uploadId`, `sourceId`, `sizeBytes`, `dateModifiedEpochSeconds`, `attemptCount`, `state`. Inside
  * `uploadId` the backslash, tab, newline and carriage-return characters are escaped as `\\`, `\t`,
- * `\n` and `\r`, and the reader reverses that escaping. A write replaces the complete file through a
- * temporary sibling and a rename, so a partially written snapshot can never be read back; the
- * caller owns the directory and a missing directory is not created. Reading an absent or empty file
- * yields no entries, while a malformed line fails the read instead of dropping queued work silently.
- * Not thread-safe; access must stay on one thread or be externally synchronized.
+ * `\n` and `\r`, and the reader reverses that escaping. A write builds a temporary sibling and
+ * renames it over the target, using an atomic move where the file system supports it, so a partial
+ * snapshot is not read back; the caller owns the directory and a missing directory is not created.
+ * Reading an absent or empty file yields no entries, while a malformed line fails the read instead
+ * of dropping queued work silently. Not thread-safe; access must stay on one thread or be externally
+ * synchronized.
  */
 class FileUploadQueueStore(private val file: File) : UploadQueueStore {
 
@@ -65,45 +66,46 @@ class FileUploadQueueStore(private val file: File) : UploadQueueStore {
         entries.joinToString(separator = NEWLINE) { entry -> formatLine(entry) }
 
     private fun formatLine(entry: UploadQueueEntry): String =
-        listOf(
-            escape(entry.uploadId),
-            entry.sourceId.toString(),
-            entry.sizeBytes.toString(),
-            entry.dateModifiedEpochSeconds.toString(),
-            entry.attemptCount.toString(),
-            entry.state.name,
-        ).joinToString(separator = FIELD_SEPARATOR)
+        Column.entries.joinToString(separator = FIELD_SEPARATOR) { column ->
+            when (column) {
+                Column.UPLOAD_ID -> escape(entry.uploadId)
+                Column.SOURCE_ID -> entry.sourceId.toString()
+                Column.SIZE_BYTES -> entry.sizeBytes.toString()
+                Column.DATE_MODIFIED_EPOCH_SECONDS -> entry.dateModifiedEpochSeconds.toString()
+                Column.ATTEMPT_COUNT -> entry.attemptCount.toString()
+                Column.STATE -> entry.state.name
+            }
+        }
 
     private fun parseLine(line: String, lineNumber: Int): UploadQueueEntry {
         val fields = line.split(FIELD_SEPARATOR)
-        if (fields.size != FIELD_COUNT) {
+        if (fields.size != Column.entries.size) {
             throw UploadQueueStoreException(
-                "Malformed upload queue entry on line $lineNumber: expected $FIELD_COUNT fields " +
-                    "but found ${fields.size}",
+                "Malformed upload queue entry on line $lineNumber: expected " +
+                    "${Column.entries.size} fields but found ${fields.size}",
             )
         }
         return UploadQueueEntry(
-            uploadId = unescape(fields[UPLOAD_ID_INDEX], lineNumber),
-            sourceId = parseLong(fields[SOURCE_ID_INDEX], SOURCE_ID_FIELD, lineNumber),
-            sizeBytes = parseLong(fields[SIZE_BYTES_INDEX], SIZE_BYTES_FIELD, lineNumber),
+            uploadId = unescape(fields[Column.UPLOAD_ID.ordinal], lineNumber),
+            sourceId = parseLong(fields[Column.SOURCE_ID.ordinal], lineNumber),
+            sizeBytes = parseLong(fields[Column.SIZE_BYTES.ordinal], lineNumber),
             dateModifiedEpochSeconds =
-                parseLong(fields[DATE_MODIFIED_INDEX], DATE_MODIFIED_FIELD, lineNumber),
-            attemptCount = parseInt(fields[ATTEMPT_COUNT_INDEX], ATTEMPT_COUNT_FIELD, lineNumber),
-            state = parseState(fields[STATE_INDEX], lineNumber),
+                parseLong(fields[Column.DATE_MODIFIED_EPOCH_SECONDS.ordinal], lineNumber),
+            attemptCount = parseInt(fields[Column.ATTEMPT_COUNT.ordinal], lineNumber),
+            state = parseState(fields[Column.STATE.ordinal], lineNumber),
         )
     }
 
-    private fun parseLong(field: String, fieldName: String, lineNumber: Int): Long =
-        field.toLongOrNull()
-            ?: throw UploadQueueStoreException(
-                "Malformed upload queue entry on line $lineNumber: $fieldName is not a number",
-            )
+    private fun parseLong(field: String, lineNumber: Int): Long =
+        field.toLongOrNull() ?: throw malformedNumber(lineNumber)
 
-    private fun parseInt(field: String, fieldName: String, lineNumber: Int): Int =
-        field.toIntOrNull()
-            ?: throw UploadQueueStoreException(
-                "Malformed upload queue entry on line $lineNumber: $fieldName is not a number",
-            )
+    private fun parseInt(field: String, lineNumber: Int): Int =
+        field.toIntOrNull() ?: throw malformedNumber(lineNumber)
+
+    private fun malformedNumber(lineNumber: Int): UploadQueueStoreException =
+        UploadQueueStoreException(
+            "Malformed upload queue entry on line $lineNumber: a numeric field is not a number",
+        )
 
     private fun parseState(field: String, lineNumber: Int): UploadQueueState =
         UploadQueueState.entries.firstOrNull { state -> state.name == field }
@@ -167,22 +169,18 @@ class FileUploadQueueStore(private val file: File) : UploadQueueStore {
         }
     }
 
+    private enum class Column {
+        UPLOAD_ID,
+        SOURCE_ID,
+        SIZE_BYTES,
+        DATE_MODIFIED_EPOCH_SECONDS,
+        ATTEMPT_COUNT,
+        STATE,
+    }
+
     private companion object {
         const val FIELD_SEPARATOR = "\t"
         const val NEWLINE = "\n"
-        const val FIELD_COUNT = 6
-
-        const val UPLOAD_ID_INDEX = 0
-        const val SOURCE_ID_INDEX = 1
-        const val SIZE_BYTES_INDEX = 2
-        const val DATE_MODIFIED_INDEX = 3
-        const val ATTEMPT_COUNT_INDEX = 4
-        const val STATE_INDEX = 5
-
-        const val SOURCE_ID_FIELD = "sourceId"
-        const val SIZE_BYTES_FIELD = "sizeBytes"
-        const val DATE_MODIFIED_FIELD = "dateModifiedEpochSeconds"
-        const val ATTEMPT_COUNT_FIELD = "attemptCount"
 
         const val ESCAPE = '\\'
         const val TAB = '\t'
@@ -193,6 +191,3 @@ class FileUploadQueueStore(private val file: File) : UploadQueueStore {
         const val TEMPORARY_FILE_SUFFIX = ".tmp"
     }
 }
-
-/** Signals that the persisted upload queue could not be read or written. */
-class UploadQueueStoreException(message: String, cause: Throwable? = null) : Exception(message, cause)
