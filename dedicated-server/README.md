@@ -120,8 +120,8 @@ implemented yet.
 registration. It is pure state: no I/O, not async, and no cryptography.
 
 - `Login` is a validated, cluster-unique identifier. It must be non-empty, at
-  most 64 characters, and use only the conservative ASCII subset
-  `[A-Za-z0-9._-]`.
+  most 64 characters, use only the conservative ASCII subset
+  `[A-Za-z0-9._-]`, and must not be the relative path components `.` or `..`.
 - `Account` holds the login, the password verifier and the client encryption
   public key; it is built through the validating `Account::new` constructor,
   which rejects an empty verifier or client key.
