@@ -43,7 +43,7 @@ The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDI
 - Root project name is `PicBackup`; the application module is `:app`.
 - Namespace and applicationId are `dev.picbackup.android`.
 - Kotlin test sources live under `app/src/test/kotlin` in package `dev.picbackup.android`.
-- Test framework is JUnit 4. `buildConfig` is enabled so `dev.picbackup.android.BuildConfig` is available to JVM unit tests.
+- Test framework is JUnit 4.
 - Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
 
 ## Directory layout
@@ -62,11 +62,12 @@ android/
     └── src/
         ├── main/kotlin/dev/picbackup/android/
         │   ├── MainActivity.kt   Compose entry point
+        │   ├── backup/           planning discovered media into the upload queue
         │   ├── media/            photo/video classification from raw media rows
         │   ├── permissions/      which media read permissions to request
         │   └── queue/            in-memory upload queue and retry bookkeeping
         └── test/kotlin/dev/picbackup/android/
-            ├── BuildWiringTest.kt   build wiring checks
+            ├── backup/              unit tests for the upload planner
             ├── media/               unit tests for media classification
             ├── permissions/         unit tests for the permission policy
             └── queue/               unit tests for the upload queue

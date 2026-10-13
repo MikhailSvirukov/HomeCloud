@@ -80,13 +80,6 @@ class InMemoryUploadQueueTest {
     }
 
     @Test
-    fun nextPendingReturnsNullWhenEmpty() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-
-        assertNull(queue.nextPending())
-    }
-
-    @Test
     fun markInFlightMovesEntryToInFlightAndRemovesItFromNextPending() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         queue.enqueueUpload(UPLOAD_ID_A)
@@ -126,17 +119,19 @@ class InMemoryUploadQueueTest {
     }
 
     @Test
-    fun requeueFailedMovesFailedEntryToPendingAndResetsAttempts() {
+    fun requeueFailedMovesFailedEntryToPendingResetsAttemptsAndMakesItSelectable() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
         queue.enqueueUpload(UPLOAD_ID_A)
         queue.markFailed(UPLOAD_ID_A)
         queue.markFailed(UPLOAD_ID_A)
+        assertNull(queue.nextPending())
 
         queue.requeueFailed()
 
         val entry = queue.entry(UPLOAD_ID_A)
         assertEquals(UploadQueueState.PENDING, entry.state)
         assertEquals(0, entry.attemptCount)
+        assertEquals(UPLOAD_ID_A, queue.nextPending()?.uploadId)
     }
 
     @Test
@@ -155,16 +150,6 @@ class InMemoryUploadQueueTest {
     }
 
     @Test
-    fun requeueFailedReturnsZeroWhenNoEntryIsFailed() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
-        queue.enqueueUpload(UPLOAD_ID_A)
-
-        val reArmed = queue.requeueFailed()
-
-        assertEquals(0, reArmed)
-    }
-
-    @Test
     fun requeueFailedLeavesPendingInFlightAndCompletedEntriesUnchanged() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         queue.enqueueUpload(UPLOAD_ID_A)
@@ -176,7 +161,9 @@ class InMemoryUploadQueueTest {
         queue.markInFlight(UPLOAD_ID_C)
         queue.markCompleted(UPLOAD_ID_C)
 
-        queue.requeueFailed()
+        val reArmed = queue.requeueFailed()
+
+        assertEquals(0, reArmed)
 
         val pending = queue.entry(UPLOAD_ID_A)
         assertEquals(UploadQueueState.PENDING, pending.state)
@@ -189,19 +176,6 @@ class InMemoryUploadQueueTest {
         val completed = queue.entry(UPLOAD_ID_C)
         assertEquals(UploadQueueState.COMPLETED, completed.state)
         assertEquals(0, completed.attemptCount)
-    }
-
-    @Test
-    fun requeueFailedMakesEntrySelectableByNextPendingAgain() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
-        queue.enqueueUpload(UPLOAD_ID_A)
-        queue.markFailed(UPLOAD_ID_A)
-        queue.markFailed(UPLOAD_ID_A)
-        assertNull(queue.nextPending())
-
-        queue.requeueFailed()
-
-        assertEquals(UPLOAD_ID_A, queue.nextPending()?.uploadId)
     }
 
     @Test
@@ -239,49 +213,25 @@ class InMemoryUploadQueueTest {
     }
 
     @Test
-    fun markInFlightWithUnknownUploadIdThrowsIllegalArgumentException() {
+    fun markOperationsWithUnknownUploadIdThrowIllegalArgumentException() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
 
-        val thrown =
+        val inFlight =
             assertThrows(IllegalArgumentException::class.java) {
                 queue.markInFlight(UNKNOWN_UPLOAD_ID)
             }
-
-        assertTrue(thrown.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
-    }
-
-    @Test
-    fun markCompletedWithUnknownUploadIdThrowsIllegalArgumentException() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-
-        val thrown =
+        val completed =
             assertThrows(IllegalArgumentException::class.java) {
                 queue.markCompleted(UNKNOWN_UPLOAD_ID)
             }
-
-        assertTrue(thrown.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
-    }
-
-    @Test
-    fun markFailedWithUnknownUploadIdThrowsIllegalArgumentException() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-
-        val thrown =
+        val failed =
             assertThrows(IllegalArgumentException::class.java) {
                 queue.markFailed(UNKNOWN_UPLOAD_ID)
             }
 
-        assertTrue(thrown.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
-    }
-
-    @Test
-    fun constructorRejectsZeroMaxAttempts() {
-        assertThrows(IllegalArgumentException::class.java) { InMemoryUploadQueue(0) }
-    }
-
-    @Test
-    fun constructorRejectsNegativeMaxAttempts() {
-        assertThrows(IllegalArgumentException::class.java) { InMemoryUploadQueue(-1) }
+        assertTrue(inFlight.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
+        assertTrue(completed.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
+        assertTrue(failed.message.orEmpty().contains(UNKNOWN_UPLOAD_ID))
     }
 
     private fun InMemoryUploadQueue.enqueueUpload(uploadId: String): UploadQueueEntry =

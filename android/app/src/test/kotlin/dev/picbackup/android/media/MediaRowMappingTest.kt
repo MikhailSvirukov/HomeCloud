@@ -25,31 +25,18 @@ class MediaRowMappingTest {
     }
 
     @Test
-    fun `toRawMediaEntry normalizes a null mimeType to an empty string`() {
-        val entry = MediaRowMapping.toRawMediaEntry(
-            id = ID,
-            uri = URI,
-            displayName = DISPLAY_NAME,
-            sizeBytes = SIZE_BYTES,
-            dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = null,
-        )
-
-        assertEquals(EMPTY_TEXT, entry.mimeType)
-    }
-
-    @Test
-    fun `toRawMediaEntry normalizes a null displayName to an empty string`() {
+    fun `toRawMediaEntry normalizes null text columns to an empty string`() {
         val entry = MediaRowMapping.toRawMediaEntry(
             id = ID,
             uri = URI,
             displayName = null,
             sizeBytes = SIZE_BYTES,
             dateModifiedEpochSeconds = DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = IMAGE_MIME_TYPE,
+            mimeType = null,
         )
 
         assertEquals(EMPTY_TEXT, entry.displayName)
+        assertEquals(EMPTY_TEXT, entry.mimeType)
     }
 
     @Test

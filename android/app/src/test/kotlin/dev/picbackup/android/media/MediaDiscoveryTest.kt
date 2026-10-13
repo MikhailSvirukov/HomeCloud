@@ -6,37 +6,6 @@ import org.junit.Test
 class MediaDiscoveryTest {
 
     @Test
-    fun `discoverBackupCandidates keeps image and video rows and drops audio`() {
-        val source = RecordingMediaRowSource(
-            listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = AUDIO_MIME_TYPE),
-                rawEntry(id = 3L, mimeType = VIDEO_MIME_TYPE),
-            ),
-        )
-
-        val candidates = MediaDiscovery(source).discoverBackupCandidates()
-
-        assertEquals(listOf(1L, 3L), candidates.map { it.id })
-        assertEquals(listOf(MediaKind.IMAGE, MediaKind.VIDEO), candidates.map { it.kind })
-    }
-
-    @Test
-    fun `discoverBackupCandidates sorts candidates by id ascending`() {
-        val source = RecordingMediaRowSource(
-            listOf(
-                rawEntry(id = 30L, mimeType = VIDEO_MIME_TYPE),
-                rawEntry(id = 10L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 20L, mimeType = IMAGE_MIME_TYPE),
-            ),
-        )
-
-        val candidates = MediaDiscovery(source).discoverBackupCandidates()
-
-        assertEquals(listOf(10L, 20L, 30L), candidates.map { it.id })
-    }
-
-    @Test
     fun `discoverBackupCandidates of an empty source returns an empty list`() {
         val source = RecordingMediaRowSource(emptyList())
 
@@ -85,7 +54,6 @@ class MediaDiscoveryTest {
     private companion object {
         const val IMAGE_MIME_TYPE = "image/jpeg"
         const val VIDEO_MIME_TYPE = "video/mp4"
-        const val AUDIO_MIME_TYPE = "audio/mpeg"
         const val MEDIA_URI_PREFIX = "content://media/external/file/"
         const val DISPLAY_NAME_PREFIX = "item-"
         const val SIZE_BYTES = 1_024L

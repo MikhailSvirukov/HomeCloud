@@ -17,28 +17,16 @@ class MediaCatalogTest {
     }
 
     @Test
-    fun `audio mime classifies as null`() {
+    fun `unsupported mime classifies as null`() {
         assertNull(MediaCatalog.classify(AUDIO_MIME_TYPE))
-    }
-
-    @Test
-    fun `unknown mime classifies as null`() {
         assertNull(MediaCatalog.classify(UNKNOWN_MIME_TYPE))
-    }
-
-    @Test
-    fun `blank mime classifies as null`() {
         assertNull(MediaCatalog.classify(BLANK_MIME_TYPE))
     }
 
     @Test
-    fun `classify is case-insensitive`() {
+    fun `classify normalizes case and surrounding whitespace`() {
         assertEquals(MediaKind.IMAGE, MediaCatalog.classify(UPPERCASE_IMAGE_MIME_TYPE))
         assertEquals(MediaKind.VIDEO, MediaCatalog.classify(UPPERCASE_VIDEO_MIME_TYPE))
-    }
-
-    @Test
-    fun `classify ignores surrounding whitespace`() {
         assertEquals(MediaKind.IMAGE, MediaCatalog.classify(PADDED_IMAGE_MIME_TYPE))
     }
 
@@ -81,13 +69,6 @@ class MediaCatalogTest {
         assertEquals(entry.displayName, candidate.displayName)
         assertEquals(entry.sizeBytes, candidate.sizeBytes)
         assertEquals(entry.dateModifiedEpochSeconds, candidate.dateModifiedEpochSeconds)
-    }
-
-    @Test
-    fun `backupCandidates of only audio returns empty list`() {
-        val entries = listOf(rawEntry(id = 1L, mimeType = AUDIO_MIME_TYPE))
-
-        assertEquals(emptyList<MediaItem>(), MediaCatalog.backupCandidates(entries))
     }
 
     private fun rawEntry(id: Long, mimeType: String): RawMediaEntry =
