@@ -19,15 +19,30 @@ for clients; it does not relay Raft or blob traffic.
 ## Workspace layout
 
 - `Cargo.toml` — workspace manifest.
-- `crates/storage-node/` — the node crate, with `src/framing.rs` and
-  `src/buffer_pool.rs`.
-- `crates/storage-node/tests/public_api.rs` — public API integration tests.
+- `crates/storage-node/` — the node crate, with `src/framing.rs`,
+  `src/buffer_pool.rs`, and `src/config.rs` (node identity/configuration).
+- `crates/storage-node/tests/` — public API integration tests
+  (`public_api.rs`, `config_public_api.rs`).
 
 ## Status
 
-Early bootstrap increment: framing and buffer-pool building blocks only. Networking,
-actors, and `io_uring` are not implemented yet. Acceptance criteria live in the
+Early bootstrap increment: framing and buffer-pool building blocks plus the node
+identity/configuration model. Networking, actors, and `io_uring` are not implemented
+yet. Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
+
+## Configuration
+
+The `storage-node` binary reads and validates its configuration from the environment
+at startup:
+
+- `NODE_ID` — stable node label (maps to the `node_id` key).
+- `LISTEN_ADDR` — `host:port` listen address (maps to the `listen_addr` key).
+- `DATA_DIR` — data directory (maps to the `data_dir` key).
+- `PEERS` — comma-separated peer addresses (maps to the `peers` key).
+
+`NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`, and
+`peers` keys; unknown keys are ignored.
 
 ## Build and test
 
