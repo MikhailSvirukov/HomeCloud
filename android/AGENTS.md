@@ -28,6 +28,8 @@ Read the root `/workspace/AGENTS.md` first for repository-wide process rules; it
 - Documentation describes behavior only; it never lists arguments, return values, or errors.
 - Tests cover distinct scenarios and must not verify static data or trivial constructors; one scenario is not tested twice.
 - Pull-request and issue text is English only and describes what the change contains, with the issue-closing keyword on the last line.
+- Use coroutines where the code needs asynchronous or background work; do not introduce manual threading or blocking calls on the main thread in their place.
+- Reviewing a change covers style, structure, clarity, and duplication, not only formatting and lint output.
 
 ## Quality gate
 
