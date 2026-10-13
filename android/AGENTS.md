@@ -23,6 +23,12 @@ Read the root `/workspace/AGENTS.md` first for repository-wide process rules; it
 - Use vetted cryptographic libraries and standard schemes. Never implement custom cryptographic primitives.
 - The upload/queue domain model now exists; the background scheduling mechanism (Android WorkManager) is still to be introduced by a later issue.
 
+## Code and review style
+
+- Documentation describes behavior only; it never lists arguments, return values, or errors.
+- Tests cover distinct scenarios and must not verify static data or trivial constructors; one scenario is not tested twice.
+- Pull-request and issue text is English only and describes what the change contains, with the issue-closing keyword on the last line.
+
 ## Quality gate
 
 Run the area-local check before handing off:
