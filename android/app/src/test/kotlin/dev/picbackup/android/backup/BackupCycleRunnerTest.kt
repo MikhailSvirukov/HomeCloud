@@ -14,6 +14,7 @@ import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -48,18 +49,18 @@ class BackupCycleRunnerTest {
 
         runner.runOnce()
 
-        assertEquals(queue.entries(), store.read())
-        assertEquals(CANDIDATE_COUNT, store.read().size)
+        val stored = store.read()
+        assertEquals(queue.entries(), stored)
     }
 
     @Test
-    fun `runOnce loads an existing snapshot before planning so a tracked candidate is not enqueued again`() {
+    fun `runOnce loads an existing snapshot before planning and preserves its state and attempt count`() {
         val store = FileUploadQueueStore(storeFile())
         val existing =
             entry(
                 uploadId = "$UPLOAD_ID_PREFIX$CANDIDATE_ID",
-                state = UploadQueueState.IN_FLIGHT,
-                attemptCount = RESTORED_ATTEMPT_COUNT,
+                state = UploadQueueState.FAILED,
+                attemptCount = STORED_ATTEMPT_COUNT,
             )
         store.write(listOf(existing))
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
@@ -73,7 +74,9 @@ class BackupCycleRunnerTest {
         val result = runner.runOnce()
 
         assertEquals(PlanResult(discoveredCandidates = SINGLE_CANDIDATE_COUNT, newlyEnqueued = 0), result)
-        assertEquals(listOf(existing), queue.entries())
+        val queued = queue.entries().single()
+        assertEquals(UploadQueueState.FAILED, queued.state)
+        assertEquals(STORED_ATTEMPT_COUNT, queued.attemptCount)
         assertEquals(listOf(existing), store.read())
     }
 
@@ -94,45 +97,38 @@ class BackupCycleRunnerTest {
     }
 
     @Test
-    fun `runOnce leaves a stored failed entry failed with its attempt count`() {
-        val store = FileUploadQueueStore(storeFile())
-        store.write(
-            listOf(
-                entry(
-                    uploadId = "$UPLOAD_ID_PREFIX$CANDIDATE_ID",
-                    state = UploadQueueState.FAILED,
-                    attemptCount = MAX_ATTEMPTS,
-                ),
-            ),
-        )
+    fun `runOnce with no discovered candidates reports an empty plan and stores an empty snapshot`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val runner =
-            runnerFor(
-                store = store,
-                queue = queue,
-                rows = listOf(candidateRow(id = CANDIDATE_ID, mimeType = IMAGE_MIME_TYPE)),
-            )
+        val store = FileUploadQueueStore(storeFile())
+        val runner = runnerFor(store = store, queue = queue, rows = emptyList())
 
-        runner.runOnce()
+        val result = runner.runOnce()
 
-        val queued = queue.entries().single()
-        assertEquals(UploadQueueState.FAILED, queued.state)
-        assertEquals(MAX_ATTEMPTS, queued.attemptCount)
-
-        val persisted = store.read().single()
-        assertEquals(UploadQueueState.FAILED, persisted.state)
-        assertEquals(MAX_ATTEMPTS, persisted.attemptCount)
+        assertEquals(PlanResult(discoveredCandidates = 0, newlyEnqueued = 0), result)
+        assertTrue(store.read().isEmpty())
     }
 
     @Test
     fun `runOnce propagates a store read failure and writes nothing`() {
-        val store = ThrowingUploadQueueStore()
+        val failure = UploadQueueStoreException(READ_FAILURE_MESSAGE)
+        val store = FakeUploadQueueStore(readFailure = failure)
         val runner = runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS))
 
         val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
 
-        assertSame(store.failure, thrown)
+        assertSame(failure, thrown)
         assertEquals(0, store.writeCount)
+    }
+
+    @Test
+    fun `runOnce propagates a store write failure`() {
+        val failure = UploadQueueStoreException(WRITE_FAILURE_MESSAGE)
+        val store = FakeUploadQueueStore(writeFailure = failure)
+        val runner = runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS))
+
+        val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
+
+        assertSame(failure, thrown)
     }
 
     private fun runnerFor(
@@ -142,7 +138,7 @@ class BackupCycleRunnerTest {
     ): BackupCycleRunner {
         val planner =
             MediaBackupPlanner(MediaDiscovery(FixedMediaRowSource(rows)), FakeUploadIdFactory(), queue)
-        return BackupCycleRunner(planner = planner, queue = queue, store = store)
+        return BackupCycleRunner(planner = planner, store = store)
     }
 
     private fun imageAndVideoRows(): List<RawMediaEntry> =
@@ -190,17 +186,20 @@ class BackupCycleRunnerTest {
             uploadIdsBySourceId[item.id] ?: "$UPLOAD_ID_PREFIX${item.id}"
     }
 
-    private class ThrowingUploadQueueStore : UploadQueueStore {
-
-        val failure = UploadQueueStoreException(READ_FAILURE_MESSAGE)
+    private class FakeUploadQueueStore(
+        private val readFailure: UploadQueueStoreException? = null,
+        private val writeFailure: UploadQueueStoreException? = null,
+    ) : UploadQueueStore {
 
         var writeCount: Int = 0
             private set
 
-        override fun read(): List<UploadQueueEntry> = throw failure
+        override fun read(): List<UploadQueueEntry> =
+            readFailure?.let { failure -> throw failure } ?: emptyList()
 
         override fun write(entries: List<UploadQueueEntry>) {
             writeCount += 1
+            writeFailure?.let { failure -> throw failure }
         }
     }
 
@@ -220,10 +219,11 @@ class BackupCycleRunnerTest {
         const val SINGLE_CANDIDATE_COUNT = 1
 
         const val UPLOAD_ID_PREFIX = "upload-"
-        const val RESTORED_ATTEMPT_COUNT = 2
+        const val STORED_ATTEMPT_COUNT = 3
         const val MAX_ATTEMPTS = 3
 
         const val STORE_FILE_NAME = "upload-queue.txt"
         const val READ_FAILURE_MESSAGE = "store read failed"
+        const val WRITE_FAILURE_MESSAGE = "store write failed"
     }
 }

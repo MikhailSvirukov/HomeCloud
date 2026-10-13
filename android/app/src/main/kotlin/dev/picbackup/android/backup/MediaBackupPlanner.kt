@@ -22,7 +22,7 @@ data class PlanResult(
 class MediaBackupPlanner(
     private val discovery: MediaDiscovery,
     private val uploadIdFactory: UploadIdFactory,
-    private val queue: UploadQueue,
+    val queue: UploadQueue,
 ) {
 
     /**
