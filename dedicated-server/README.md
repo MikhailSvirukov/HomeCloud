@@ -32,13 +32,19 @@ PICBACKUP_DEDICATED_SERVER_CONFIG=/path/to/config.toml cargo run --locked
 Without that variable the binary reads `dedicated-server.toml` from the current
 directory.
 
+The crate's modules are private; its public items are re-exported from the crate
+root. Consumers therefore use `dedicated_server::` paths (for example
+`dedicated_server::ServerConfig`) rather than module paths such as
+`dedicated_server::config::ServerConfig`.
+
 ## Configuration schema
 
 - Top level: `listen` (socket address string), `[identity]`, `[heartbeat]`,
   `[[cluster.nodes]]`.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
-- `heartbeat`: `interval_ms` (`u64` > 0), `timeout_ms` (`u64` > 0),
-  `miss_threshold` (`u32` > 0).
+- `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
+  (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
+  value is rejected while the configuration is parsed, not by a later check.
 - `cluster.nodes[]`: `label` (non-empty, unique), `address` (unique socket
   address), `encryption_public_key`, `signing_public_key` (non-empty strings).
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
@@ -77,9 +83,9 @@ signing_public_key = "storage-2-signing-public-key"
 read from the two private-key files named by `identity.encryption_private_key`
 and `identity.signing_private_key`; the bytes stay opaque because key encoding
 and algorithms are still open parameters in `docs/specification-v1.md`. Loading
-fails when either file cannot be read, is empty, is larger than `MAX_KEY_BYTES`
-(64 KiB), or when the same material would serve both the decryption and the
-signing role. At most `MAX_KEY_BYTES + 1` bytes of each file are read, so an
+fails when either file cannot be read, is empty, is larger than the 64 KiB
+limit, or when the same material would serve both the decryption and the
+signing role. At most 64 KiB plus one byte of each file is read, so an
 oversized file is rejected without being loaded in full, and an identity failure
 names both the configuration file and the offending key file. The configured
 `identity.label` is bound to the loaded identity and is used as the node's
@@ -89,9 +95,11 @@ label and key lengths, never the key bytes.
 ## Heartbeat tracking
 
 `src/heartbeat.rs` holds the scheduling and consecutive-miss bookkeeping for the
-dedicated server's own heartbeat exchanges with the fixed cluster. It is a pure
-state machine: callers drive it with explicit `Instant` values, and it uses no
-timers, no I/O, and no async work.
+dedicated server's own heartbeat exchanges with the fixed cluster. A tracker is
+built from the cluster's node labels, a timing value (interval, timeout and
+non-zero miss threshold) and a start `Instant`; it is a pure state machine that
+callers drive with explicit `Instant` values, and it uses no timers, no I/O, and
+no async work.
 
 - Each node's next attempt is scheduled one `heartbeat.interval_ms` after a
   response or a missed attempt; an in-flight attempt that is not answered within
@@ -101,8 +109,10 @@ timers, no I/O, and no async work.
 - Per `docs/specification-v1.md`, this availability state stays internal to the
   dedicated server and is never propagated to clients or storage nodes.
 
-The tracker only produces send/timeout actions; delivering heartbeats over the
-network is not implemented yet.
+The tracker keeps that availability private and reports only the labels of
+unavailable nodes, in the order the labels were supplied. It produces
+send/timeout actions, but delivering heartbeats over the network is not
+implemented yet.
 
 ## Account registration
 
@@ -110,13 +120,16 @@ network is not implemented yet.
 registration. It is pure state: no I/O, not async, and no cryptography.
 
 - `Login` is a validated, cluster-unique identifier. It must be non-empty, at
-  most `MAX_LOGIN_LENGTH` (64) characters, and use only the conservative ASCII
-  subset `[A-Za-z0-9._-]`.
-- `RegistrationRequest` carries the login plus two opaque byte strings: the
-  password verifier and the client's encryption public key.
-- `AccountRegistry` stores `AccountRecord`s. Registering an already-taken login
-  is rejected and leaves the registry unchanged. `records()` yields accounts in
-  login order so replication to the cluster is deterministic.
+  most 64 characters, and use only the conservative ASCII subset
+  `[A-Za-z0-9._-]`.
+- `Account` holds the login, the password verifier and the client encryption
+  public key; it is built through the validating `Account::new` constructor,
+  which rejects an empty verifier or client key.
+- `AccountRegistry` registers accounts, looks them up and iterates them in login
+  order so replication to the cluster is deterministic. Registering an
+  already-taken login is rejected and leaves the registry unchanged.
+- `Account` deliberately has no `Debug`, so the verifier and key bytes cannot be
+  rendered accidentally.
 - The password-hashing scheme and the key encodings are still open parameters
   in `docs/specification-v1.md`; this module only carries those bytes and
   implements no crypto.
