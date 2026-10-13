@@ -31,6 +31,11 @@ class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
             )
         }
 
+    override fun restore(entries: List<UploadQueueEntry>) {
+        entriesById.clear()
+        entries.forEach { entry -> entriesById[entry.uploadId] = entry }
+    }
+
     override fun entries(): List<UploadQueueEntry> = entriesById.values.toList()
 
     override fun nextPending(): UploadQueueEntry? =
