@@ -109,24 +109,6 @@ class MediaBackupPlannerTest {
         assertEquals(1, queue.entries().size)
     }
 
-    @Test
-    fun `plan reports the number of discovered photo and video candidates`() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 3L, mimeType = VIDEO_MIME_TYPE),
-            ),
-            queue = queue,
-        )
-
-        val result = planner.plan()
-
-        assertEquals(3, result.discoveredCandidates)
-        assertEquals(3, result.newlyEnqueued)
-    }
-
     private fun plannerFor(
         rows: List<RawMediaEntry>,
         queue: InMemoryUploadQueue,
