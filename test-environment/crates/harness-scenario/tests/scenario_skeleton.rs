@@ -6,7 +6,10 @@ use harness_core::{
     ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
     NetworkConditions, NodeControl, NodeId, NodeSpec, NodeState, PeerLink,
 };
-use harness_scenario::{Scenario, ScenarioCheck, ScenarioContext, ScenarioRunner};
+use harness_scenario::{
+    FaultActive, NoActiveFaults, NodeRunning, Scenario, ScenarioCheck, ScenarioContext,
+    ScenarioRunner, StorageQuorumHeld,
+};
 
 fn addr(port: u16) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
@@ -53,48 +56,6 @@ impl ScenarioCheck for Check {
 fn failed(message: String) -> HarnessError {
     HarnessError::CheckFailed { message }
 }
-fn active_fault(fault: Fault) -> Box<dyn ScenarioCheck> {
-    check("fault active", move |context| {
-        if context.faults().active_faults().contains(&fault) {
-            Ok(())
-        } else {
-            Err(failed(format!("fault not active: {fault}")))
-        }
-    })
-}
-fn no_active_faults() -> Box<dyn ScenarioCheck> {
-    check("no active faults", |context| {
-        match context.faults().active_faults().first() {
-            None => Ok(()),
-            Some(fault) => Err(failed(format!("fault still active: {fault}"))),
-        }
-    })
-}
-fn quorum_holds() -> Box<dyn ScenarioCheck> {
-    check("storage quorum", |context| {
-        let mut running = 0usize;
-        for spec in context.topology().storage_nodes() {
-            if context.nodes().state(spec.id)? == NodeState::Running {
-                running += 1;
-            }
-        }
-        if running >= context.topology().quorum() {
-            Ok(())
-        } else {
-            Err(failed(format!("only {running} storage nodes running")))
-        }
-    })
-}
-fn node_running(node: NodeId) -> Box<dyn ScenarioCheck> {
-    check("node running", move |context| {
-        match context.nodes().state(node)? {
-            NodeState::Running => Ok(()),
-            state => Err(failed(format!(
-                "node {node} is {state:?}, expected Running"
-            ))),
-        }
-    })
-}
 
 fn always_fails(message: &'static str) -> Box<dyn ScenarioCheck> {
     check("always fails", move |_context| {
@@ -113,12 +74,18 @@ fn happy_path_scenario_executes_every_step() {
     let stopped = NodeId::new(4);
     let scenario = Scenario::builder("peer degradation and node recovery")
         .apply_fault(degradation.clone(), "degrade peer link")
-        .check(active_fault(degradation.clone()), "degraded link is active")
+        .check(
+            Box::new(FaultActive(degradation.clone())),
+            "degraded link is active",
+        )
         .revert_fault(degradation.clone(), "heal peer link")
         .stop_node(stopped, "stop a storage node")
-        .check(quorum_holds(), "remaining storage keeps quorum")
+        .check(
+            Box::new(StorageQuorumHeld),
+            "remaining storage keeps quorum",
+        )
         .start_node(stopped, "restart the storage node")
-        .check(node_running(stopped), "restarted node is running")
+        .check(Box::new(NodeRunning(stopped)), "restarted node is running")
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(report.is_success());
@@ -155,9 +122,12 @@ fn node_shutdown_fault_apply_and_revert_track_active_set() {
     };
     let scenario = Scenario::builder("node shutdown round trip")
         .apply_fault(shutdown.clone(), "apply node shutdown")
-        .check(active_fault(shutdown.clone()), "shutdown is active")
+        .check(
+            Box::new(FaultActive(shutdown.clone())),
+            "shutdown is active",
+        )
         .revert_fault(shutdown.clone(), "revert node shutdown")
-        .check(no_active_faults(), "shutdown is gone")
+        .check(Box::new(NoActiveFaults), "shutdown is gone")
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(report.is_success());
