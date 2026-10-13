@@ -120,8 +120,6 @@ impl<'a> ScenarioContext<'a> {
 
 /// Extension point: a custom assertion evaluated during a scenario.
 pub trait ScenarioCheck {
-    /// A short, human-readable name for the check.
-    fn name(&self) -> &str;
     /// Evaluates the assertion, returning a [`HarnessError`] when it fails.
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()>;
 }

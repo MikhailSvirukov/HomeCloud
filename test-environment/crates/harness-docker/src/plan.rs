@@ -69,7 +69,6 @@ impl PlanSettings {
 }
 
 /// One node container in the isolated network.
-#[derive(Debug)]
 pub struct ContainerPlan {
     /// Identifier of the node this container runs.
     pub node: NodeId,

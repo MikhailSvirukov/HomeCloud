@@ -3,7 +3,7 @@
 //! Each helper returns a [`Command`] with exactly the program and ordered
 //! arguments needed to stand the plan up. Rendering is side-effect free, so the
 //! commands can be asserted in fast, daemon-free tests and later executed by a
-//! CLI-based [`ClusterRuntime`](crate::runtime::ClusterRuntime).
+//! CLI-based [`ClusterRuntime`](crate::ClusterRuntime).
 
 use crate::plan::{ClusterPlan, ContainerPlan};
 

@@ -11,14 +11,6 @@ use crate::{ScenarioCheck, ScenarioContext};
 
 type Result<T> = core::result::Result<T, HarnessError>;
 
-const NAME_ALL_NODES_RUNNING: &str = "all nodes running";
-const NAME_NODE_RUNNING: &str = "node running";
-const NAME_NODE_STOPPED: &str = "node stopped";
-const NAME_STORAGE_QUORUM_HELD: &str = "storage quorum held";
-const NAME_QUORUM_LOST: &str = "quorum lost";
-const NAME_FAULT_ACTIVE: &str = "fault active";
-const NAME_NO_ACTIVE_FAULTS: &str = "no active faults";
-
 /// Counts storage nodes currently [`NodeState::Running`].
 fn running_storage_count(context: &ScenarioContext<'_>) -> Result<usize> {
     let mut running = 0;
@@ -34,9 +26,6 @@ fn running_storage_count(context: &ScenarioContext<'_>) -> Result<usize> {
 pub struct AllNodesRunning;
 
 impl ScenarioCheck for AllNodesRunning {
-    fn name(&self) -> &str {
-        NAME_ALL_NODES_RUNNING
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let failure: Option<(NodeId, NodeState)> =
             context
@@ -63,9 +52,6 @@ impl ScenarioCheck for AllNodesRunning {
 pub struct NodeRunning(pub NodeId);
 
 impl ScenarioCheck for NodeRunning {
-    fn name(&self) -> &str {
-        NAME_NODE_RUNNING
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let observed = context.nodes.state(self.0)?;
         (observed == NodeState::Running)
@@ -82,9 +68,6 @@ impl ScenarioCheck for NodeRunning {
 pub struct NodeStopped(pub NodeId);
 
 impl ScenarioCheck for NodeStopped {
-    fn name(&self) -> &str {
-        NAME_NODE_STOPPED
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let observed = context.nodes.state(self.0)?;
         (observed == NodeState::Stopped)
@@ -101,9 +84,6 @@ impl ScenarioCheck for NodeStopped {
 pub struct StorageQuorumHeld;
 
 impl ScenarioCheck for StorageQuorumHeld {
-    fn name(&self) -> &str {
-        NAME_STORAGE_QUORUM_HELD
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let quorum = context.topology.quorum();
         let running = running_storage_count(context)?;
@@ -122,9 +102,6 @@ impl ScenarioCheck for StorageQuorumHeld {
 pub struct QuorumLost;
 
 impl ScenarioCheck for QuorumLost {
-    fn name(&self) -> &str {
-        NAME_QUORUM_LOST
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         let quorum = context.topology.quorum();
         let running = running_storage_count(context)?;
@@ -143,9 +120,6 @@ impl ScenarioCheck for QuorumLost {
 pub struct FaultActive(pub Fault);
 
 impl ScenarioCheck for FaultActive {
-    fn name(&self) -> &str {
-        NAME_FAULT_ACTIVE
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         context
             .faults
@@ -162,9 +136,6 @@ impl ScenarioCheck for FaultActive {
 pub struct NoActiveFaults;
 
 impl ScenarioCheck for NoActiveFaults {
-    fn name(&self) -> &str {
-        NAME_NO_ACTIVE_FAULTS
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<()> {
         match context.faults.active_faults().first() {
             None => Ok(()),
@@ -240,17 +211,6 @@ mod tests {
         Fault::NodeShutdown {
             node: NodeId::new(node),
         }
-    }
-
-    #[test]
-    fn checks_expose_stable_names() {
-        assert_eq!(AllNodesRunning.name(), "all nodes running");
-        assert_eq!(NodeRunning(NodeId::new(2)).name(), "node running");
-        assert_eq!(NodeStopped(NodeId::new(2)).name(), "node stopped");
-        assert_eq!(StorageQuorumHeld.name(), "storage quorum held");
-        assert_eq!(QuorumLost.name(), "quorum lost");
-        assert_eq!(FaultActive(shutdown(2)).name(), "fault active");
-        assert_eq!(NoActiveFaults.name(), "no active faults");
     }
 
     #[test]

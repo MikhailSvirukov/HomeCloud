@@ -39,26 +39,22 @@ fn loss(percent: u8) -> LossPercent {
 type Assert = Box<dyn Fn(&ScenarioContext<'_>) -> Result<(), HarnessError>>;
 
 /// A custom [`ScenarioCheck`] that delegates to a closure.
-struct Check(&'static str, Assert);
+struct Check(Assert);
 
 fn check(
-    name: &'static str,
     assert: impl Fn(&ScenarioContext<'_>) -> Result<(), HarnessError> + 'static,
 ) -> Box<dyn ScenarioCheck> {
-    Box::new(Check(name, Box::new(assert)))
+    Box::new(Check(Box::new(assert)))
 }
 
 impl ScenarioCheck for Check {
-    fn name(&self) -> &str {
-        self.0
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        (self.1)(context)
+        (self.0)(context)
     }
 }
 
 fn always_fails(message: &'static str) -> Box<dyn ScenarioCheck> {
-    check("always fails", move |_context| {
+    check(move |_context| {
         Err(HarnessError::CheckFailed {
             message: message.to_string(),
         })
