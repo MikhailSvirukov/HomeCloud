@@ -71,8 +71,8 @@ fn print_startup_summary(config: &NodeConfig) {
         env!("CARGO_PKG_VERSION"),
         PROTOCOL_VERSION
     );
-    println!("node id: {}", config.node_id());
-    println!("listen address: {}", config.listen_addr());
-    println!("data dir: {}", config.data_dir().display());
-    println!("peers: {}", config.peers().len());
+    println!("node id: {}", config.node_id);
+    println!("listen address: {}", config.listen_addr);
+    println!("data dir: {}", config.data_dir.display());
+    println!("peers: {}", config.peers.len());
 }
