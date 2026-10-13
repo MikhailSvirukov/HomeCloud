@@ -1,0 +1,12 @@
+[package]
+name = "harness-test-support"
+description = "Fixtures shared by test-environment tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+harness-core.workspace = true

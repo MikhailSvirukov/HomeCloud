@@ -4,10 +4,9 @@
 //! build a validated topology, derive a [`ClusterPlan`], and exercise the in-memory
 //! runtime. No Docker daemon or socket is touched.
 
-use std::net::SocketAddr;
-
-use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
+use harness_core::{NodeId, NodeRole};
 use harness_docker::{ClusterPlan, ClusterRuntime, FakeClusterRuntime, PlanSettings};
+use harness_test_support::{addr, topology};
 
 /// Environment key carrying the node's numeric identifier.
 const ENV_NODE_ID: &str = "NODE_ID";
@@ -31,33 +30,8 @@ const STORAGE_IMAGE: &str = "storage:1";
 const DEDICATED_ID: u16 = 1;
 /// First node id handed out to storage nodes.
 const FIRST_STORAGE_ID: u16 = 2;
-/// Base address port for storage node listen addresses.
-const STORAGE_PORT_BASE: u16 = 7002;
-
-/// Builds `127.0.0.1:<port>`.
-fn addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
-
-/// Builds a valid topology with one dedicated server and `storage` storage nodes.
-fn topology_with_storage(storage: u16) -> ClusterTopology {
-    let builder = ClusterTopology::builder().dedicated_server(NodeSpec::dedicated_server(
-        NodeId::new(DEDICATED_ID),
-        "dedicated",
-        addr(7001),
-    ));
-    (0..storage)
-        .fold(builder, |builder, i| {
-            let id = i + FIRST_STORAGE_ID;
-            builder.storage_node(NodeSpec::storage(
-                NodeId::new(id),
-                format!("s-{id}"),
-                addr(STORAGE_PORT_BASE + i),
-            ))
-        })
-        .build()
-        .expect("one dedicated server plus any storage nodes is a valid topology")
-}
+/// Number of storage nodes in the shared fixture.
+const STORAGE_NODES: u16 = 3;
 
 /// Builds the plan settings used across these tests.
 fn settings() -> PlanSettings {
@@ -66,7 +40,7 @@ fn settings() -> PlanSettings {
 
 /// Derives a plan for one dedicated server and `storage` storage nodes.
 fn plan_with_storage(storage: u16) -> ClusterPlan {
-    ClusterPlan::from_topology(&topology_with_storage(storage), &settings())
+    ClusterPlan::from_topology(&topology(storage), &settings())
 }
 
 /// The node ids in plan (topology) order.
@@ -76,11 +50,11 @@ fn plan_order(plan: &ClusterPlan) -> Vec<NodeId> {
 
 #[test]
 fn plan_places_dedicated_server_first_and_uses_role_images() {
-    let plan = plan_with_storage(3);
+    let plan = plan_with_storage(STORAGE_NODES);
 
     assert_eq!(
         plan.containers.len(),
-        4,
+        usize::from(STORAGE_NODES) + 1,
         "1 dedicated + 3 storage => 4 containers"
     );
 
@@ -100,7 +74,7 @@ fn plan_places_dedicated_server_first_and_uses_role_images() {
 
 #[test]
 fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
-    let plan = plan_with_storage(3);
+    let plan = plan_with_storage(STORAGE_NODES);
 
     for container in &plan.containers {
         assert_eq!(
@@ -114,7 +88,7 @@ fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
 
 #[test]
 fn container_environment_carries_node_identity_for_dedicated_and_storage() {
-    let plan = plan_with_storage(3);
+    let plan = plan_with_storage(STORAGE_NODES);
 
     let dedicated = plan
         .container(NodeId::new(DEDICATED_ID))
@@ -131,9 +105,10 @@ fn container_environment_carries_node_identity_for_dedicated_and_storage() {
         dedicated.env.get(ENV_NODE_ROLE).map(String::as_str),
         Some(ROLE_DEDICATED_SERVER)
     );
+    let dedicated_address = addr(DEDICATED_ID).to_string();
     assert_eq!(
         dedicated.env.get(ENV_LISTEN_ADDRESS).map(String::as_str),
-        Some("127.0.0.1:7001")
+        Some(dedicated_address.as_str())
     );
 
     let storage = plan
@@ -142,21 +117,22 @@ fn container_environment_carries_node_identity_for_dedicated_and_storage() {
     assert_eq!(storage.env.get(ENV_NODE_ID).map(String::as_str), Some("2"));
     assert_eq!(
         storage.env.get(ENV_NODE_LABEL).map(String::as_str),
-        Some("s-2")
+        Some("storage-1")
     );
     assert_eq!(
         storage.env.get(ENV_NODE_ROLE).map(String::as_str),
         Some(ROLE_STORAGE)
     );
+    let storage_address = addr(FIRST_STORAGE_ID).to_string();
     assert_eq!(
         storage.env.get(ENV_LISTEN_ADDRESS).map(String::as_str),
-        Some("127.0.0.1:7002")
+        Some(storage_address.as_str())
     );
 }
 
 #[test]
 fn fake_runtime_start_stop_round_trip_follows_plan_order_and_is_idempotent() {
-    let plan = plan_with_storage(3);
+    let plan = plan_with_storage(STORAGE_NODES);
     let mut runtime = FakeClusterRuntime::new();
     assert!(runtime.running_containers().is_empty());
 
@@ -179,8 +155,8 @@ fn fake_runtime_start_stop_round_trip_follows_plan_order_and_is_idempotent() {
 #[test]
 fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
     for storage in [1_u16, 3, 5] {
-        let topology = topology_with_storage(storage);
-        let plan = ClusterPlan::from_topology(&topology, &settings());
+        let cluster = topology(storage);
+        let plan = ClusterPlan::from_topology(&cluster, &settings());
 
         let expected = usize::from(storage) + 1;
         assert_eq!(
@@ -189,7 +165,7 @@ fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
             "1 dedicated + {storage} storage => {expected} containers"
         );
 
-        for spec in topology.nodes() {
+        for spec in cluster.nodes() {
             let container = plan
                 .container(spec.id)
                 .expect("every topology node id resolves to a container");
@@ -197,4 +173,11 @@ fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
             assert_eq!(container.address, spec.address);
         }
     }
+}
+
+#[test]
+fn container_lookup_misses_an_unknown_node_id() {
+    let plan = plan_with_storage(STORAGE_NODES);
+
+    assert!(plan.container(NodeId::new(99)).is_none());
 }

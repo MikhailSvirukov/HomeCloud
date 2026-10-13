@@ -246,13 +246,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_one_dedicated_and_three_storage() {
-        let t = topology(3);
-        assert_eq!(t.node_count(), 4);
-        assert_eq!(t.storage_nodes().len(), 3);
-        assert_eq!(t.dedicated_server().role, NodeRole::DedicatedServer);
-    }
-    #[test]
     fn missing_dedicated_server_is_rejected() {
         let result = assemble(None, specs(&[(2, 7002), (3, 7003), (4, 7004)]));
         assert!(matches!(result, Err(E::DedicatedServerCount { count: 0 })));

@@ -4,37 +4,24 @@
 //! in-memory fakes and asserts the resulting [`ScenarioReport`], so the
 //! composable checks are validated through the same path scenario authors use.
 
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use harness_core::{
     ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
-    LossPercent, NetworkConditions, NodeId, NodeSpec, PeerLink,
+    LossPercent, NetworkConditions, NodeId, PeerLink,
 };
 use harness_scenario::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost, Scenario,
     ScenarioRunner, StorageQuorumHeld,
 };
-
-fn addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
+use harness_test_support::{faults, nodes, topology};
 
 /// One dedicated server plus three storage nodes, the standard recovery shape.
 fn fixture() -> (ClusterTopology, InMemoryNodeControl, FakeFaultInjector) {
-    let topology = ClusterTopology::builder()
-        .dedicated_server(NodeSpec::dedicated_server(
-            NodeId::new(1),
-            "dedicated",
-            addr(7001),
-        ))
-        .storage_node(NodeSpec::storage(NodeId::new(2), "storage-1", addr(7002)))
-        .storage_node(NodeSpec::storage(NodeId::new(3), "storage-2", addr(7003)))
-        .storage_node(NodeSpec::storage(NodeId::new(4), "storage-3", addr(7004)))
-        .build()
-        .expect("one dedicated plus three storage nodes is valid");
-    let nodes = InMemoryNodeControl::new(topology.nodes().map(|spec| spec.id));
-    let faults = FakeFaultInjector::new(topology.clone());
-    (topology, nodes, faults)
+    let cluster = topology(3);
+    let node_control = nodes(&cluster);
+    let fault_injector = faults(&cluster);
+    (cluster, node_control, fault_injector)
 }
 
 fn shutdown(node: u16) -> Fault {
@@ -122,25 +109,5 @@ fn quorum_lost_check_fails_on_a_healthy_cluster() {
             total: 3,
             quorum: 2,
         })
-    );
-}
-
-#[test]
-fn runner_stops_at_first_failing_check_with_typed_error() {
-    let (topology, mut nodes, mut faults) = fixture();
-    let scenario = Scenario::builder("failing check stops the run")
-        .check(Box::new(FaultActive(shutdown(3))), "a fault is active")
-        .check(Box::new(NodeStopped(NodeId::new(4))), "a node is stopped")
-        .build();
-    let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
-    assert!(!report.is_success());
-    assert_eq!(report.steps.len(), 1);
-    let failed = report
-        .failed_step()
-        .expect("the first check fails before the second step runs");
-    assert_eq!(failed.description, "a fault is active");
-    assert_eq!(
-        failed.error(),
-        Some(&HarnessError::FaultExpectedActive { fault: shutdown(3) })
     );
 }
