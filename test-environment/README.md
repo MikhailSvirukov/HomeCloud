@@ -19,6 +19,8 @@ test-environment/
 └── crates/
     ├── harness-core/      # Docker-independent model + fakes
     │   └── src/{topology,fault,node,error}.rs
+    ├── harness-docker/    # isolated Docker cluster plan + runtime seam
+    │   └── src/{plan,runtime}.rs
     └── harness-scenario/  # scenario definition + execution engine
         └── src/scenario.rs
 ```
@@ -31,6 +33,12 @@ test-environment/
   trait and an in-memory `FakeFaultInjector`.
 - `harness-core::node`: `NodeControl` lifecycle (start/stop/restart) with an
   `InMemoryNodeControl` fake.
+- `harness-docker::plan`: a pure `ClusterPlan` derived from a topology — the
+  isolated network plus one container per node (image, hostname, address, and
+  `NODE_ID`/`NODE_LABEL`/`NODE_ROLE`/`LISTEN_ADDRESS` env), ready for a future
+  Testcontainers wiring.
+- `harness-docker::runtime`: the `ClusterRuntime` start/stop/remove seam with a
+  `FakeClusterRuntime`, so lifecycle logic is testable without Docker.
 - `harness-scenario`: `Scenario`/`ScenarioBuilder` (ordered `Action`s), the
   `ScenarioCheck` extension point for new recovery assertions, and
   `ScenarioRunner`, which returns a per-step `ScenarioReport`.

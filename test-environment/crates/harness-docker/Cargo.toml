@@ -1,0 +1,12 @@
+[package]
+name = "harness-docker"
+description = "Pure descriptions of the isolated Docker test cluster and its container lifecycle, testable without a Docker daemon."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+harness-core.workspace = true
