@@ -40,11 +40,12 @@ These follow the daily review notes and apply to every Rust change here.
   unrepresentable with `NonZero*` types. A module with one error type gets a local
   `type Result<T> = core::result::Result<T, ErrorKind>;` alias.
 - Prefer guard-style `if ... { return Err(..) }` groups and `match` over `else if` chains
-  and nested `if`/`else`.
+  and nested `if`/`else` (this refines the root guide's general `if`/`else` preference).
 - Enums with stable wire values use explicit `#[repr(u8)]` discriminants or
   `From`/`TryFrom` conversions rather than parallel `match` tables.
 - Document behaviour only. Do not add `# Errors`/`# Returns` sections or per-argument
-  prose; describe what each error means on the error variant itself.
+  prose; describe what each error means on the error variant itself (this refines the
+  root guide's documentation rule).
 - Tests cover each scenario once: internal edge cases as unit tests, public behaviour in
   `tests/`. Do not test trivial constructors or static data, and do not repeat a scenario
   in both layers.
