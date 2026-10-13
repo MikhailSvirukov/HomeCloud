@@ -3,31 +3,18 @@ package dev.picbackup.android.queue
 /**
  * Client-side model of the pending upload work for the v1 backup flow.
  *
- * An implementation tracks at most one [UploadQueueEntry] per `uploadId`. Enqueueing is
- * idempotent: the same `uploadId` always maps to a single entry so that a retry of a confirmed or
- * unconfirmed upload never creates a duplicate version.
+ * At most one [UploadQueueEntry] is tracked per `uploadId`, and enqueueing is idempotent so a
+ * repeated upload id never creates a second version. The queue is a pure domain model: it performs
+ * no I/O, persistence, or scheduling.
  *
- * The queue is a pure domain model. It performs no I/O, does not persist across process restarts,
- * and does not schedule work; persistence, background scheduling and networking are introduced by
- * later issues.
- *
- * There is deliberately no delete or remove operation: per the v1 specification, a local file
- * deletion must not propagate to the server, so the model exposes no delete command at all.
+ * There is deliberately no delete operation, because a local deletion must not propagate to the
+ * server.
  */
 interface UploadQueue {
 
     /**
-     * Records a new file version as pending upload, or returns the already tracked entry.
-     *
-     * If [uploadId] is unknown, a new entry is created in [UploadQueueState.PENDING] with an
-     * [UploadQueueEntry.attemptCount] of zero. If [uploadId] is already tracked, the existing
-     * entry is returned unchanged; no duplicate is created and no attempt or state is reset.
-     *
-     * @param uploadId opaque stable identifier for this file version.
-     * @param sourceId identifier of the local media item.
-     * @param sizeBytes payload size in bytes.
-     * @param dateModifiedEpochSeconds source modification time in seconds since the Unix epoch.
-     * @return the tracked entry, newly created or already existing.
+     * Records a file version as pending, or returns the existing entry for a repeated [uploadId]
+     * unchanged.
      */
     fun enqueue(
         uploadId: String,
@@ -36,66 +23,31 @@ interface UploadQueue {
         dateModifiedEpochSeconds: Long,
     ): UploadQueueEntry
 
-    /**
-     * Returns an immutable snapshot of every tracked entry in insertion order.
-     *
-     * @return the tracked entries; empty when nothing has been enqueued.
-     */
+    /** Returns an immutable snapshot of every tracked entry in insertion order. */
     fun entries(): List<UploadQueueEntry>
 
-    /**
-     * Returns the oldest entry still in [UploadQueueState.PENDING], or `null` when none is pending.
-     *
-     * @return the next entry to upload, or `null` when the queue has no pending work.
-     */
+    /** Returns the oldest pending entry, or `null` when nothing is pending. */
     fun nextPending(): UploadQueueEntry?
 
-    /**
-     * Marks an entry as [UploadQueueState.IN_FLIGHT] so it is no longer returned by [nextPending].
-     *
-     * @param uploadId identifier of the entry to update.
-     * @throws IllegalArgumentException if [uploadId] is not tracked.
-     */
+    /** Marks an entry [UploadQueueState.IN_FLIGHT] so [nextPending] skips it. */
     fun markInFlight(uploadId: String)
 
-    /**
-     * Marks an entry as [UploadQueueState.COMPLETED].
-     *
-     * @param uploadId identifier of the entry to update.
-     * @throws IllegalArgumentException if [uploadId] is not tracked.
-     */
+    /** Marks an entry [UploadQueueState.COMPLETED]. */
     fun markCompleted(uploadId: String)
 
     /**
-     * Records a failed attempt for an entry.
-     *
-     * The attempt count is incremented. While the count stays below the configured maximum the
-     * entry returns to [UploadQueueState.PENDING]; once the maximum is reached the entry becomes
-     * [UploadQueueState.FAILED] and is no longer returned by [nextPending].
-     *
-     * @param uploadId identifier of the entry to update.
-     * @throws IllegalArgumentException if [uploadId] is not tracked.
+     * Records a failed attempt: the entry stays [UploadQueueState.PENDING] until the attempt budget
+     * is exhausted, then becomes [UploadQueueState.FAILED].
      */
     fun markFailed(uploadId: String)
 
     /**
-     * Starts a new retry cycle by moving every entry in [UploadQueueState.FAILED] back to
-     * [UploadQueueState.PENDING] and resetting its [UploadQueueEntry.attemptCount] to zero, so the
-     * entry receives a fresh attempt budget.
-     *
-     * This expresses the spec rule that when nodes report no quorum or all attempts time out, the
-     * work stays queued until the next cycle.
-     *
-     * Entries in any other state are left untouched.
-     *
-     * @return the number of entries that were moved back to [UploadQueueState.PENDING].
+     * Starts a new retry cycle: every [UploadQueueState.FAILED] entry returns to
+     * [UploadQueueState.PENDING] with its attempt budget reset, so work whose nodes report no quorum
+     * stays queued. Other states are untouched.
      */
     fun requeueFailed(): Int
 
-    /**
-     * Counts the entries currently in [UploadQueueState.PENDING].
-     *
-     * @return the number of pending entries.
-     */
+    /** Counts the entries currently pending. */
     fun pendingCount(): Int
 }

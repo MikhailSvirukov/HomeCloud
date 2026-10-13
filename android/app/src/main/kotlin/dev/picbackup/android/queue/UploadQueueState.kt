@@ -1,33 +1,19 @@
 package dev.picbackup.android.queue
 
 /**
- * Lifecycle state of a single [UploadQueueEntry] in the local upload queue.
- *
- * The states describe only the client-side orchestration of one file version. A version is
- * considered done once the server has confirmed it, which the queue models as [COMPLETED].
+ * Client-side orchestration state of one file version in the local upload queue. A version is done
+ * once the server has confirmed it, modelled as [COMPLETED].
  */
 enum class UploadQueueState {
-    /**
-     * Waiting to be selected for upload. This is the only state returned by
-     * [UploadQueue.nextPending].
-     */
+    /** Waiting for upload; the only state [UploadQueue.nextPending] returns. */
     PENDING,
 
-    /**
-     * Currently being uploaded. The entry stays in this state until the attempt is reported as
-     * [COMPLETED] or [FAILED].
-     */
+    /** Being uploaded; the entry leaves this state when its attempt is completed or failed. */
     IN_FLIGHT,
 
-    /**
-     * Confirmed by the server. A completed entry is never uploaded again; re-enqueueing the same
-     * `uploadId` returns the existing entry unchanged rather than creating a duplicate.
-     */
+    /** Confirmed by the server and never uploaded again. */
     COMPLETED,
 
-    /**
-     * Exhausted the configured attempt budget. A failed entry is not retried automatically and is
-     * not returned by [UploadQueue.nextPending].
-     */
+    /** Attempt budget exhausted; not retried automatically and never returned by [nextPending]. */
     FAILED,
 }
