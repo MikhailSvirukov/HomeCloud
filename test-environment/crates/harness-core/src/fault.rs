@@ -30,7 +30,7 @@ pub struct PeerLink {
 impl PeerLink {
     /// Creates a link, normalising endpoint order so both directions compare equal.
     pub fn new(a: NodeId, b: NodeId) -> Self {
-        if a.0 <= b.0 {
+        if a <= b {
             Self { a, b }
         } else {
             Self { a: b, b: a }
@@ -222,17 +222,14 @@ mod tests {
     #[test]
     fn apply_rejects_unknown_node() {
         let result = injector().apply(&shutdown(99));
-        assert!(matches!(result, Err(E::UnknownNode { id: NodeId(99) })));
+        assert!(matches!(result, Err(E::UnknownNode { id }) if id == NodeId::new(99)));
     }
     #[test]
     fn apply_rejects_link_with_unknown_endpoint() {
         let result = injector().apply(&degradation(1, 99));
         assert!(matches!(
             result,
-            Err(E::UnknownPeerLink {
-                a: NodeId(1),
-                b: NodeId(99)
-            })
+            Err(E::UnknownPeerLink { a, b }) if a == NodeId::new(1) && b == NodeId::new(99)
         ));
     }
     #[test]

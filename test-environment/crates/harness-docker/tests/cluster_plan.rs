@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use harness_core::{NodeId, NodeRole};
-use harness_docker::{ClusterPlan, ClusterRuntime, ContainerEnv, FakeClusterRuntime, PlanSettings};
+use harness_core::{NodeId, NodeRole, NodeSpec};
+use harness_docker::{ClusterPlan, ClusterRuntime, EnvBuilder, FakeClusterRuntime, PlanSettings};
 use harness_test_support::{addr, topology};
 
 /// Network name configured for the isolated test cluster.
@@ -23,21 +23,68 @@ const FIRST_STORAGE_ID: u16 = 2;
 /// Number of storage nodes in the shared fixture.
 const STORAGE_NODES: u16 = 3;
 
+/// Environment key holding the node id in the shared settings.
+const NODE_ID_KEY: &str = "NODE_ID";
+/// Environment key holding the node label in the shared settings.
+const NODE_LABEL_KEY: &str = "NODE_LABEL";
+/// Environment key holding the node role in the shared settings.
+const NODE_ROLE_KEY: &str = "NODE_ROLE";
+/// Environment key holding the listen address in the shared settings.
+const LISTEN_ADDRESS_KEY: &str = "LISTEN_ADDRESS";
+/// Role value rendered for the dedicated server.
+const DEDICATED_SERVER_ROLE: &str = "dedicated-server";
+/// Role value rendered for storage nodes.
+const STORAGE_ROLE: &str = "storage";
+
+/// Environment key holding the node id in the distinct caller mapping.
+const CUSTOM_NODE_ID_KEY: &str = "HC_NODE_ID";
+/// Environment key holding the node label in the distinct caller mapping.
+const CUSTOM_LABEL_KEY: &str = "HC_LABEL";
+/// Environment key holding the node role in the distinct caller mapping.
+const CUSTOM_ROLE_KEY: &str = "HC_ROLE";
+/// Environment key holding the listen address in the distinct caller mapping.
+const CUSTOM_ADDRESS_KEY: &str = "HC_ADDR";
+/// Role value rendered for the dedicated server in the distinct caller mapping.
+const CUSTOM_DEDICATED_ROLE: &str = "control";
+/// Role value rendered for storage nodes in the distinct caller mapping.
+const CUSTOM_STORAGE_ROLE: &str = "data";
+
+/// Role value the shared settings builder renders for a role.
+fn role_value(role: NodeRole) -> &'static str {
+    match role {
+        NodeRole::DedicatedServer => DEDICATED_SERVER_ROLE,
+        NodeRole::Storage => STORAGE_ROLE,
+    }
+}
+
+/// Environment builder the shared settings use, matching the caller contract.
+fn node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (NODE_ID_KEY.to_string(), spec.id.to_string()),
+        (NODE_LABEL_KEY.to_string(), spec.label.clone()),
+        (NODE_ROLE_KEY.to_string(), role_value(spec.role).to_string()),
+        (LISTEN_ADDRESS_KEY.to_string(), spec.address.to_string()),
+    ])
+}
+
+/// Environment builder with distinct keys and role values, to catch fallbacks.
+fn custom_node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
+    let role = match spec.role {
+        NodeRole::DedicatedServer => CUSTOM_DEDICATED_ROLE,
+        NodeRole::Storage => CUSTOM_STORAGE_ROLE,
+    };
+    BTreeMap::from([
+        (CUSTOM_NODE_ID_KEY.to_string(), spec.id.to_string()),
+        (CUSTOM_LABEL_KEY.to_string(), spec.label.clone()),
+        (CUSTOM_ROLE_KEY.to_string(), role.to_string()),
+        (CUSTOM_ADDRESS_KEY.to_string(), spec.address.to_string()),
+    ])
+}
+
 /// Builds the plan settings used across these tests.
 fn settings() -> PlanSettings {
-    PlanSettings::new(
-        NETWORK,
-        SERVER_IMAGE,
-        STORAGE_IMAGE,
-        ContainerEnv {
-            node_id: "NODE_ID".to_string(),
-            node_label: "NODE_LABEL".to_string(),
-            node_role: "NODE_ROLE".to_string(),
-            listen_address: "LISTEN_ADDRESS".to_string(),
-            dedicated_server_role: "dedicated-server".to_string(),
-            storage_role: "storage".to_string(),
-        },
-    )
+    let env: EnvBuilder = node_env;
+    PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE, env)
 }
 
 /// Derives a plan for one dedicated server and `storage` storage nodes.
@@ -89,20 +136,31 @@ fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
 }
 
 #[test]
-fn plan_renders_env_from_caller_supplied_key_names_and_role_values() {
-    let custom = PlanSettings::new(
-        NETWORK,
-        SERVER_IMAGE,
-        STORAGE_IMAGE,
-        ContainerEnv {
-            node_id: "HC_NODE_ID".to_string(),
-            node_label: "HC_LABEL".to_string(),
-            node_role: "HC_ROLE".to_string(),
-            listen_address: "HC_ADDR".to_string(),
-            dedicated_server_role: "control".to_string(),
-            storage_role: "data".to_string(),
-        },
-    );
+fn plan_renders_the_settings_env_builder_for_every_container() {
+    let plan = plan_with_storage(STORAGE_NODES);
+
+    for container in &plan.containers {
+        assert_eq!(
+            container.env,
+            BTreeMap::from([
+                (NODE_ID_KEY.to_string(), container.node.to_string()),
+                (NODE_LABEL_KEY.to_string(), container.label.clone()),
+                (
+                    NODE_ROLE_KEY.to_string(),
+                    role_value(container.role).to_string()
+                ),
+                (
+                    LISTEN_ADDRESS_KEY.to_string(),
+                    container.address.to_string()
+                ),
+            ])
+        );
+    }
+}
+
+#[test]
+fn plan_forwards_a_distinct_caller_env_mapping_for_every_node() {
+    let custom = PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE, custom_node_env);
     let plan = ClusterPlan::from_topology(&topology(STORAGE_NODES), &custom);
 
     let dedicated = plan
@@ -111,14 +169,20 @@ fn plan_renders_env_from_caller_supplied_key_names_and_role_values() {
     assert_eq!(
         dedicated.env,
         BTreeMap::from([
-            ("HC_NODE_ID".to_string(), "1".to_string()),
-            ("HC_LABEL".to_string(), "dedicated".to_string()),
-            ("HC_ROLE".to_string(), "control".to_string()),
-            ("HC_ADDR".to_string(), addr(DEDICATED_ID).to_string()),
+            (CUSTOM_NODE_ID_KEY.to_string(), "1".to_string()),
+            (CUSTOM_LABEL_KEY.to_string(), "dedicated".to_string()),
+            (
+                CUSTOM_ROLE_KEY.to_string(),
+                CUSTOM_DEDICATED_ROLE.to_string()
+            ),
+            (
+                CUSTOM_ADDRESS_KEY.to_string(),
+                addr(DEDICATED_ID).to_string()
+            ),
         ])
     );
     assert!(
-        !dedicated.env.contains_key("NODE_ID"),
+        !dedicated.env.contains_key(NODE_ID_KEY),
         "the plan must not fall back to the canonical key names"
     );
 
@@ -128,10 +192,13 @@ fn plan_renders_env_from_caller_supplied_key_names_and_role_values() {
     assert_eq!(
         storage.env,
         BTreeMap::from([
-            ("HC_NODE_ID".to_string(), "2".to_string()),
-            ("HC_LABEL".to_string(), "storage-1".to_string()),
-            ("HC_ROLE".to_string(), "data".to_string()),
-            ("HC_ADDR".to_string(), addr(FIRST_STORAGE_ID).to_string()),
+            (CUSTOM_NODE_ID_KEY.to_string(), "2".to_string()),
+            (CUSTOM_LABEL_KEY.to_string(), "storage-1".to_string()),
+            (CUSTOM_ROLE_KEY.to_string(), CUSTOM_STORAGE_ROLE.to_string()),
+            (
+                CUSTOM_ADDRESS_KEY.to_string(),
+                addr(FIRST_STORAGE_ID).to_string()
+            ),
         ])
     );
 }

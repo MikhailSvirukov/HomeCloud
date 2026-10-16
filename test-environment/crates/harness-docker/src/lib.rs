@@ -12,5 +12,5 @@ mod runtime;
 pub use command::{
     Command, container_name, container_remove, container_run, container_stop, network_create,
 };
-pub use plan::{ClusterPlan, ContainerEnv, ContainerPlan, NetworkPlan, PlanSettings};
+pub use plan::{ClusterPlan, ContainerPlan, EnvBuilder, NetworkPlan, PlanSettings};
 pub use runtime::{ClusterRuntime, FakeClusterRuntime};
