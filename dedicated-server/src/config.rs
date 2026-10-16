@@ -170,15 +170,6 @@ impl ServerConfig {
             .and_then(|input| Self::from_toml_str(&input))
     }
 
-    /// Label and private key paths needed to load this server's identity.
-    pub fn identity_key_material(&self) -> (&str, &Path, &Path) {
-        (
-            &self.identity.label,
-            &self.identity.encryption_private_key,
-            &self.identity.signing_private_key,
-        )
-    }
-
     /// Apply every structural validation rule to the parsed configuration.
     fn validate(&self) -> Result<()> {
         validate_identity(&self.identity).and_then(|()| validate_cluster(&self.cluster))

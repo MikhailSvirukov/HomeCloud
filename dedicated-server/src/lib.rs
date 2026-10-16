@@ -14,4 +14,4 @@ pub use config::{ConfigError, ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
 pub use registration::{Account, AccountRegistry, Login, LoginError, RegistrationError};
-pub use report::startup_summary;
+pub use report::{Startup, StartupError};

@@ -1,40 +1,27 @@
 //! Binary entry point for the dedicated server control plane.
 //!
 //! Resolves the configuration path from the environment or the default file
-//! name, loads and validates the configuration, loads the configured key
-//! identity, and reports a one-line topology and identity summary. Networking
-//! runtime behavior is added in later issues.
+//! name, loads the configuration together with the key identity it names, and
+//! reports a one-line topology and identity summary. Networking runtime
+//! behavior is added in later issues.
 
 use std::env;
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dedicated_server::{
-    startup_summary, ServerConfig, ServerIdentity, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
-};
-
-// Error context for a configuration load failure.
-const CONFIG_CONTEXT: &str = "load configuration";
-// Error context for a key identity load failure.
-const IDENTITY_CONTEXT: &str = "load key identity";
+use dedicated_server::{Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME};
 
 fn main() -> ExitCode {
     let path = config_path();
 
-    let config = match ServerConfig::load(&path) {
-        Ok(config) => config,
-        Err(error) => return report_failure(CONFIG_CONTEXT, &path, &error),
-    };
-
-    let (label, encryption_private_key, signing_private_key) = config.identity_key_material();
-    let identity = match ServerIdentity::load(label, encryption_private_key, signing_private_key) {
-        Ok(identity) => identity,
-        Err(error) => return report_failure(IDENTITY_CONTEXT, &path, &error),
-    };
-
-    println!("{}", startup_summary(&config, &identity));
-    ExitCode::SUCCESS
+    match Startup::load(&path) {
+        Ok(startup) => {
+            println!("{}", startup.summary());
+            ExitCode::SUCCESS
+        }
+        Err(error) => report_failure(&error),
+    }
 }
 
 /// Resolve the configuration path from [`CONFIG_PATH_ENV`] or the default file name.
@@ -45,22 +32,18 @@ fn config_path() -> PathBuf {
     }
 }
 
-/// Print the error context, `path`, and the error chain to stderr.
-fn report_error(context: &str, path: &Path, error: &impl Error) {
-    eprintln!(
-        "dedicated-server: failed to {context} '{}': {error}",
-        path.display()
-    );
+/// Report a startup failure to stderr and return the failure exit code.
+///
+/// The startup error renders its immediate cause on the first line, so the
+/// `caused by:` chain continues from the cause of that cause.
+fn report_failure(error: &StartupError) -> ExitCode {
+    eprintln!("dedicated-server: {error}");
 
-    let mut source = error.source();
-    while let Some(cause) = source {
-        eprintln!("  caused by: {cause}");
-        source = cause.source();
+    let mut cause = error.source().and_then(|source| source.source());
+    while let Some(current) = cause {
+        eprintln!("  caused by: {current}");
+        cause = current.source();
     }
-}
 
-/// Report a failure and return the failure exit code.
-fn report_failure(context: &str, path: &Path, error: &impl Error) -> ExitCode {
-    report_error(context, path, error);
     ExitCode::FAILURE
 }
