@@ -133,7 +133,7 @@ pub enum ConfigError {
     #[error("cluster.nodes must not be empty")]
     EmptyCluster,
     /// A required [`ClusterNode`] field is empty.
-    #[error("cluster.nodes[{index}].{field}] must not be empty")]
+    #[error("cluster.nodes[{index}].{field} must not be empty")]
     EmptyNodeField { index: usize, field: NodeField },
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
