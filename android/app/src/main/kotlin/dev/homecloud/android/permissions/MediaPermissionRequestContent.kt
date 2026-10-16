@@ -25,18 +25,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import dev.homecloud.android.R
 
-// The module does not own res/values/strings.xml, so the few user-visible strings live here.
-private const val REQUEST_MESSAGE = "HomeCloud needs access to your photos and videos to back them up."
-private const val REQUEST_ACTION = "Allow access"
-private const val BLOCKED_MESSAGE =
-    "Photo and video access is turned off. Enable it in the app's settings to continue."
-private const val SETTINGS_ACTION = "Open settings"
-private const val GRANTED_MESSAGE = "HomeCloud can read your photos and videos."
 private const val PACKAGE_URI_SCHEME = "package"
 
 /**
@@ -102,9 +97,9 @@ private fun MediaPermissionPrompt(
     modifier: Modifier = Modifier,
 ) {
     val message = when (status) {
-        MediaPermissionStatus.GRANTED -> GRANTED_MESSAGE
-        MediaPermissionStatus.REQUESTABLE -> REQUEST_MESSAGE
-        MediaPermissionStatus.BLOCKED -> BLOCKED_MESSAGE
+        MediaPermissionStatus.GRANTED -> stringResource(R.string.media_permission_granted_message)
+        MediaPermissionStatus.REQUESTABLE -> stringResource(R.string.media_permission_request_message)
+        MediaPermissionStatus.BLOCKED -> stringResource(R.string.media_permission_blocked_message)
     }
 
     Column(
@@ -116,11 +111,11 @@ private fun MediaPermissionPrompt(
         Text(text = message, style = MaterialTheme.typography.bodyLarge)
         when (status) {
             MediaPermissionStatus.REQUESTABLE -> Button(onClick = onRequestPermissions) {
-                Text(text = REQUEST_ACTION)
+                Text(text = stringResource(R.string.media_permission_request_action))
             }
 
             MediaPermissionStatus.BLOCKED -> Button(onClick = onOpenSettings) {
-                Text(text = SETTINGS_ACTION)
+                Text(text = stringResource(R.string.media_permission_settings_action))
             }
 
             MediaPermissionStatus.GRANTED -> Unit
