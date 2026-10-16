@@ -22,7 +22,8 @@ for clients; it does not relay Raft or blob traffic.
 - `crates/storage-node/` — the node crate, with `src/framing.rs`,
   `src/codec.rs` (whole-frame encode/decode over byte slices),
   `src/frame_buffer.rs` (receive-side frame accumulator: chunked bytes → whole
-  frames), `src/connection.rs` (frame-only async connection actor),
+  frames), `src/connection.rs` (frame reader/writer halves plus `split_frames`
+  and the `pump_frames` forwarding pump),
   `src/buffer_pool.rs`,
   `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/config.rs` (node identity/configuration),
@@ -38,12 +39,12 @@ for clients; it does not relay Raft or blob traffic.
 
 Early bootstrap increment: framing, the frame codec (whole-frame encode/decode
 over byte slices), the receive-side frame buffer (chunked bytes → whole frames),
-the frame-only connection that reads and writes whole frames over an async byte
-stream, buffer-pool building blocks, the logical
-payload chain with chunked streaming/backpressure, the node
+the frame reader/writer halves that move whole frames over an async byte stream
+with `split_frames` and the `pump_frames` forwarding pump, buffer-pool building
+blocks, the logical payload chain with chunked streaming/backpressure, the node
 identity/configuration model, the idempotent upload ledger (upload id, content
 hash, upload record), and the typed upload outcomes (status codes). Tokio is now
-a dependency for the async connection. Networking, actors, and `io_uring` are not
+a dependency for the async connection halves. Networking, actors, and `io_uring` are not
 implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
