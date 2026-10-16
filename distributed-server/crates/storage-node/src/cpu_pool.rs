@@ -31,6 +31,11 @@ impl CpuPool {
         }
     }
 
+    /// Closes the pool so subsequent runs fail with [`CpuPoolError::Closed`]; in-flight tasks still finish.
+    pub fn close(&self) {
+        self.permits.close();
+    }
+
     /// Runs `work` off the Tokio worker threads, waiting for a free slot.
     pub async fn run<F, T>(&self, work: F) -> Result<T>
     where
@@ -43,8 +48,11 @@ impl CpuPool {
             .acquire_owned()
             .await
             .map_err(|_| CpuPoolError::Closed)?;
-        let joined = spawn_blocking(work).await?;
-        drop(permit);
-        Ok(joined)
+        let joined = spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await;
+        Ok(joined?)
     }
 }
