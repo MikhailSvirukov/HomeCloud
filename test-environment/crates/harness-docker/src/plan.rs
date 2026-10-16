@@ -10,24 +10,8 @@ use std::net::SocketAddr;
 
 use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
 
-/// Environment contract a plan uses when it renders node containers.
-///
-/// The four keys and two role values must all be distinct: they share one
-/// [`BTreeMap`] key space, so a duplicate would silently drop an entry.
-pub struct ContainerEnv {
-    /// Environment key holding the node id.
-    pub node_id: String,
-    /// Environment key holding the node label.
-    pub node_label: String,
-    /// Environment key holding the node role.
-    pub node_role: String,
-    /// Environment key holding the listen address.
-    pub listen_address: String,
-    /// Role value used for the dedicated server.
-    pub dedicated_server_role: String,
-    /// Role value used for storage nodes.
-    pub storage_role: String,
-}
+/// Builds the environment entries for one node container.
+pub type EnvBuilder = fn(&NodeSpec) -> BTreeMap<String, String>;
 
 /// Name of the isolated Docker network the test cluster runs in.
 pub struct NetworkPlan {
@@ -50,17 +34,17 @@ pub struct PlanSettings {
     pub dedicated_server_image: String,
     /// Image used for storage node containers.
     pub storage_image: String,
-    /// Environment contract for the node containers.
-    pub env: ContainerEnv,
+    /// Builds the environment entries for each node container.
+    pub env: EnvBuilder,
 }
 
 impl PlanSettings {
-    /// Creates settings from a network name, the two node images, and the environment.
+    /// Creates settings from a network name, the two node images, and the environment builder.
     pub fn new(
         network: impl Into<String>,
         dedicated_server_image: impl Into<String>,
         storage_image: impl Into<String>,
-        env: ContainerEnv,
+        env: EnvBuilder,
     ) -> Self {
         Self {
             network: network.into(),
@@ -116,7 +100,7 @@ impl ClusterPlan {
                 image: settings.image_for(spec.role).to_string(),
                 hostname: spec.label.clone(),
                 address: spec.address,
-                env: env_for(spec, &settings.env),
+                env: (settings.env)(spec),
             })
             .collect();
         Self {
@@ -130,25 +114,4 @@ impl ClusterPlan {
             .iter()
             .find(|container| container.node == node)
     }
-}
-
-/// Environment value for a node role.
-fn role_value(env: &ContainerEnv, role: NodeRole) -> &str {
-    match role {
-        NodeRole::DedicatedServer => &env.dedicated_server_role,
-        NodeRole::Storage => &env.storage_role,
-    }
-}
-
-/// Builds the four fixed environment entries for a node spec.
-fn env_for(spec: &NodeSpec, env: &ContainerEnv) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (env.node_id.clone(), spec.id.0.to_string()),
-        (env.node_label.clone(), spec.label.clone()),
-        (
-            env.node_role.clone(),
-            role_value(env, spec.role).to_string(),
-        ),
-        (env.listen_address.clone(), spec.address.to_string()),
-    ])
 }
