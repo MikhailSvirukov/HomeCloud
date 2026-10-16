@@ -23,7 +23,7 @@ for clients; it does not relay Raft or blob traffic.
   `src/codec.rs` (whole-frame encode/decode over byte slices),
   `src/frame_buffer.rs` (receive-side frame accumulator: chunked bytes → whole
   frames), `src/connection.rs` (frame reader/writer halves plus `split_frames`
-  and the `pump_frames` forwarding pump),
+  and the `pump_frames`/`pump_halves` forwarding pumps),
   `src/buffer_pool.rs`,
   `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
@@ -41,14 +41,14 @@ for clients; it does not relay Raft or blob traffic.
   `payload_stream_public_api.rs`, `config_public_api.rs`,
   `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
-  `e2e_upload_over_tcp.rs`).
+  `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
 
 Early bootstrap increment: framing, the frame codec (whole-frame encode/decode
 over byte slices), the receive-side frame buffer (chunked bytes → whole frames),
 the frame reader/writer halves that move whole frames over an async byte stream
-with `split_frames` and the `pump_frames` forwarding pump, buffer-pool building
+with `split_frames` and the `pump_frames`/`pump_halves` forwarding pumps, buffer-pool building
 blocks, the logical payload chain with chunked streaming/backpressure, the
 payload streaming path that frames pooled chunks onto the connection writer, the
 node identity/configuration model, the idempotent upload ledger (upload id, content
