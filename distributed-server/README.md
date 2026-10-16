@@ -29,13 +29,15 @@ for clients; it does not relay Raft or blob traffic.
   with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
   frames through the payload buffer pools), `src/config.rs` (node
   identity/configuration), `src/response.rs` (typed upload outcomes / status
-  codes), and `src/metadata.rs` (idempotent upload ledger: upload id, content
-  hash, upload record).
+  codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
+  hash, upload record), and `src/listener.rs` (binds the node's listen address
+  and yields frame reader/writer halves per accepted TCP connection).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
-  `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`).
+  `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`,
+  `listener_public_api.rs`).
 
 ## Status
 
@@ -46,10 +48,12 @@ with `split_frames` and the `pump_frames` forwarding pump, buffer-pool building
 blocks, the logical payload chain with chunked streaming/backpressure, the
 payload streaming path that frames pooled chunks onto the connection writer, the
 node identity/configuration model, the idempotent upload ledger (upload id, content
-hash, upload record), and the typed upload outcomes (status codes). Tokio is now
-a dependency for the async connection halves, and `tracing` backs the structured
-logs the node emits with a level configured through `RUST_LOG`. Networking,
-actors, and `io_uring` are not implemented yet.
+hash, upload record), the typed upload outcomes (status codes), and the TCP
+listener that binds the node's listen address and hands back frame reader/writer
+halves for each accepted connection. Tokio is now a dependency for the async
+connection halves, and `tracing` backs the structured logs the node emits with a
+level configured through `RUST_LOG`. The connection actors and `io_uring` are
+not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
