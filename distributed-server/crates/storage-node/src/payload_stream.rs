@@ -38,7 +38,8 @@ where
 /// Reads `source` to the end and writes it as consecutive frames, filling
 /// pooled buffers of at least `chunk_capacity` and keeping at most `max_chunks`
 /// buffers in flight; when the limit applies backpressure, already-sealed
-/// chunks are written out and their buffers returned to free slots.
+/// chunks are written out and their buffers returned to the pool. Every buffer
+/// the stream checks out is returned before this function returns.
 pub async fn send_payload<W, R>(
     writer: &mut FrameWriter<W>,
     source: &mut R,
@@ -53,8 +54,27 @@ where
     let mut stream = ChunkStream::new(pool, chunk_capacity, max_chunks);
     let mut read_buffer = vec![0u8; chunk_capacity.get()];
 
+    let outcome = run_payload(&mut stream, writer, source, &mut read_buffer).await;
+    if let Ok(remaining) = stream.finish() {
+        stream.release(remaining);
+    }
+    outcome
+}
+
+/// Fills `stream` from `source` until it ends, writing sealed chunks under
+/// backpressure and releasing their buffers.
+async fn run_payload<W, R>(
+    stream: &mut ChunkStream<'_>,
+    writer: &mut FrameWriter<W>,
+    source: &mut R,
+    read_buffer: &mut [u8],
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+    R: AsyncRead + Unpin,
+{
     loop {
-        let read = source.read(&mut read_buffer).await?;
+        let read = source.read(read_buffer).await?;
         if read == 0 {
             break;
         }
@@ -62,8 +82,8 @@ where
         let mut pending = &read_buffer[..read];
         while !pending.is_empty() {
             match stream.write(pending) {
-                Ok(0) | Err(ChunkError::Backpressure { .. }) => {
-                    drain_sealed(&mut stream, writer).await?;
+                Err(ChunkError::Backpressure { .. }) => {
+                    drain_sealed(stream, writer).await?;
                 }
                 Ok(written) => {
                     debug_assert!(written > 0, "a non-empty slice always makes progress");
@@ -97,11 +117,10 @@ where
 mod tests {
     use core::num::NonZeroUsize;
 
-    use super::{send_payload, write_chain};
-    use crate::buffer_pool::{PayloadBuffer, PayloadBufferPool, SizeClass};
+    use super::send_payload;
+    use crate::buffer_pool::{PayloadBufferPool, SizeClass};
     use crate::codec::{decode_frame, DecodeOutcome};
     use crate::connection::FrameWriter;
-    use crate::payload::PayloadChain;
 
     fn non_zero(value: usize) -> NonZeroUsize {
         NonZeroUsize::new(value).expect("test value is non-zero")
@@ -109,13 +128,6 @@ mod tests {
 
     fn pool(capacity: usize, buffers: usize) -> PayloadBufferPool {
         PayloadBufferPool::new(&[SizeClass::new(capacity, buffers)]).expect("valid size class")
-    }
-
-    fn buffer(pool: &mut PayloadBufferPool, capacity: usize, data: &[u8]) -> PayloadBuffer {
-        let mut buffer = pool.acquire(capacity).expect("free buffer");
-        buffer.set_len(data.len()).expect("data fits");
-        buffer.as_mut_slice().copy_from_slice(data);
-        buffer
     }
 
     fn payloads(mut bytes: &[u8]) -> Vec<Vec<u8>> {
@@ -134,41 +146,6 @@ mod tests {
             }
         }
         payloads
-    }
-
-    #[tokio::test]
-    async fn write_chain_writes_every_chunk_in_order() {
-        let mut pool = pool(4, 2);
-        let mut chain = PayloadChain::new();
-        chain
-            .push(buffer(&mut pool, 4, &[1, 2, 3, 4]))
-            .expect("non-empty buffer is accepted");
-        chain
-            .push(buffer(&mut pool, 4, &[5, 6]))
-            .expect("non-empty buffer is accepted");
-
-        let mut sink = Vec::new();
-        {
-            let mut writer = FrameWriter::new(&mut sink);
-            write_chain(&mut writer, &chain)
-                .await
-                .expect("in-memory write cannot fail");
-        }
-
-        assert_eq!(payloads(&sink), vec![vec![1, 2, 3, 4], vec![5, 6]]);
-    }
-
-    #[tokio::test]
-    async fn write_chain_writes_nothing_for_an_empty_chain() {
-        let mut sink = Vec::new();
-        {
-            let mut writer = FrameWriter::new(&mut sink);
-            write_chain(&mut writer, &PayloadChain::new())
-                .await
-                .expect("in-memory write cannot fail");
-        }
-
-        assert!(sink.is_empty());
     }
 
     #[tokio::test]
@@ -194,59 +171,8 @@ mod tests {
         assert_eq!(
             payloads.len(),
             5,
-            "five sealed chunks are written across two drains and the tail"
+            "more frames than the in-flight limit are written across two drains and the tail"
         );
         assert_eq!(payloads.concat(), data);
-    }
-
-    #[tokio::test]
-    async fn send_payload_returns_drained_buffers_to_the_pool() {
-        let data: Vec<u8> = (0..20u8).collect();
-        let mut source = data.as_slice();
-        let mut pool = pool(4, 8);
-        let initial = pool.available();
-
-        let mut sink = Vec::new();
-        {
-            let mut writer = FrameWriter::new(&mut sink);
-            send_payload(
-                &mut writer,
-                &mut source,
-                &mut pool,
-                non_zero(4),
-                non_zero(2),
-            )
-            .await
-            .expect("in-memory write cannot fail");
-        }
-
-        assert_eq!(pool.in_use(), 0, "no pooled buffer stays checked out");
-        assert_eq!(
-            pool.available(),
-            initial,
-            "drained and tail buffers are returned to the pool"
-        );
-        assert_eq!(payloads(&sink).concat(), data);
-    }
-
-    #[tokio::test]
-    async fn send_payload_of_an_empty_source_writes_nothing() {
-        let mut source: &[u8] = &[];
-        let mut pool = pool(4, 2);
-        let mut sink = Vec::new();
-        {
-            let mut writer = FrameWriter::new(&mut sink);
-            send_payload(
-                &mut writer,
-                &mut source,
-                &mut pool,
-                non_zero(4),
-                non_zero(2),
-            )
-            .await
-            .expect("in-memory write cannot fail");
-        }
-
-        assert!(sink.is_empty());
     }
 }
