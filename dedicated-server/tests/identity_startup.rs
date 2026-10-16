@@ -83,6 +83,21 @@ fn run_with_config(config: &Path) -> Output {
         .expect("dedicated-server binary must run")
 }
 
+/// Run the binary without `RUST_LOG` so its built-in default filter applies.
+///
+/// Mirrors [`run_with_config`] instead of taking a flag so the two cases stay
+/// readable; `env_remove` also drops any ambient value from the test runner.
+fn run_with_config_without_log_filter(config: &Path) -> Output {
+    Command::new(BINARY)
+        .env(CONFIG_PATH_ENV, config)
+        .env_remove(RUST_LOG_ENV)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("dedicated-server binary must run")
+}
+
 fn stdout_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -155,5 +170,33 @@ fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
     assert!(
         error.contains(&config.display().to_string()),
         "stderr must name the configuration: {error}"
+    );
+}
+
+#[test]
+fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
+    let dir = TempDir::new("default-log-filter");
+    let encryption = dir.file("encryption.key");
+    let signing = dir.file("signing.key");
+    std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
+    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    let config = write_config(&dir, &encryption, &signing);
+
+    let output = run_with_config_without_log_filter(&config);
+
+    assert!(output.status.success(), "stderr: {}", stderr_of(&output));
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    let summary = stderr_of(&output);
+    assert!(
+        summary.contains("listening on 10.0.0.1:7000"),
+        "the default filter must still emit the startup summary: {summary}"
+    );
+    assert!(
+        summary.contains(&format!("label={LABEL}")),
+        "stderr: {summary}"
     );
 }
