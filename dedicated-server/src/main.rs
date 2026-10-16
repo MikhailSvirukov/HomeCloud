@@ -15,6 +15,11 @@ use tracing_subscriber::EnvFilter;
 
 use dedicated_server::{Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME};
 
+/// Process allocator tuned for the concurrent workload of a server process
+/// rather than the system default.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// Log level used when `RUST_LOG` is unset or cannot be parsed.
 const DEFAULT_LOG_FILTER: &str = "info";
 

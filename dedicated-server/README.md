@@ -34,7 +34,8 @@ directory.
 
 The binary logs to stderr, so stdout stays empty for normal operation. The
 default level is `info`; set `RUST_LOG` to override it (for example
-`RUST_LOG=debug`). Log lines are emitted without ANSI colours.
+`RUST_LOG=debug`). Log lines are emitted without ANSI colours. The binary
+installs `mimalloc` as its process allocator instead of the system default.
 
 The crate's modules are private; its public items are re-exported from the crate
 root. Consumers therefore use `dedicated_server::` paths (for example
