@@ -26,7 +26,7 @@ bash scripts/ci.sh
 ```
 
 ```bash
-PICBACKUP_DEDICATED_SERVER_CONFIG=/path/to/config.toml cargo run --locked
+HOMECLOUD_DEDICATED_SERVER_CONFIG=/path/to/config.toml cargo run --locked
 ```
 
 Without that variable the binary reads `dedicated-server.toml` from the current
@@ -60,8 +60,8 @@ listen = "10.0.0.1:7000"
 
 [identity]
 label = "dedicated-1"
-encryption_private_key = "/etc/picbackup/dedicated/encryption.key"
-signing_private_key = "/etc/picbackup/dedicated/signing.key"
+encryption_private_key = "/etc/homecloud/dedicated/encryption.key"
+signing_private_key = "/etc/homecloud/dedicated/signing.key"
 
 [heartbeat]
 interval_ms = 1000

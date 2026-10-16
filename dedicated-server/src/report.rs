@@ -84,7 +84,7 @@ pub enum StartupError {
 mod tests {
     use super::*;
 
-    const MISSING_CONFIG: &str = "/nonexistent/picbackup/dedicated-server.toml";
+    const MISSING_CONFIG: &str = "/nonexistent/homecloud/dedicated-server.toml";
 
     #[test]
     fn load_reports_a_configuration_error_with_the_requested_path() {
