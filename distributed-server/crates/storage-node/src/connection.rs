@@ -14,7 +14,7 @@ use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::codec::encode_frame;
 use crate::frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
@@ -130,19 +130,19 @@ where
             frame = reader.next_frame() => match frame? {
                 Some(frame) => {
                     if inbound.send(frame).await.is_err() {
-                        debug!("frame pump stopped");
+                        trace!("frame pump stopped");
                         return Ok(());
                     }
                 }
                 None => {
-                    debug!("frame pump stopped");
+                    trace!("frame pump stopped");
                     return Ok(());
                 }
             },
             payload = outbound.recv() => match payload {
                 Some(payload) => writer.send_frame(&payload).await?,
                 None => {
-                    debug!("frame pump stopped");
+                    trace!("frame pump stopped");
                     return Ok(());
                 }
             },
