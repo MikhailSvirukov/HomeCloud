@@ -197,6 +197,11 @@ impl<'pool> ChunkStream<'pool> {
         }
         Ok(std::mem::take(&mut self.chain))
     }
+
+    /// Returns `chain`'s buffers to the pool this stream fills from.
+    pub fn release(&mut self, chain: PayloadChain) {
+        chain.return_buffers(self.pool);
+    }
 }
 
 /// Failure modes when building or filling a [`PayloadChain`].
