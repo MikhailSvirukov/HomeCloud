@@ -6,7 +6,7 @@ package dev.homecloud.android.queue
  * thread or be externally synchronized, since concurrency is handled by the scheduling layer. There
  * is no delete operation, by design, because a local deletion must not propagate to the server.
  */
-class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
+internal class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
 
     init {
         require(maxAttempts > 0) { "maxAttempts must be positive but was $maxAttempts" }

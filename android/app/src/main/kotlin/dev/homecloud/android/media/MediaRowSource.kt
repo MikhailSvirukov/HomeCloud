@@ -9,7 +9,7 @@ package dev.homecloud.android.media
  * The read is deliberately plain and synchronous; callers are responsible for
  * not invoking it on the main thread.
  */
-fun interface MediaRowSource {
+internal fun interface MediaRowSource {
 
     /**
      * Reads all rows; synchronous and may block, so callers must keep it off

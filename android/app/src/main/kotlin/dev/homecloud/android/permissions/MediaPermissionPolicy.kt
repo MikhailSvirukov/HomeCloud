@@ -5,7 +5,7 @@ package dev.homecloud.android.permissions
  * API level. It requests nothing itself and never returns audio, location, contacts, camera, or
  * storage-write permissions.
  */
-object MediaPermissionPolicy {
+internal object MediaPermissionPolicy {
 
     /** Per-type photo read permission on API 33 and above. */
     const val READ_MEDIA_IMAGES = "android.permission.READ_MEDIA_IMAGES"

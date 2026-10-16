@@ -5,7 +5,7 @@ package dev.homecloud.android.media
  *
  * Audio is deliberately absent, so it can never be classified into the queue.
  */
-enum class MediaKind {
+internal enum class MediaKind {
     /** A still image. */
     IMAGE,
 

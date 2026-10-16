@@ -9,7 +9,7 @@ import dev.homecloud.android.queue.UploadQueue
  * [newlyEnqueued] counts only candidates first seen in that run: ids already tracked, or repeated
  * within the run, are excluded.
  */
-data class PlanResult(
+internal data class PlanResult(
     val discoveredCandidates: Int,
     val newlyEnqueued: Int,
 )
@@ -19,7 +19,7 @@ data class PlanResult(
  * pending work. Pure domain coordination, with no persistence, scheduling, I/O, or coroutines; the
  * upload identity policy is delegated to the injected [uploadIdFactory].
  */
-class MediaBackupPlanner(
+internal class MediaBackupPlanner(
     private val discovery: MediaDiscovery,
     private val uploadIdFactory: UploadIdFactory,
     val queue: UploadQueue,

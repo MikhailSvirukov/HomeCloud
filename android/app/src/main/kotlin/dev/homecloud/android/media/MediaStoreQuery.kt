@@ -13,7 +13,7 @@ import android.provider.MediaStore
  * platform releases: the clauses naming them are produced solely for the API
  * levels that define them, because a query naming an unknown column fails.
  */
-object MediaStoreQuery {
+internal object MediaStoreQuery {
 
     /** Columns read for every candidate row. */
     val projection: Array<String> = arrayOf(

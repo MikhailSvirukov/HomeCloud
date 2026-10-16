@@ -6,7 +6,7 @@ package dev.homecloud.android.media
  * Only photos and videos are ever candidates; audio is never queued. The
  * functions here perform no I/O and hold no state.
  */
-object MediaCatalog {
+internal object MediaCatalog {
 
     private const val IMAGE_MIME_PREFIX = "image/"
     private const val VIDEO_MIME_PREFIX = "video/"

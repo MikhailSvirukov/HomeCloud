@@ -6,7 +6,7 @@ package dev.homecloud.android.media
  * Deliberately depends on no `android.*` type, so the mapping can be exercised
  * with plain JVM unit tests before MediaStore access is wired up.
  */
-object MediaRowMapping {
+internal object MediaRowMapping {
 
     /** Fallback for a MediaStore text column that was read as `null`. */
     private const val EMPTY_TEXT = ""

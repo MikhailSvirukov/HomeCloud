@@ -4,7 +4,7 @@ package dev.homecloud.android.queue
  * Client-side orchestration state of one file version in the local upload queue. A version is done
  * once the server has confirmed it, modelled as [COMPLETED].
  */
-enum class UploadQueueState {
+internal enum class UploadQueueState {
     /** Waiting for upload; the only state [UploadQueue.nextPending] returns. */
     PENDING,
 
