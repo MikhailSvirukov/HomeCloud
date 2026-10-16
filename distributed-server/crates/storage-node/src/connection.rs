@@ -1,16 +1,19 @@
 //! Frame-only async connection for the TCP actor.
 //!
-//! [`FrameConnection`] adapts an asynchronous byte stream into a stream of whole
-//! protocol frames. It owns only the framing concern: reads are accumulated into
-//! a [`FrameBuffer`] until a complete frame is available, and writes encode their
-//! payload with [`encode_frame`] before handing the bytes to the stream. All
-//! authentication, command dispatch, and payload interpretation live in the
-//! actors layered above this type, so this type holds no session state and can be
-//! composed into a larger actor without leaking wire details upward.
+//! The framing concern is split in two halves: [`FrameReader`] accumulates
+//! inbound bytes into a [`FrameBuffer`] until whole frames are available and
+//! [`FrameWriter`] encodes outbound payloads with [`encode_frame`] before
+//! writing them out. [`split_frames`] produces both halves from one async
+//! stream, and [`pump_frames`] forwards whole frames between a stream and a
+//! pair of channels. All authentication, command dispatch, and payload
+//! interpretation live in the actors layered above, so these types hold no
+//! session state and can be composed into a larger actor without leaking wire
+//! details upward.
 
 use std::io;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::sync::mpsc;
 
 use crate::codec::encode_frame;
 use crate::frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
@@ -32,19 +35,18 @@ pub enum ConnectionError {
 
 type Result<T> = core::result::Result<T, ConnectionError>;
 
-/// Frame-only TCP connection: it reads and writes whole frames and leaves all
-/// authentication and command handling to the actors above it.
-pub struct FrameConnection<S> {
-    stream: S,
+/// Reads whole frames from an async byte source.
+pub struct FrameReader<R> {
+    reader: R,
     buffer: FrameBuffer,
     read_chunk: Vec<u8>,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> FrameConnection<S> {
-    /// Wraps `stream`, pre-allocating the read chunk.
-    pub fn new(stream: S) -> Self {
+impl<R: AsyncRead + Unpin> FrameReader<R> {
+    /// Wraps `reader`, pre-allocating the read chunk.
+    pub fn new(reader: R) -> Self {
         Self {
-            stream,
+            reader,
             buffer: FrameBuffer::new(),
             read_chunk: vec![0; READ_CHUNK_LEN],
         }
@@ -68,7 +70,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FrameConnection<S> {
                 "an incomplete frame always leaves room to complete it"
             );
             let read = self
-                .stream
+                .reader
                 .read(&mut self.read_chunk[..remaining.min(READ_CHUNK_LEN)])
                 .await?;
             if read == 0 {
@@ -78,11 +80,62 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FrameConnection<S> {
             self.buffer.extend(&self.read_chunk[..read])?;
         }
     }
+}
+
+/// Writes whole frames to an async byte sink.
+pub struct FrameWriter<W> {
+    writer: W,
+}
+
+impl<W: AsyncWrite + Unpin> FrameWriter<W> {
+    /// Wraps `writer`.
+    pub fn new(writer: W) -> Self {
+        Self { writer }
+    }
 
     /// Encodes `payload` as one frame and writes it out.
     pub async fn send_frame(&mut self, payload: &[u8]) -> Result<()> {
         let frame = encode_frame(payload)?;
-        self.stream.write_all(&frame).await?;
+        self.writer.write_all(&frame).await?;
         Ok(())
+    }
+}
+
+/// Splits an async stream into a frame reader and a frame writer.
+pub fn split_frames<S>(stream: S) -> (FrameReader<ReadHalf<S>>, FrameWriter<WriteHalf<S>>)
+where
+    S: AsyncRead + AsyncWrite,
+{
+    let (reader, writer) = tokio::io::split(stream);
+    (FrameReader::new(reader), FrameWriter::new(writer))
+}
+
+/// Runs the frame-only connection: frames read from the stream are sent to
+/// `inbound`, and payloads received from `outbound` are framed and written to
+/// the stream. Returns when the stream ends or either channel closes.
+pub async fn pump_frames<S>(
+    stream: S,
+    inbound: mpsc::Sender<Vec<u8>>,
+    mut outbound: mpsc::Receiver<Vec<u8>>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let (mut reader, mut writer) = split_frames(stream);
+    loop {
+        tokio::select! {
+            frame = reader.next_frame() => match frame? {
+                Some(frame) => {
+                    if inbound.send(frame).await.is_err() {
+                        return Ok(());
+                    }
+                }
+                None => return Ok(()),
+            },
+            payload = outbound.recv() => match payload {
+                Some(payload) => writer.send_frame(&payload).await?,
+                None => return Ok(()),
+            },
+        }
     }
 }
