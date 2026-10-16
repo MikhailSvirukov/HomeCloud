@@ -7,8 +7,9 @@
 //! the idempotent upload ledger, the receive-side frame buffer, the typed
 //! upload outcome codes ([`UploadStatus`] and [`ResponseError`]), and the
 //! frame reader/writer halves ([`FrameReader`], [`FrameWriter`]) with
-//! [`split_frames`] and the forwarding [`pump_frames`], which move whole frames
-//! over an async byte stream, the payload streaming path ([`send_payload`],
+//! [`split_frames`] and the forwarding [`pump_frames`] plus its split-half
+//! variant [`pump_halves`], which move whole frames over an async byte stream,
+//! the payload streaming path ([`send_payload`],
 //! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
 //! TCP listener ([`Listener`]) that yields frame reader/writer halves per
 //! accepted connection, and the node runtime ([`serve`]) that accepts
@@ -53,7 +54,9 @@ pub use buffer_pool::{
 };
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
-pub use connection::{pump_frames, split_frames, ConnectionError, FrameReader, FrameWriter};
+pub use connection::{
+    pump_frames, pump_halves, split_frames, ConnectionError, FrameReader, FrameWriter,
+};
 pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{

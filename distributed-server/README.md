@@ -40,7 +40,8 @@ for clients; it does not relay Raft or blob traffic.
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
   `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`,
-  `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`).
+  `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
+  `e2e_upload_over_tcp.rs`).
 
 ## Status
 
