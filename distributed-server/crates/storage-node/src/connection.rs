@@ -119,12 +119,26 @@ where
 pub async fn pump_frames<S>(
     stream: S,
     inbound: mpsc::Sender<Vec<u8>>,
-    mut outbound: mpsc::Receiver<Vec<u8>>,
+    outbound: mpsc::Receiver<Vec<u8>>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let (mut reader, mut writer) = split_frames(stream);
+    let (reader, writer) = split_frames(stream);
+    pump_halves(reader, writer, inbound, outbound).await
+}
+
+/// Runs the frame-only pump over already-split halves.
+pub async fn pump_halves<R, W>(
+    mut reader: FrameReader<R>,
+    mut writer: FrameWriter<W>,
+    inbound: mpsc::Sender<Vec<u8>>,
+    mut outbound: mpsc::Receiver<Vec<u8>>,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     loop {
         tokio::select! {
             frame = reader.next_frame() => match frame? {

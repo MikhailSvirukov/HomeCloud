@@ -20,7 +20,7 @@ path = "src/main.rs"
 [dependencies]
 num_enum = "0.7"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "sync"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

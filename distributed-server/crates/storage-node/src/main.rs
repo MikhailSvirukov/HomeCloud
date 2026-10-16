@@ -1,12 +1,13 @@
 //! `storage-node` binary entry point.
 //!
-//! Reads and validates the node configuration from environment variables and
-//! emits a structured startup log. The actor runtime, TCP listener, and
-//! `io_uring` disk thread are later increments.
+//! Reads and validates the node configuration from environment variables,
+//! emits a structured startup log, binds the listen address, and serves frame
+//! connections until the process is stopped. The `io_uring` disk thread is a
+//! later increment.
 
 use std::process::ExitCode;
 
-use storage_node::{NodeConfig, PROTOCOL_VERSION};
+use storage_node::{serve, Listener, NodeConfig, PROTOCOL_VERSION};
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -29,9 +30,10 @@ const KEY_DATA_DIR: &str = "data_dir";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 
-fn main() -> ExitCode {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
     init_tracing();
-    run()
+    run().await
 }
 
 /// Installs the global subscriber, honouring `RUST_LOG`.
@@ -43,11 +45,11 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
-/// Loads and validates configuration, emitting the outcome.
+/// Loads and validates configuration, then serves until stopped.
 ///
 /// A missing environment variable is treated as an empty value so validation
 /// reports a missing key instead of aborting.
-fn run() -> ExitCode {
+async fn run() -> ExitCode {
     let node_id = env_value(ENV_NODE_ID);
     let listen_addr = env_value(ENV_LISTEN_ADDR);
     let data_dir = env_value(ENV_DATA_DIR);
@@ -60,21 +62,43 @@ fn run() -> ExitCode {
         (KEY_PEERS, peers.as_str()),
     ];
 
-    match NodeConfig::from_pairs(&pairs) {
-        Ok(config) => {
-            tracing::info!(
-                crate_version = env!("CARGO_PKG_VERSION"),
-                protocol_version = PROTOCOL_VERSION,
-                node_id = %config.node_id,
-                listen_addr = %config.listen_addr,
-                data_dir = %config.data_dir.display(),
-                peers = config.peers.len(),
-                "storage node starting"
-            );
-            ExitCode::SUCCESS
-        }
+    let config = match NodeConfig::from_pairs(&pairs) {
+        Ok(config) => config,
         Err(error) => {
             tracing::error!(error = %error, "invalid configuration");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        crate_version = env!("CARGO_PKG_VERSION"),
+        protocol_version = PROTOCOL_VERSION,
+        node_id = %config.node_id,
+        listen_addr = %config.listen_addr,
+        data_dir = %config.data_dir.display(),
+        peers = config.peers.len(),
+        "storage node starting"
+    );
+
+    let listener = match Listener::bind(&config.listen_addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to bind listener");
+            return ExitCode::FAILURE;
+        }
+    };
+    let address = match listener.local_addr() {
+        Ok(address) => address,
+        Err(error) => {
+            tracing::error!(error = %error, "listener address unavailable");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(%address, "listening");
+
+    match serve(listener, core::future::pending()).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = %error, "node runtime failed");
             ExitCode::FAILURE
         }
     }

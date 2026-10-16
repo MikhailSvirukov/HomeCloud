@@ -11,7 +11,8 @@
 //! over an async byte stream, the payload streaming path ([`send_payload`],
 //! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
 //! TCP listener ([`Listener`]) that yields frame reader/writer halves per
-//! accepted connection.
+//! accepted connection, and the node runtime ([`serve`]) that accepts
+//! connections until shutdown and serves each frame pump on its own task.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -38,6 +39,7 @@ mod frame_buffer;
 mod framing;
 mod listener;
 mod metadata;
+mod node;
 mod payload;
 mod payload_stream;
 mod response;
@@ -58,6 +60,7 @@ pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
     CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
 };
+pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};
