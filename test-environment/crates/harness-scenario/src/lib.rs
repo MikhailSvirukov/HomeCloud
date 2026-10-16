@@ -10,7 +10,10 @@ mod catalogue;
 mod checks;
 mod scenario;
 
-pub use catalogue::{link_degradation_recovery, node_shutdown_recovery};
+pub use catalogue::{
+    link_degradation_recovery, network_partition_recovery, node_shutdown_recovery,
+    quorum_loss_recovery,
+};
 pub use checks::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost,
     StorageQuorumHeld,
