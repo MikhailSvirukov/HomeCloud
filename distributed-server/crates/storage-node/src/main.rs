@@ -2,8 +2,8 @@
 //!
 //! Reads and validates the node configuration from environment variables,
 //! emits a structured startup log, binds the listen address, and serves frame
-//! connections until the process is stopped. The `io_uring` disk thread is a
-//! later increment.
+//! connections until it receives a Ctrl-C shutdown signal. The `io_uring` disk
+//! thread is a later increment.
 
 use std::process::ExitCode;
 
@@ -95,12 +95,22 @@ async fn run() -> ExitCode {
     };
     tracing::info!(%address, "listening");
 
-    match serve(listener, core::future::pending()).await {
-        Ok(()) => ExitCode::SUCCESS,
+    match serve(listener, shutdown_signal()).await {
+        Ok(()) => {
+            tracing::info!("storage node stopped");
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             tracing::error!(error = %error, "node runtime failed");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Resolves when the process receives Ctrl-C, failing open on a listen error.
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %error, "failed to listen for the shutdown signal");
     }
 }
 
