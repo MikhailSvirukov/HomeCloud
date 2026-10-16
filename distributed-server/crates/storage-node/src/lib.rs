@@ -8,8 +8,10 @@
 //! upload outcome codes ([`UploadStatus`] and [`ResponseError`]), and the
 //! frame reader/writer halves ([`FrameReader`], [`FrameWriter`]) with
 //! [`split_frames`] and the forwarding [`pump_frames`], which move whole frames
-//! over an async byte stream, and the payload streaming path ([`send_payload`],
-//! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`].
+//! over an async byte stream, the payload streaming path ([`send_payload`],
+//! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
+//! TCP listener ([`Listener`]) that yields frame reader/writer halves per
+//! accepted connection.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -34,6 +36,7 @@ mod config;
 mod connection;
 mod frame_buffer;
 mod framing;
+mod listener;
 mod metadata;
 mod payload;
 mod payload_stream;
@@ -50,6 +53,7 @@ pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
 };
+pub use listener::{Listener, ListenerError};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
     CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
