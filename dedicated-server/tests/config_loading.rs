@@ -17,7 +17,7 @@ fn load_accepts_the_valid_fixture() {
 
 #[test]
 fn load_missing_file_reports_read_error_with_path() {
-    let path = Path::new("/nonexistent/picbackup/dedicated-server.toml");
+    let path = Path::new("/nonexistent/homecloud/dedicated-server.toml");
 
     assert!(matches!(
         ServerConfig::load(path),

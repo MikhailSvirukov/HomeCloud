@@ -2,8 +2,8 @@ listen = "10.0.0.1:7000"
 
 [identity]
 label = "dedicated-1"
-encryption_private_key = "/etc/picbackup/dedicated/encryption.key"
-signing_private_key = "/etc/picbackup/dedicated/signing.key"
+encryption_private_key = "/etc/homecloud/dedicated/encryption.key"
+signing_private_key = "/etc/homecloud/dedicated/signing.key"
 
 [heartbeat]
 interval_ms = 0

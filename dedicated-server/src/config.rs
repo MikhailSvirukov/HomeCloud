@@ -17,7 +17,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// Environment variable holding the path to the server configuration file.
-pub const CONFIG_PATH_ENV: &str = "PICBACKUP_DEDICATED_SERVER_CONFIG";
+pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
 
 /// Configuration file name used when [`CONFIG_PATH_ENV`] is not set.
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "dedicated-server.toml";
