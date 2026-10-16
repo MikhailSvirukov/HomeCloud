@@ -48,11 +48,12 @@ internal fun MediaPermissionRequestContent(
     var hasRequested by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
 
-    val status = remember(revision, hasRequested) {
-        MediaPermissionRequestPolicy.status(
-            Build.VERSION.SDK_INT,
-            grantedPermissions(activity),
-            permanentlyDeniedPermissions(activity, hasRequested),
+    val prompt = remember(revision, hasRequested) {
+        mediaPermissionPrompt(
+            sdkInt = Build.VERSION.SDK_INT,
+            granted = grantedPermissions(activity),
+            permanentlyDenied = permanentlyDeniedPermissions(activity),
+            hasRequested = hasRequested,
         )
     }
 
@@ -71,8 +72,8 @@ internal fun MediaPermissionRequestContent(
         onDispose { activity.lifecycle.removeObserver(observer) }
     }
 
-    MediaPermissionPrompt(
-        status = status,
+    MediaPermissionSurface(
+        prompt = prompt,
         onRequestPermissions = {
             permissionsLauncher.launch(
                 MediaPermissionRequestPolicy
@@ -86,39 +87,32 @@ internal fun MediaPermissionRequestContent(
 }
 
 /**
- * Shows the message for the given status and, when access was not granted, the single action that
- * either asks for the missing permissions or opens the app's system settings.
+ * Shows the prompt's message and, when access was not granted, the single action it carries.
  */
 @Composable
-private fun MediaPermissionPrompt(
-    status: MediaPermissionStatus,
+private fun MediaPermissionSurface(
+    prompt: MediaPermissionPrompt,
     onRequestPermissions: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val message = when (status) {
-        MediaPermissionStatus.GRANTED -> stringResource(R.string.media_permission_granted_message)
-        MediaPermissionStatus.REQUESTABLE -> stringResource(R.string.media_permission_request_message)
-        MediaPermissionStatus.BLOCKED -> stringResource(R.string.media_permission_blocked_message)
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
     ) {
-        Text(text = message, style = MaterialTheme.typography.bodyLarge)
-        when (status) {
-            MediaPermissionStatus.REQUESTABLE -> Button(onClick = onRequestPermissions) {
+        Text(text = stringResource(prompt.messageResId), style = MaterialTheme.typography.bodyLarge)
+        when (prompt.action) {
+            MediaPermissionAction.REQUEST -> Button(onClick = onRequestPermissions) {
                 Text(text = stringResource(R.string.media_permission_request_action))
             }
 
-            MediaPermissionStatus.BLOCKED -> Button(onClick = onOpenSettings) {
+            MediaPermissionAction.OPEN_SETTINGS -> Button(onClick = onOpenSettings) {
                 Text(text = stringResource(R.string.media_permission_settings_action))
             }
 
-            MediaPermissionStatus.GRANTED -> Unit
+            MediaPermissionAction.NONE -> Unit
         }
     }
 }
@@ -130,21 +124,14 @@ private fun grantedPermissions(context: Context): Set<String> =
         .toSet()
 
 /**
- * Collects the required media-read permissions the user permanently refused. Before the first ask
- * every permission without a rationale was never requested rather than refused, so the set stays
- * empty until a request has been answered.
+ * Collects the required media-read permissions the activity reports as refused. Before the first
+ * ask this also covers permissions that were never requested; the prompt decision only treats them
+ * as refusals once a request has been answered.
  */
-private fun permanentlyDeniedPermissions(
-    activity: ComponentActivity,
-    hasRequested: Boolean,
-): Set<String> =
-    if (hasRequested) {
-        MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
-            .filterNot { activity.shouldShowRequestPermissionRationale(it) }
-            .toSet()
-    } else {
-        emptySet()
-    }
+private fun permanentlyDeniedPermissions(activity: ComponentActivity): Set<String> =
+    MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+        .filterNot { activity.shouldShowRequestPermissionRationale(it) }
+        .toSet()
 
 /** Opens the app's system details settings page so the user can change the refused permission. */
 private fun openAppSettings(context: Context) {
