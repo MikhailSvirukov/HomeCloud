@@ -61,7 +61,7 @@ android/
 ├── AGENTS.md              area-local agent instructions
 ├── README.md              this file
 ├── ci/
-│   └── check.sh           area-local CI: bootstrap Gradle and run build + unit tests
+│   └── check.sh           area-local CI: bootstrap Gradle and run build + unit tests + lint
 ├── settings.gradle.kts    Gradle settings and module includes
 ├── build.gradle.kts       root build configuration
 ├── gradle.properties      shared Gradle properties
@@ -111,7 +111,7 @@ bash android/ci/check.sh
 The script resolves the `android/` directory from its own location and executes:
 
 ```sh
-"$GRADLE_BIN" --no-daemon --stacktrace -p "$ANDROID_DIR" :app:assembleDebug :app:testDebugUnitTest
+"$GRADLE_BIN" --no-daemon --stacktrace -p "$ANDROID_DIR" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
 Before invoking Gradle it exports `GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"` and `ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"`. The JVM's `user.home` can resolve to a read-only path in agent containers (for example `/home/node`) while `$HOME` is writable, so Gradle's native services and the Android tools need writable home directories. Both variables honor caller-provided overrides.
