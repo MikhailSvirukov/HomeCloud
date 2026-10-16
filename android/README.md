@@ -21,6 +21,7 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - The in-memory upload queue with its retry bookkeeping (`queue/InMemoryUploadQueue`, `queue/UploadQueue`).
 - The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
 - The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
+- A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, `log/NoOpBackupCycleLog`, `log/AndroidBackupCycleLog`).
 
 Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
 
@@ -50,6 +51,7 @@ The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDI
 - Namespace and applicationId are `dev.homecloud.android`.
 - Kotlin test sources live under `app/src/test/kotlin` in package `dev.homecloud.android`.
 - Test framework is JUnit 4.
+- Everything in the module is `internal` except `MainActivity`, the launched activity; the module surface is not a published contract.
 - Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
 
 ## Directory layout
@@ -72,6 +74,9 @@ android/
         │   │   ├── MediaBackupPlanner.kt   enqueues new candidates under a stable upload id
         │   │   ├── UploadIdFactory.kt      supplies the stable upload id
         │   │   └── BackupCycleRunner.kt    sequences restore → plan → persist for one cycle
+        │   ├── log/              structured per-cycle logging
+        │   │   ├── BackupCycleLog.kt         structured cycle log and its no-op default
+        │   │   └── AndroidBackupCycleLog.kt  reports each cycle through android.util.Log
         │   ├── media/            reading and classifying MediaStore rows
         │   │   ├── MediaStoreMediaRowSource.kt   queries the device MediaStore
         │   │   ├── MediaDiscovery.kt             reads all backup candidates
@@ -88,7 +93,8 @@ android/
             ├── backup/              unit tests for planning and the cycle runner
             ├── media/               unit tests for media discovery and classification
             ├── permissions/         unit tests for the permission policy pair
-            └── queue/               unit tests for the queue and its store
+            ├── queue/               unit tests for the queue and its store
+            └── testsupport/         shared test data for the media unit tests
 ```
 
 ## Build and test
