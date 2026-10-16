@@ -11,6 +11,10 @@ use dedicated_server::CONFIG_PATH_ENV;
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
+/// Environment variable the binary reads its log filter from.
+const RUST_LOG_ENV: &str = "RUST_LOG";
+/// Log level that keeps the startup summary and error events visible.
+const RUST_LOG_LEVEL: &str = "info";
 /// Label configured for the identity under test.
 const LABEL: &str = "dedicated-1";
 /// Distinct, non-empty key material for the two configured roles.
@@ -65,9 +69,13 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
 }
 
 /// Run the binary with the configuration path passed through the environment.
+///
+/// `RUST_LOG` is set explicitly so the assertions do not depend on the ambient
+/// environment.
 fn run_with_config(config: &Path) -> Output {
     Command::new(BINARY)
         .env(CONFIG_PATH_ENV, config)
+        .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -84,7 +92,7 @@ fn stderr_of(output: &Output) -> String {
 }
 
 #[test]
-fn valid_config_and_distinct_keys_print_one_summary_line_and_exit_zero() {
+fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
     let dir = TempDir::new("valid");
     let encryption = dir.file("encryption.key");
     let signing = dir.file("signing.key");
@@ -95,28 +103,31 @@ fn valid_config_and_distinct_keys_print_one_summary_line_and_exit_zero() {
     let output = run_with_config(&config);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
-    let summary = stdout_of(&output);
-    assert_eq!(
-        summary.lines().count(),
-        1,
-        "stdout must be exactly one line: {summary:?}"
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    let summary = stderr_of(&output);
+    assert!(
+        summary.contains("listening on 10.0.0.1:7000"),
+        "stderr: {summary}"
     );
     assert!(
         summary.contains(&format!("label={LABEL}")),
-        "stdout: {summary}"
+        "stderr: {summary}"
     );
-    assert!(summary.contains("nodes=2"), "stdout: {summary}");
+    assert!(summary.contains("nodes=2"), "stderr: {summary}");
+    assert!(summary.contains("interval_ms=1000"), "stderr: {summary}");
+    assert!(summary.contains("timeout_ms=500"), "stderr: {summary}");
+    assert!(summary.contains("miss_threshold=3"), "stderr: {summary}");
     assert!(
         summary.contains(&format!("encryption_key_bytes={}", ENCRYPTION_KEY.len())),
-        "stdout: {summary}"
+        "stderr: {summary}"
     );
     assert!(
         summary.contains(&format!("signing_key_bytes={}", SIGNING_KEY.len())),
-        "stdout: {summary}"
-    );
-    assert!(
-        stderr_of(&output).is_empty(),
-        "stderr must be empty on success"
+        "stderr: {summary}"
     );
 }
 
@@ -130,7 +141,12 @@ fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
 
     let output = run_with_config(&config);
 
-    assert!(!output.status.success(), "the process must exit non-zero");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the process must exit with the failure code, stderr: {}",
+        stderr_of(&output)
+    );
     let error = stderr_of(&output);
     assert!(
         error.contains(&missing.display().to_string()),

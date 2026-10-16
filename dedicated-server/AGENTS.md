@@ -27,6 +27,7 @@ protocol/contract changes through `contracts/` and an issue.
 - Put long inputs (TOML documents, templates, keys) in files rather than inline.
 - Document intent only; for this area that narrows the root documentation rule: no `# Errors`/`# Returns` sections and no argument-by-argument narration.
 - Write scenario-based tests: one case per scenario, no duplicate scenarios across unit and integration layers, and no tests for constructors or static data with no behavioural logic.
+- Shipped code logs with `tracing` and does not print with `println!`/`eprintln!`.
 
 ## Quality gates
 

@@ -11,9 +11,9 @@ addresses, labels, and public keys here, then send files straight to storage.
 Configuration loading and validation, key-identity loading for the server's own
 key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
 account registration model are implemented. The binary loads the configuration
-and the key identity, prints a one-line startup summary, and exits. Network I/O,
-the wire protocol, registration over the network, cluster replication, and
-topology responses are not implemented yet.
+and the key identity, logs a one-line startup summary to stderr, and exits.
+Network I/O, the wire protocol, registration over the network, cluster
+replication, and topology responses are not implemented yet.
 
 ## Build, test, and run
 
@@ -31,6 +31,10 @@ PICBACKUP_DEDICATED_SERVER_CONFIG=/path/to/config.toml cargo run --locked
 
 Without that variable the binary reads `dedicated-server.toml` from the current
 directory.
+
+The binary logs to stderr, so stdout stays empty for normal operation. The
+default level is `info`; set `RUST_LOG` to override it (for example
+`RUST_LOG=debug`). Log lines are emitted without ANSI colours.
 
 The crate's modules are private; its public items are re-exported from the crate
 root. Consumers therefore use `dedicated_server::` paths (for example
