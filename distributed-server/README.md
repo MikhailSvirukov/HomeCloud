@@ -44,8 +44,9 @@ with `split_frames` and the `pump_frames` forwarding pump, buffer-pool building
 blocks, the logical payload chain with chunked streaming/backpressure, the node
 identity/configuration model, the idempotent upload ledger (upload id, content
 hash, upload record), and the typed upload outcomes (status codes). Tokio is now
-a dependency for the async connection halves. Networking, actors, and `io_uring` are not
-implemented yet.
+a dependency for the async connection halves, and `tracing` backs the structured
+logs the node emits with a level configured through `RUST_LOG`. Networking,
+actors, and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
