@@ -1,16 +1,14 @@
 package dev.picbackup.android.media
 
 /**
- * The kinds of media this client is allowed to back up.
+ * Media kinds this client backs up: photos and videos only.
  *
- * Only photos and videos are ever candidates for backup. Audio and any other
- * media are deliberately not represented here, so they can never be classified
- * into the upload queue.
+ * Audio is deliberately absent, so it can never be classified into the queue.
  */
 enum class MediaKind {
-    /** A still image, classified from a mime type with the image prefix. */
+    /** A still image. */
     IMAGE,
 
-    /** A video, classified from a mime type with the video prefix. */
+    /** A video. */
     VIDEO,
 }

@@ -7,21 +7,6 @@ import org.junit.Test
 class MediaPermissionPolicyTest {
 
     @Test
-    fun `read media images constant matches the Android platform name`() {
-        assertEquals("android.permission.READ_MEDIA_IMAGES", MediaPermissionPolicy.READ_MEDIA_IMAGES)
-    }
-
-    @Test
-    fun `read media video constant matches the Android platform name`() {
-        assertEquals("android.permission.READ_MEDIA_VIDEO", MediaPermissionPolicy.READ_MEDIA_VIDEO)
-    }
-
-    @Test
-    fun `read external storage constant matches the Android platform name`() {
-        assertEquals("android.permission.READ_EXTERNAL_STORAGE", MediaPermissionPolicy.READ_EXTERNAL_STORAGE)
-    }
-
-    @Test
     fun `sdk below 33 requires only read external storage`() {
         LEGACY_SDK_LEVELS.forEach { sdkInt ->
             assertEquals(

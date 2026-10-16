@@ -1,22 +1,10 @@
 package dev.picbackup.android.queue
 
 /**
- * In-memory implementation of [UploadQueue] backed by a single insertion-ordered map.
- *
- * Entries are keyed by `uploadId`, so [enqueue] is idempotent: a repeated id returns the existing
- * entry instead of adding a second one. Iteration order is insertion order, which makes
- * [nextPending] deterministic.
- *
- * This class is intentionally not thread-safe. All access must happen on a single thread or be
- * externally synchronized; concurrency is out of scope for this domain model and is handled by the
- * scheduling layer in a later issue. No locking is performed here.
- *
- * There is no delete or remove operation, by design: the v1 specification forbids propagating a
- * local file deletion to the server, so the model exposes no delete command at all.
- *
- * @param maxAttempts number of failed attempts after which an entry becomes
- *   [UploadQueueState.FAILED] instead of returning to [UploadQueueState.PENDING]. Must be positive.
- * @throws IllegalArgumentException if [maxAttempts] is not positive.
+ * In-memory [UploadQueue] backed by an insertion-ordered map keyed by `uploadId`, so [enqueue] is
+ * idempotent and [nextPending] is deterministic. Not thread-safe by design: access must stay on one
+ * thread or be externally synchronized, since concurrency is handled by the scheduling layer. There
+ * is no delete operation, by design, because a local deletion must not propagate to the server.
  */
 class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
 
@@ -42,6 +30,11 @@ class InMemoryUploadQueue(private val maxAttempts: Int) : UploadQueue {
                 state = UploadQueueState.PENDING,
             )
         }
+
+    override fun restore(entries: List<UploadQueueEntry>) {
+        entriesById.clear()
+        entries.forEach { entry -> entriesById[entry.uploadId] = entry }
+    }
 
     override fun entries(): List<UploadQueueEntry> = entriesById.values.toList()
 

@@ -5,13 +5,13 @@
 //! ordered `docker` arguments. No Docker daemon or socket is touched.
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 
-use harness_core::{ClusterTopology, NodeId, NodeSpec};
+use harness_core::NodeId;
 use harness_docker::{
-    ClusterPlan, ContainerPlan, PlanSettings, container_name, container_remove, container_run,
-    container_stop, network_create,
+    ClusterPlan, ContainerEnv, ContainerPlan, PlanSettings, container_name, container_remove,
+    container_run, container_stop, network_create,
 };
+use harness_test_support::topology;
 
 /// The Docker CLI program every command must invoke.
 const DOCKER: &str = "docker";
@@ -19,6 +19,10 @@ const DOCKER: &str = "docker";
 const NETWORK: &str = "network";
 /// `network create` subcommand.
 const CREATE: &str = "create";
+/// `docker run` subcommand.
+const RUN: &str = "run";
+/// Detach flag for `docker run`.
+const DETACH: &str = "--detach";
 /// Container-name flag.
 const NAME: &str = "--name";
 /// Container-hostname flag.
@@ -43,50 +47,31 @@ const SERVER_IMAGE: &str = "server:1";
 const STORAGE_IMAGE: &str = "storage:1";
 /// Node id of the single dedicated server.
 const DEDICATED_ID: u16 = 1;
-/// Label of the dedicated server.
-const DEDICATED_LABEL: &str = "dedicated";
-/// Listen port of the dedicated server.
-const DEDICATED_PORT: u16 = 7001;
-/// Number of storage nodes in the test topology.
-const STORAGE_COUNT: u16 = 3;
 /// First node id handed out to storage nodes.
 const FIRST_STORAGE_ID: u16 = 2;
-/// Base address port for storage node listen addresses.
-const STORAGE_PORT_BASE: u16 = 7002;
-
-/// Builds `127.0.0.1:<port>`.
-fn addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
-
-/// Builds a valid topology with one dedicated server and `STORAGE_COUNT` storage nodes.
-fn topology() -> ClusterTopology {
-    let builder = ClusterTopology::builder().dedicated_server(NodeSpec::dedicated_server(
-        NodeId::new(DEDICATED_ID),
-        DEDICATED_LABEL,
-        addr(DEDICATED_PORT),
-    ));
-    (0..STORAGE_COUNT)
-        .fold(builder, |builder, i| {
-            let id = i + FIRST_STORAGE_ID;
-            builder.storage_node(NodeSpec::storage(
-                NodeId::new(id),
-                format!("s-{id}"),
-                addr(STORAGE_PORT_BASE + i),
-            ))
-        })
-        .build()
-        .expect("one dedicated server plus an odd set of storage nodes is a valid topology")
-}
+/// Number of storage nodes in the shared fixture.
+const STORAGE_NODES: u16 = 3;
 
 /// Derives the plan settings used across these tests.
 fn settings() -> PlanSettings {
-    PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE)
+    PlanSettings::new(
+        NETWORK_NAME,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        ContainerEnv {
+            node_id: "NODE_ID".to_string(),
+            node_label: "NODE_LABEL".to_string(),
+            node_role: "NODE_ROLE".to_string(),
+            listen_address: "LISTEN_ADDRESS".to_string(),
+            dedicated_server_role: "dedicated-server".to_string(),
+            storage_role: "storage".to_string(),
+        },
+    )
 }
 
 /// Derives a plan for the shared test topology.
 fn plan() -> ClusterPlan {
-    ClusterPlan::from_topology(&topology(), &settings())
+    ClusterPlan::from_topology(&topology(STORAGE_NODES), &settings())
 }
 
 /// The dedicated-server container of a plan.
@@ -129,38 +114,35 @@ fn network_create_matches_the_configured_network() {
     let plan = plan();
     let command = network_create(&plan);
 
-    assert_eq!(command.program(), DOCKER);
-    assert_eq!(
-        command.args(),
-        strings(&[NETWORK, CREATE, NETWORK_NAME]).as_slice()
-    );
-    assert_eq!(plan.network().name(), NETWORK_NAME);
+    assert_eq!(command.program, DOCKER);
+    assert_eq!(command.args, strings(&[NETWORK, CREATE, NETWORK_NAME]));
+    assert_eq!(plan.network.name, NETWORK_NAME);
 }
 
 #[test]
 fn container_run_is_consistent_with_each_plan_container() {
     let plan = plan();
 
-    for container in plan.containers() {
+    for container in &plan.containers {
         let run = container_run(&plan, container);
         let expected_name = container_name(&plan, container);
 
-        assert_eq!(run.program(), DOCKER);
-        assert_eq!(value_after(run.args(), NAME), expected_name.as_str());
+        assert_eq!(run.program, DOCKER);
+        assert_eq!(value_after(&run.args, NAME), expected_name.as_str());
         assert_eq!(
-            value_after(run.args(), HOSTNAME),
+            value_after(&run.args, HOSTNAME),
             container.hostname.as_str()
         );
         assert_eq!(
-            value_after(run.args(), HOSTNAME),
-            value_after(run.args(), NETWORK_ALIAS)
+            value_after(&run.args, HOSTNAME),
+            value_after(&run.args, NETWORK_ALIAS)
         );
-        assert_eq!(value_after(run.args(), NETWORK_FLAG), plan.network().name());
+        assert_eq!(value_after(&run.args, NETWORK_FLAG), plan.network.name);
         assert_eq!(
-            value_after(run.args(), NETWORK_ALIAS),
+            value_after(&run.args, NETWORK_ALIAS),
             container.hostname.as_str()
         );
-        assert_eq!(run.args().last(), Some(&container.image));
+        assert_eq!(run.args.last(), Some(&container.image));
     }
 }
 
@@ -172,19 +154,16 @@ fn container_run_passes_every_env_entry() {
         let run = container_run(&plan, container);
         let expected = env_args(&container.env);
         let start = run
-            .args()
+            .args
             .iter()
             .position(|arg| arg == ENV)
             .expect("a container run always renders at least one env flag");
 
         assert_eq!(
-            &run.args()[start..start + expected.len()],
+            &run.args[start..start + expected.len()],
             expected.as_slice()
         );
-        assert_eq!(
-            run.args().get(start + expected.len()),
-            Some(&container.image)
-        );
+        assert_eq!(run.args.get(start + expected.len()), Some(&container.image));
     }
 }
 
@@ -195,10 +174,19 @@ fn stop_and_remove_target_the_container_name() {
     let name = container_name(&plan, container);
 
     let stop = container_stop(&plan, container);
-    assert_eq!(stop.program(), DOCKER);
-    assert_eq!(stop.args(), strings(&[STOP, &name]).as_slice());
+    assert_eq!(stop.program, DOCKER);
+    assert_eq!(stop.args, strings(&[STOP, &name]));
 
     let remove = container_remove(&plan, container);
-    assert_eq!(remove.program(), DOCKER);
-    assert_eq!(remove.args(), strings(&[REMOVE, FORCE, &name]).as_slice());
+    assert_eq!(remove.program, DOCKER);
+    assert_eq!(remove.args, strings(&[REMOVE, FORCE, &name]));
+}
+
+#[test]
+fn container_run_leads_with_run_and_detach() {
+    let plan = plan();
+    let run = container_run(&plan, storage(&plan));
+
+    assert_eq!(run.args.first().map(String::as_str), Some(RUN));
+    assert_eq!(run.args.get(1).map(String::as_str), Some(DETACH));
 }

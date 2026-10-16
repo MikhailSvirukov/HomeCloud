@@ -1,8 +1,18 @@
 //! Integration tests exercising only the public `storage_node` payload API.
 
+use core::num::NonZeroUsize;
+
 use storage_node::{
     ChunkError, ChunkStream, PayloadBufferPool, PayloadChain, PoolError, SizeClass,
 };
+
+fn chunk_capacity(bytes: usize) -> NonZeroUsize {
+    NonZeroUsize::new(bytes).expect("chunk capacity is non-zero")
+}
+
+fn max_chunks(count: usize) -> NonZeroUsize {
+    NonZeroUsize::new(count).expect("max chunks is non-zero")
+}
 
 #[test]
 fn chain_accumulates_and_returns_buffers() {
@@ -28,7 +38,7 @@ fn chain_accumulates_and_returns_buffers() {
 #[test]
 fn chunk_stream_seals_full_buffers_and_finishes_partial_block() {
     let mut pool = PayloadBufferPool::with_default_classes().expect("defaults are valid");
-    let mut stream = ChunkStream::new(&mut pool, 64 * 1024, 4).expect("valid configuration");
+    let mut stream = ChunkStream::new(&mut pool, chunk_capacity(64 * 1024), max_chunks(4));
 
     let data = vec![7u8; 100_000];
     stream
@@ -51,7 +61,7 @@ fn chunk_stream_seals_full_buffers_and_finishes_partial_block() {
 #[test]
 fn empty_write_consumes_nothing() {
     let mut pool = PayloadBufferPool::new(&[SizeClass::new(8, 1)]).expect("valid size class");
-    let mut stream = ChunkStream::new(&mut pool, 8, 1).expect("valid configuration");
+    let mut stream = ChunkStream::new(&mut pool, chunk_capacity(8), max_chunks(1));
 
     assert_eq!(stream.write(&[]).expect("empty write succeeds"), 0);
     assert_eq!(stream.buffered_len(), 0);
@@ -65,7 +75,7 @@ fn empty_write_consumes_nothing() {
 #[test]
 fn backpressure_is_relieved_by_take_sealed() {
     let mut pool = PayloadBufferPool::new(&[SizeClass::new(1024, 4)]).expect("valid size class");
-    let mut stream = ChunkStream::new(&mut pool, 1024, 2).expect("valid configuration");
+    let mut stream = ChunkStream::new(&mut pool, chunk_capacity(1024), max_chunks(2));
 
     let first_batch = [1u8; 2048];
     stream
@@ -104,7 +114,7 @@ fn backpressure_is_relieved_by_take_sealed() {
 #[test]
 fn pool_exhaustion_is_reported() {
     let mut pool = PayloadBufferPool::new(&[SizeClass::new(1024, 1)]).expect("valid size class");
-    let mut stream = ChunkStream::new(&mut pool, 1024, 4).expect("valid configuration");
+    let mut stream = ChunkStream::new(&mut pool, chunk_capacity(1024), max_chunks(4));
 
     stream
         .write_all(&[0u8; 1024])

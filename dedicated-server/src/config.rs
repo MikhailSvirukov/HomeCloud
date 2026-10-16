@@ -2,11 +2,14 @@
 //!
 //! The configuration describes how the control plane listens, its own key
 //! identity, heartbeat timing, and the fixed storage cluster it bootstraps.
-//! Validation rejects structurally wrong configurations early so the runtime
+//! `serde` enforces the shape of every field while parsing, and the cross-field
+//! rules (non-empty and unique entries) are checked afterwards so the runtime
 //! can assume a usable [`ServerConfig`].
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
+use std::fmt;
 use std::net::SocketAddr;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -19,74 +22,92 @@ pub const CONFIG_PATH_ENV: &str = "PICBACKUP_DEDICATED_SERVER_CONFIG";
 /// Configuration file name used when [`CONFIG_PATH_ENV`] is not set.
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "dedicated-server.toml";
 
-const FIELD_IDENTITY_LABEL: &str = "identity.label";
-const FIELD_HEARTBEAT_INTERVAL_MS: &str = "heartbeat.interval_ms";
-const FIELD_HEARTBEAT_TIMEOUT_MS: &str = "heartbeat.timeout_ms";
-const FIELD_HEARTBEAT_MISS_THRESHOLD: &str = "heartbeat.miss_threshold";
-const FIELD_CLUSTER_NODES: &str = "cluster.nodes";
-const FIELD_NODE_LABEL: &str = "cluster.nodes.label";
-const FIELD_NODE_ADDRESS: &str = "cluster.nodes.address";
-const FIELD_NODE_ENCRYPTION_PUBLIC_KEY: &str = "cluster.nodes.encryption_public_key";
-const FIELD_NODE_SIGNING_PUBLIC_KEY: &str = "cluster.nodes.signing_public_key";
+/// Result of loading or validating a [`ServerConfig`].
+type Result<T> = core::result::Result<T, ConfigError>;
 
 /// Top-level configuration of the dedicated server.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     /// Address the control plane listens on.
-    pub listen: SocketAddr,
+    pub(crate) listen: SocketAddr,
     /// Key identity of this dedicated server.
-    pub identity: IdentityConfig,
+    pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
-    pub heartbeat: HeartbeatConfig,
+    pub(crate) heartbeat: HeartbeatConfig,
     /// Fixed storage cluster bootstrap information.
-    pub cluster: ClusterConfig,
+    pub(crate) cluster: ClusterConfig,
 }
 
 /// Key identity of the dedicated server.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct IdentityConfig {
+pub(crate) struct IdentityConfig {
     /// Human-readable label identifying this node.
-    pub label: String,
+    pub(crate) label: String,
     /// Path to the private key used to decrypt incoming messages.
-    pub encryption_private_key: PathBuf,
+    pub(crate) encryption_private_key: PathBuf,
     /// Path to the private key used to sign outgoing messages.
-    pub signing_private_key: PathBuf,
+    pub(crate) signing_private_key: PathBuf,
 }
 
 /// Heartbeat timing towards the storage cluster.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HeartbeatConfig {
+pub(crate) struct HeartbeatConfig {
     /// Send interval in milliseconds.
-    pub interval_ms: u64,
+    pub(crate) interval_ms: NonZeroU64,
     /// Time to wait for a response before a heartbeat counts as missed, in milliseconds.
-    pub timeout_ms: u64,
+    pub(crate) timeout_ms: NonZeroU64,
     /// Number of consecutive missed heartbeats tolerated before the node is considered down.
-    pub miss_threshold: u32,
+    pub(crate) miss_threshold: NonZeroU32,
 }
 
 /// Fixed storage cluster bootstrap information.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterConfig {
+pub(crate) struct ClusterConfig {
     /// Storage nodes that make up the cluster.
-    pub nodes: Vec<ClusterNode>,
+    pub(crate) nodes: Vec<ClusterNode>,
 }
 
 /// A single storage node known at bootstrap.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterNode {
+pub(crate) struct ClusterNode {
     /// Human-readable label identifying the node.
-    pub label: String,
+    pub(crate) label: String,
     /// Address of the node.
-    pub address: SocketAddr,
+    pub(crate) address: SocketAddr,
     /// Public key used to encrypt messages for the node.
-    pub encryption_public_key: String,
+    pub(crate) encryption_public_key: String,
     /// Public key used to verify messages signed by the node.
-    pub signing_public_key: String,
+    pub(crate) signing_public_key: String,
+}
+
+/// Field of a [`ClusterNode`] that a configuration rule rejected.
+#[derive(Debug)]
+pub enum NodeField {
+    /// The node's human-readable label.
+    Label,
+    /// The node's address.
+    Address,
+    /// The node's encryption public key.
+    EncryptionPublicKey,
+    /// The node's signing public key.
+    SigningPublicKey,
+}
+
+impl fmt::Display for NodeField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Label => "label",
+            Self::Address => "address",
+            Self::EncryptionPublicKey => "encryption_public_key",
+            Self::SigningPublicKey => "signing_public_key",
+        };
+        formatter.write_str(name)
+    }
 }
 
 /// Errors produced while loading or validating a [`ServerConfig`].
@@ -95,320 +116,235 @@ pub enum ConfigError {
     /// Reading the configuration file failed.
     #[error("failed to read configuration file '{path}': {source}")]
     Read {
-        /// Path that was read.
         path: PathBuf,
-        /// Underlying I/O failure.
         #[source]
         source: std::io::Error,
     },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
-        /// Underlying TOML parse failure.
         #[source]
         source: toml::de::Error,
     },
-    /// The parsed configuration is structurally wrong for the v1 control plane.
-    #[error("invalid configuration: {0}")]
-    Invalid(String),
+    /// [`IdentityConfig::label`] is empty.
+    #[error("identity.label must not be empty")]
+    EmptyIdentityLabel,
+    /// [`ClusterConfig::nodes`] is empty.
+    #[error("cluster.nodes must not be empty")]
+    EmptyCluster,
+    /// A required [`ClusterNode`] field is empty.
+    #[error("cluster.nodes[{index}].{field} must not be empty")]
+    EmptyNodeField { index: usize, field: NodeField },
+    /// Two [`ClusterNode`] entries share a value for the same field.
+    #[error("cluster.nodes {field} values must be unique")]
+    DuplicateNodeField { field: NodeField },
 }
 
 impl HeartbeatConfig {
     /// Heartbeat send interval.
-    pub fn interval(&self) -> Duration {
-        Duration::from_millis(self.interval_ms)
+    pub(crate) fn interval(&self) -> Duration {
+        Duration::from_millis(self.interval_ms.get())
     }
 
     /// Time to wait for a heartbeat response before it counts as missed.
-    pub fn timeout(&self) -> Duration {
-        Duration::from_millis(self.timeout_ms)
+    pub(crate) fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.get())
     }
 }
 
 impl ServerConfig {
     /// Parse and validate a configuration from TOML text.
-    pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
+    pub fn from_toml_str(input: &str) -> Result<Self> {
         let config: Self = toml::from_str(input).map_err(|source| ConfigError::Parse { source })?;
         config.validate()?;
         Ok(config)
     }
 
     /// Read, parse and validate a configuration file.
-    pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let input = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Self::from_toml_str(&input)
+    pub fn load(path: &Path) -> Result<Self> {
+        std::fs::read_to_string(path)
+            .map_err(|source| ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })
+            .and_then(|input| Self::from_toml_str(&input))
+    }
+
+    /// Label and private key paths needed to load this server's identity.
+    pub fn identity_key_material(&self) -> (&str, &Path, &Path) {
+        (
+            &self.identity.label,
+            &self.identity.encryption_private_key,
+            &self.identity.signing_private_key,
+        )
     }
 
     /// Apply every structural validation rule to the parsed configuration.
-    fn validate(&self) -> Result<(), ConfigError> {
-        validate_identity(&self.identity)?;
-        validate_heartbeat(&self.heartbeat)?;
-        validate_cluster(&self.cluster)
+    fn validate(&self) -> Result<()> {
+        validate_identity(&self.identity).and_then(|()| validate_cluster(&self.cluster))
     }
 }
 
-fn validate_identity(identity: &IdentityConfig) -> Result<(), ConfigError> {
+fn validate_identity(identity: &IdentityConfig) -> Result<()> {
     if identity.label.is_empty() {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_IDENTITY_LABEL} must not be empty"
-        )))
-    } else {
-        Ok(())
+        return Err(ConfigError::EmptyIdentityLabel);
     }
+    Ok(())
 }
 
-fn validate_heartbeat(heartbeat: &HeartbeatConfig) -> Result<(), ConfigError> {
-    if heartbeat.interval_ms == 0 {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_HEARTBEAT_INTERVAL_MS} must be greater than zero"
-        )))
-    } else if heartbeat.timeout_ms == 0 {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_HEARTBEAT_TIMEOUT_MS} must be greater than zero"
-        )))
-    } else if heartbeat.miss_threshold == 0 {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_HEARTBEAT_MISS_THRESHOLD} must be greater than zero"
-        )))
-    } else {
-        Ok(())
-    }
+fn validate_cluster(cluster: &ClusterConfig) -> Result<()> {
+    (!cluster.nodes.is_empty())
+        .then_some(())
+        .ok_or(ConfigError::EmptyCluster)
+        .and_then(|()| validate_node_fields(&cluster.nodes))
+        .and_then(|()| validate_unique_node_labels(&cluster.nodes))
+        .and_then(|()| validate_unique_node_addresses(&cluster.nodes))
 }
 
-fn validate_cluster(cluster: &ClusterConfig) -> Result<(), ConfigError> {
-    if cluster.nodes.is_empty() {
-        return Err(ConfigError::Invalid(format!(
-            "{FIELD_CLUSTER_NODES} must not be empty"
-        )));
-    }
-    validate_node_fields(&cluster.nodes)?;
-    validate_node_labels_unique(&cluster.nodes)?;
-    validate_node_addresses_unique(&cluster.nodes)
-}
-
-fn validate_node_fields(nodes: &[ClusterNode]) -> Result<(), ConfigError> {
-    for node in nodes {
+fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
+    for (index, node) in nodes.iter().enumerate() {
         if node.label.is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "{FIELD_NODE_LABEL} must not be empty"
-            )));
-        } else if node.encryption_public_key.is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "{FIELD_NODE_ENCRYPTION_PUBLIC_KEY} must not be empty"
-            )));
-        } else if node.signing_public_key.is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "{FIELD_NODE_SIGNING_PUBLIC_KEY} must not be empty"
-            )));
+            return Err(ConfigError::EmptyNodeField {
+                index,
+                field: NodeField::Label,
+            });
+        }
+        if node.encryption_public_key.is_empty() {
+            return Err(ConfigError::EmptyNodeField {
+                index,
+                field: NodeField::EncryptionPublicKey,
+            });
+        }
+        if node.signing_public_key.is_empty() {
+            return Err(ConfigError::EmptyNodeField {
+                index,
+                field: NodeField::SigningPublicKey,
+            });
         }
     }
     Ok(())
 }
 
-fn validate_node_labels_unique(nodes: &[ClusterNode]) -> Result<(), ConfigError> {
-    if all_unique(nodes.iter().map(|node| node.label.as_str())) {
+fn validate_unique_node_labels(nodes: &[ClusterNode]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    if nodes.iter().all(|node| seen.insert(node.label.as_str())) {
         Ok(())
     } else {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_NODE_LABEL} values must be unique"
-        )))
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::Label,
+        })
     }
 }
 
-fn validate_node_addresses_unique(nodes: &[ClusterNode]) -> Result<(), ConfigError> {
-    if all_unique(nodes.iter().map(|node| node.address)) {
+fn validate_unique_node_addresses(nodes: &[ClusterNode]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    if nodes.iter().all(|node| seen.insert(node.address)) {
         Ok(())
     } else {
-        Err(ConfigError::Invalid(format!(
-            "{FIELD_NODE_ADDRESS} values must be unique"
-        )))
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::Address,
+        })
     }
-}
-
-fn all_unique<T>(values: impl IntoIterator<Item = T>) -> bool
-where
-    T: Eq + std::hash::Hash,
-{
-    let mut seen = HashSet::new();
-    values.into_iter().all(|value| seen.insert(value))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const VALID_TOML: &str = include_str!("../tests/fixtures/valid_server.toml");
-
-    fn valid_config() -> ServerConfig {
-        ServerConfig::from_toml_str(VALID_TOML).expect("valid fixture must parse")
-    }
-
-    fn first_node_mut(config: &mut ServerConfig) -> &mut ClusterNode {
-        config
-            .cluster
-            .nodes
-            .first_mut()
-            .expect("valid fixture must contain a first node")
-    }
+    const VALID_SERVER: &str = include_str!("../tests/fixtures/valid_server.toml");
+    const EMPTY_IDENTITY_LABEL: &str =
+        include_str!("../tests/fixtures/invalid/empty_identity_label.toml");
+    const EMPTY_CLUSTER: &str = include_str!("../tests/fixtures/invalid/empty_cluster.toml");
+    const EMPTY_NODE_LABEL: &str = include_str!("../tests/fixtures/invalid/empty_node_label.toml");
+    const EMPTY_NODE_ENCRYPTION_KEY: &str =
+        include_str!("../tests/fixtures/invalid/empty_node_encryption_key.toml");
+    const EMPTY_NODE_SIGNING_KEY: &str =
+        include_str!("../tests/fixtures/invalid/empty_node_signing_key.toml");
+    const DUPLICATE_NODE_LABEL: &str =
+        include_str!("../tests/fixtures/invalid/duplicate_node_label.toml");
+    const DUPLICATE_NODE_ADDRESS: &str =
+        include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
+    const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
 
     #[test]
-    fn parses_valid_configuration() {
-        let config = valid_config();
+    fn parses_valid_fixture_with_expected_meaningful_values() {
+        let config = ServerConfig::from_toml_str(VALID_SERVER).expect("valid fixture must parse");
 
-        assert_eq!(config.listen, "10.0.0.1:7000".parse().expect("valid addr"));
+        assert_eq!(
+            config.listen,
+            "10.0.0.1:7000".parse().expect("valid listen address")
+        );
         assert_eq!(config.identity.label, "dedicated-1");
-        assert_eq!(config.heartbeat.interval_ms, 1000);
-        assert_eq!(config.heartbeat.timeout_ms, 500);
-        assert_eq!(config.heartbeat.miss_threshold, 3);
+        assert_eq!(config.heartbeat.interval().as_millis(), 1000);
+        assert_eq!(config.heartbeat.timeout().as_millis(), 500);
+        assert_eq!(config.heartbeat.miss_threshold.get(), 3);
         assert_eq!(config.cluster.nodes.len(), 2);
+        assert_eq!(config.cluster.nodes[0].label, "storage-1");
         assert_eq!(config.cluster.nodes[1].label, "storage-2");
     }
 
     #[test]
     fn rejects_empty_identity_label() {
-        let mut config = valid_config();
-        config.identity.label = String::new();
-
-        let error = config.validate().expect_err("empty label must fail");
-
-        assert!(
-            matches!(error, ConfigError::Invalid(message) if message.contains(FIELD_IDENTITY_LABEL))
-        );
-    }
-
-    #[test]
-    fn rejects_zero_heartbeat_interval() {
-        let mut config = valid_config();
-        config.heartbeat.interval_ms = 0;
-
-        let error = config.validate().expect_err("zero interval must fail");
-
         assert!(matches!(
-            error,
-            ConfigError::Invalid(message) if message.contains(FIELD_HEARTBEAT_INTERVAL_MS)
-        ));
-    }
-
-    #[test]
-    fn rejects_zero_heartbeat_timeout() {
-        let mut config = valid_config();
-        config.heartbeat.timeout_ms = 0;
-
-        let error = config.validate().expect_err("zero timeout must fail");
-
-        assert!(matches!(
-            error,
-            ConfigError::Invalid(message) if message.contains(FIELD_HEARTBEAT_TIMEOUT_MS)
-        ));
-    }
-
-    #[test]
-    fn rejects_zero_miss_threshold() {
-        let mut config = valid_config();
-        config.heartbeat.miss_threshold = 0;
-
-        let error = config
-            .validate()
-            .expect_err("zero miss threshold must fail");
-
-        assert!(matches!(
-            error,
-            ConfigError::Invalid(message) if message.contains(FIELD_HEARTBEAT_MISS_THRESHOLD)
+            ServerConfig::from_toml_str(EMPTY_IDENTITY_LABEL),
+            Err(ConfigError::EmptyIdentityLabel)
         ));
     }
 
     #[test]
     fn rejects_empty_cluster() {
-        let mut config = valid_config();
-        config.cluster.nodes.clear();
-
-        let error = config.validate().expect_err("empty cluster must fail");
-
-        assert!(
-            matches!(error, ConfigError::Invalid(message) if message.contains(FIELD_CLUSTER_NODES))
-        );
-    }
-
-    #[test]
-    fn rejects_empty_node_label() {
-        let mut config = valid_config();
-        first_node_mut(&mut config).label = String::new();
-
-        let error = config.validate().expect_err("empty node label must fail");
-
-        assert!(
-            matches!(error, ConfigError::Invalid(message) if message.contains(FIELD_NODE_LABEL))
-        );
-    }
-
-    #[test]
-    fn rejects_duplicate_node_labels() {
-        let mut config = valid_config();
-        let duplicate_label = config.cluster.nodes[0].label.clone();
-        config.cluster.nodes[1].label = duplicate_label;
-
-        let error = config.validate().expect_err("duplicate labels must fail");
-
-        assert!(
-            matches!(error, ConfigError::Invalid(message) if message.contains(FIELD_NODE_LABEL))
-        );
-    }
-
-    #[test]
-    fn rejects_duplicate_node_addresses() {
-        let mut config = valid_config();
-        let duplicate_address = config.cluster.nodes[0].address;
-        config.cluster.nodes[1].address = duplicate_address;
-
-        let error = config
-            .validate()
-            .expect_err("duplicate addresses must fail");
-
-        assert!(
-            matches!(error, ConfigError::Invalid(message) if message.contains(FIELD_NODE_ADDRESS))
-        );
-    }
-
-    #[test]
-    fn rejects_empty_node_encryption_public_key() {
-        let mut config = valid_config();
-        first_node_mut(&mut config).encryption_public_key = String::new();
-
-        let error = config
-            .validate()
-            .expect_err("empty encryption key must fail");
-
         assert!(matches!(
-            error,
-            ConfigError::Invalid(message) if message.contains(FIELD_NODE_ENCRYPTION_PUBLIC_KEY)
+            ServerConfig::from_toml_str(EMPTY_CLUSTER),
+            Err(ConfigError::EmptyCluster)
         ));
     }
 
     #[test]
-    fn rejects_empty_node_signing_public_key() {
-        let mut config = valid_config();
-        first_node_mut(&mut config).signing_public_key = String::new();
-
-        let error = config.validate().expect_err("empty signing key must fail");
-
+    fn rejects_empty_node_field() {
         assert!(matches!(
-            error,
-            ConfigError::Invalid(message) if message.contains(FIELD_NODE_SIGNING_PUBLIC_KEY)
+            ServerConfig::from_toml_str(EMPTY_NODE_LABEL),
+            Err(ConfigError::EmptyNodeField {
+                field: NodeField::Label,
+                ..
+            })
+        ));
+        assert!(matches!(
+            ServerConfig::from_toml_str(EMPTY_NODE_ENCRYPTION_KEY),
+            Err(ConfigError::EmptyNodeField {
+                field: NodeField::EncryptionPublicKey,
+                ..
+            })
+        ));
+        assert!(matches!(
+            ServerConfig::from_toml_str(EMPTY_NODE_SIGNING_KEY),
+            Err(ConfigError::EmptyNodeField {
+                field: NodeField::SigningPublicKey,
+                ..
+            })
         ));
     }
 
     #[test]
-    fn heartbeat_accessors_convert_milliseconds_to_duration() {
-        let heartbeat = HeartbeatConfig {
-            interval_ms: 1500,
-            timeout_ms: 250,
-            miss_threshold: 3,
-        };
+    fn rejects_duplicate_node_fields() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(DUPLICATE_NODE_LABEL),
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::Label
+            })
+        ));
+        assert!(matches!(
+            ServerConfig::from_toml_str(DUPLICATE_NODE_ADDRESS),
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::Address
+            })
+        ));
+    }
 
-        assert_eq!(heartbeat.interval(), Duration::from_millis(1500));
-        assert_eq!(heartbeat.timeout(), Duration::from_millis(250));
+    #[test]
+    fn rejects_zero_heartbeat_interval_as_parse_error() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(ZERO_INTERVAL),
+            Err(ConfigError::Parse { .. })
+        ));
     }
 }

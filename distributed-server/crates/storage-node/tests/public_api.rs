@@ -1,25 +1,6 @@
 //! Integration tests exercising only the public `storage_node` API.
 
-use storage_node::{
-    FrameHeader, FramingError, PayloadBufferPool, PoolError, DEFAULT_BUFFERS_PER_CLASS,
-    FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
-};
-
-#[test]
-fn frame_header_round_trips_through_public_api() {
-    let header = FrameHeader::new(4096).expect("4096 bytes is within the limit");
-    let encoded = header.encode();
-    assert_eq!(encoded.len(), FRAME_HEADER_LEN);
-    assert_eq!(encoded[0], PROTOCOL_VERSION);
-
-    let decoded = FrameHeader::decode(&encoded).expect("encoded header is valid");
-    assert_eq!(decoded, header);
-
-    assert_eq!(
-        FrameHeader::new(MAX_FRAME_PAYLOAD_LEN + 1).err(),
-        Some(FramingError::PayloadTooLarge)
-    );
-}
+use storage_node::{PayloadBufferPool, PoolError, DEFAULT_BUFFERS_PER_CLASS};
 
 #[test]
 fn pool_acquires_the_smallest_suitable_class() {

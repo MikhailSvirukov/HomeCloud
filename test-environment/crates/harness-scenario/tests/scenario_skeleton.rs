@@ -1,65 +1,51 @@
 //! Fast, Docker-free scenario-engine tests over the harness-core fakes.
 
-use std::{net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use harness_core::{
     ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
-    NetworkConditions, NodeControl, NodeId, NodeSpec, NodeState, PeerLink,
+    LossPercent, NetworkConditions, NodeControl, NodeId, NodeState, PeerLink,
 };
 use harness_scenario::{
     FaultActive, NoActiveFaults, NodeRunning, Scenario, ScenarioCheck, ScenarioContext,
     ScenarioRunner, StorageQuorumHeld,
 };
+use harness_test_support::{faults, nodes, topology};
 
-fn addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], port))
-}
-
+/// One dedicated server plus three storage nodes, the standard recovery shape.
 fn fixture() -> (ClusterTopology, InMemoryNodeControl, FakeFaultInjector) {
-    let topology = ClusterTopology::builder()
-        .dedicated_server(NodeSpec::dedicated_server(
-            NodeId::new(1),
-            "dedicated",
-            addr(7001),
-        ))
-        .storage_node(NodeSpec::storage(NodeId::new(2), "storage-1", addr(7002)))
-        .storage_node(NodeSpec::storage(NodeId::new(3), "storage-2", addr(7003)))
-        .storage_node(NodeSpec::storage(NodeId::new(4), "storage-3", addr(7004)))
-        .build()
-        .expect("one dedicated plus three storage nodes is valid");
-    let nodes = InMemoryNodeControl::new(topology.nodes().map(|spec| spec.id));
-    let faults = FakeFaultInjector::new(topology.clone());
-    (topology, nodes, faults)
+    let cluster = topology(3);
+    let node_control = nodes(&cluster);
+    let fault_injector = faults(&cluster);
+    (cluster, node_control, fault_injector)
 }
 
-type Assert = Box<dyn Fn(&ScenarioContext<'_>) -> Result<(), HarnessError> + Send + Sync>;
+fn loss(percent: u8) -> LossPercent {
+    LossPercent::new(percent).expect("loss percent is within the accepted range")
+}
+
+type Assert = Box<dyn Fn(&ScenarioContext<'_>) -> Result<(), HarnessError>>;
 
 /// A custom [`ScenarioCheck`] that delegates to a closure.
-struct Check(&'static str, Assert);
+struct Check(Assert);
 
 fn check(
-    name: &'static str,
-    assert: impl Fn(&ScenarioContext<'_>) -> Result<(), HarnessError> + Send + Sync + 'static,
+    assert: impl Fn(&ScenarioContext<'_>) -> Result<(), HarnessError> + 'static,
 ) -> Box<dyn ScenarioCheck> {
-    Box::new(Check(name, Box::new(assert)))
+    Box::new(Check(Box::new(assert)))
 }
 
 impl ScenarioCheck for Check {
-    fn name(&self) -> &str {
-        self.0
-    }
     fn check(&self, context: &ScenarioContext<'_>) -> Result<(), HarnessError> {
-        (self.1)(context)
+        (self.0)(context)
     }
-}
-
-fn failed(message: String) -> HarnessError {
-    HarnessError::CheckFailed { message }
 }
 
 fn always_fails(message: &'static str) -> Box<dyn ScenarioCheck> {
-    check("always fails", move |_context| {
-        Err(failed(message.to_string()))
+    check(move |_context| {
+        Err(HarnessError::CheckFailed {
+            message: message.to_string(),
+        })
     })
 }
 
@@ -68,8 +54,7 @@ fn happy_path_scenario_executes_every_step() {
     let (topology, mut nodes, mut faults) = fixture();
     let degradation = Fault::LinkDegradation {
         link: PeerLink::new(NodeId::new(2), NodeId::new(3)),
-        conditions: NetworkConditions::new(Duration::from_millis(25), 10)
-            .expect("10% loss is within the accepted range"),
+        conditions: NetworkConditions::new(Duration::from_millis(25), loss(10)),
     };
     let stopped = NodeId::new(4);
     let scenario = Scenario::builder("peer degradation and node recovery")
@@ -89,7 +74,7 @@ fn happy_path_scenario_executes_every_step() {
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(report.is_success());
-    assert_eq!(report.steps().len(), 7);
+    assert_eq!(report.steps.len(), 7);
     assert!(report.failed_step().is_none());
 }
 
@@ -103,14 +88,15 @@ fn runner_stops_at_first_failing_check() {
         .build();
     let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
     assert!(!report.is_success());
-    assert_eq!(report.steps().len(), 1);
+    assert_eq!(report.steps.len(), 1);
     let failed = report.failed_step().expect("a failing step is recorded");
-    assert_eq!(failed.description(), "always fails");
-    let expected = HarnessError::CheckFailed {
-        message: message.to_string(),
-    }
-    .to_string();
-    assert_eq!(failed.error(), Some(expected.as_str()));
+    assert_eq!(failed.description, "always fails");
+    assert_eq!(
+        failed.error(),
+        Some(&HarnessError::CheckFailed {
+            message: message.to_string(),
+        })
+    );
     assert_eq!(nodes.state(NodeId::new(2)), Ok(NodeState::Running));
 }
 

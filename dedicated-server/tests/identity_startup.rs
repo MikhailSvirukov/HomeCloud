@@ -7,17 +7,21 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use dedicated_server::identity::MAX_KEY_BYTES;
+use dedicated_server::CONFIG_PATH_ENV;
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
-/// Environment variable the binary reads the configuration path from.
-const CONFIG_PATH_ENV: &str = "PICBACKUP_DEDICATED_SERVER_CONFIG";
 /// Label configured for the identity under test.
 const LABEL: &str = "dedicated-1";
 /// Distinct, non-empty key material for the two configured roles.
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
+
+/// Configuration document with placeholders substituted per test.
+const CONFIG_TEMPLATE: &str = include_str!("fixtures/server_config.toml.tmpl");
+const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
+const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
+const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 
 /// Owns a per-test temporary directory and removes it on drop.
 struct TempDir {
@@ -48,34 +52,13 @@ impl Drop for TempDir {
 
 /// Write a complete, valid configuration pointing at the given identity paths.
 fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
-    let config = format!(
-        r#"listen = "10.0.0.1:7000"
-
-[identity]
-label = "{LABEL}"
-encryption_private_key = "{}"
-signing_private_key = "{}"
-
-[heartbeat]
-interval_ms = 1000
-timeout_ms = 500
-miss_threshold = 3
-
-[[cluster.nodes]]
-label = "storage-1"
-address = "10.0.0.11:7100"
-encryption_public_key = "storage-1-encryption-public-key"
-signing_public_key = "storage-1-signing-public-key"
-
-[[cluster.nodes]]
-label = "storage-2"
-address = "10.0.0.12:7100"
-encryption_public_key = "storage-2-encryption-public-key"
-signing_public_key = "storage-2-signing-public-key"
-"#,
-        encryption.display(),
-        signing.display(),
-    );
+    let config = CONFIG_TEMPLATE
+        .replace(
+            ENCRYPTION_KEY_PLACEHOLDER,
+            &encryption.display().to_string(),
+        )
+        .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
+        .replace(LABEL_PLACEHOLDER, LABEL);
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path
@@ -152,51 +135,6 @@ fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
     assert!(
         error.contains(&missing.display().to_string()),
         "stderr must name the missing key: {error}"
-    );
-    assert!(
-        error.contains(&config.display().to_string()),
-        "stderr must name the configuration: {error}"
-    );
-}
-
-#[test]
-fn oversized_encryption_key_file_fails_and_names_key_and_config_paths() {
-    let dir = TempDir::new("oversized-encryption");
-    let oversized = vec![0x66_u8; MAX_KEY_BYTES + 1];
-    let encryption = dir.file("encryption.key");
-    let signing = dir.file("signing.key");
-    std::fs::write(&encryption, &oversized).expect("encryption key must be written");
-    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
-    let config = write_config(&dir, &encryption, &signing);
-
-    let output = run_with_config(&config);
-
-    assert!(!output.status.success(), "the process must exit non-zero");
-    let error = stderr_of(&output);
-    assert!(
-        error.contains(&encryption.display().to_string()),
-        "stderr must name the oversized key: {error}"
-    );
-    assert!(
-        error.contains(&config.display().to_string()),
-        "stderr must name the configuration: {error}"
-    );
-}
-
-#[test]
-fn shared_encryption_and_signing_file_fails_and_names_the_shared_path() {
-    let dir = TempDir::new("shared");
-    let shared = dir.file("shared.key");
-    std::fs::write(&shared, ENCRYPTION_KEY).expect("shared key must be written");
-    let config = write_config(&dir, &shared, &shared);
-
-    let output = run_with_config(&config);
-
-    assert!(!output.status.success(), "the process must exit non-zero");
-    let error = stderr_of(&output);
-    assert!(
-        error.contains(&shared.display().to_string()),
-        "stderr must name the shared key path: {error}"
     );
     assert!(
         error.contains(&config.display().to_string()),

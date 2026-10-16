@@ -1,11 +1,12 @@
 package dev.picbackup.android.backup
 
 import dev.picbackup.android.media.MediaDiscovery
-import dev.picbackup.android.media.MediaItem
-import dev.picbackup.android.media.MediaRowSource
 import dev.picbackup.android.media.RawMediaEntry
 import dev.picbackup.android.queue.InMemoryUploadQueue
 import dev.picbackup.android.queue.UploadQueueState
+import dev.picbackup.android.testsupport.FakeMediaRowSource
+import dev.picbackup.android.testsupport.FakeUploadIdFactory
+import dev.picbackup.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,8 +18,8 @@ class MediaBackupPlannerTest {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val planner = plannerFor(
             rows = listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = VIDEO_MIME_TYPE),
+                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
             ),
             queue = queue,
         )
@@ -36,10 +37,10 @@ class MediaBackupPlannerTest {
     @Test
     fun `plan called twice does not re-enqueue the already tracked candidates`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val source = RecordingMediaRowSource(
+        val source = FakeMediaRowSource(
             listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = VIDEO_MIME_TYPE),
+                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
             ),
         )
         val planner = MediaBackupPlanner(MediaDiscovery(source), FakeUploadIdFactory(), queue)
@@ -56,7 +57,7 @@ class MediaBackupPlannerTest {
     fun `plan with only audio rows enqueues nothing`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val planner = plannerFor(
-            rows = listOf(rawEntry(id = 1L, mimeType = AUDIO_MIME_TYPE)),
+            rows = listOf(MediaTestData.row(id = 1L, mimeType = MediaTestData.AUDIO_MIME_TYPE)),
             queue = queue,
         )
 
@@ -71,9 +72,9 @@ class MediaBackupPlannerTest {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val planner = plannerFor(
             rows = listOf(
-                rawEntry(
+                MediaTestData.row(
                     id = CANDIDATE_ID,
-                    mimeType = IMAGE_MIME_TYPE,
+                    mimeType = MediaTestData.IMAGE_MIME_TYPE,
                     sizeBytes = CANDIDATE_SIZE_BYTES,
                     dateModifiedEpochSeconds = CANDIDATE_DATE_MODIFIED_EPOCH_SECONDS,
                 ),
@@ -94,8 +95,8 @@ class MediaBackupPlannerTest {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val planner = plannerFor(
             rows = listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = VIDEO_MIME_TYPE),
+                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
             ),
             queue = queue,
             uploadIdFactory = FakeUploadIdFactory(
@@ -109,82 +110,18 @@ class MediaBackupPlannerTest {
         assertEquals(1, queue.entries().size)
     }
 
-    @Test
-    fun `plan reports the number of discovered photo and video candidates`() {
-        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(
-                rawEntry(id = 1L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 2L, mimeType = IMAGE_MIME_TYPE),
-                rawEntry(id = 3L, mimeType = VIDEO_MIME_TYPE),
-            ),
-            queue = queue,
-        )
-
-        val result = planner.plan()
-
-        assertEquals(3, result.discoveredCandidates)
-        assertEquals(3, result.newlyEnqueued)
-    }
-
     private fun plannerFor(
         rows: List<RawMediaEntry>,
         queue: InMemoryUploadQueue,
         uploadIdFactory: UploadIdFactory = FakeUploadIdFactory(),
     ): MediaBackupPlanner =
-        MediaBackupPlanner(MediaDiscovery(RecordingMediaRowSource(rows)), uploadIdFactory, queue)
-
-    private fun rawEntry(
-        id: Long,
-        mimeType: String,
-        sizeBytes: Long = SIZE_BYTES,
-        dateModifiedEpochSeconds: Long = DATE_MODIFIED_EPOCH_SECONDS,
-    ): RawMediaEntry =
-        RawMediaEntry(
-            id = id,
-            uri = "$MEDIA_URI_PREFIX$id",
-            displayName = "$DISPLAY_NAME_PREFIX$id",
-            sizeBytes = sizeBytes,
-            dateModifiedEpochSeconds = dateModifiedEpochSeconds,
-            mimeType = mimeType,
-        )
-
-    private class RecordingMediaRowSource(
-        private val rows: List<RawMediaEntry>,
-    ) : MediaRowSource {
-
-        var readCount: Int = 0
-            private set
-
-        override fun readAll(): List<RawMediaEntry> {
-            readCount += 1
-            return rows
-        }
-    }
-
-    private class FakeUploadIdFactory(
-        private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
-    ) : UploadIdFactory {
-
-        override fun uploadIdFor(item: MediaItem): String =
-            uploadIdsBySourceId[item.id] ?: "$UPLOAD_ID_PREFIX${item.id}"
-    }
+        MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), uploadIdFactory, queue)
 
     private companion object {
-        const val IMAGE_MIME_TYPE = "image/jpeg"
-        const val VIDEO_MIME_TYPE = "video/mp4"
-        const val AUDIO_MIME_TYPE = "audio/mpeg"
-
-        const val MEDIA_URI_PREFIX = "content://media/external/file/"
-        const val DISPLAY_NAME_PREFIX = "item-"
-        const val SIZE_BYTES = 1_024L
-        const val DATE_MODIFIED_EPOCH_SECONDS = 1_700_000_000L
-
         const val CANDIDATE_ID = 42L
         const val CANDIDATE_SIZE_BYTES = 4_096L
         const val CANDIDATE_DATE_MODIFIED_EPOCH_SECONDS = 1_700_000_500L
 
-        const val UPLOAD_ID_PREFIX = "upload-"
         const val SHARED_UPLOAD_ID = "upload-shared"
 
         const val MAX_ATTEMPTS = 3

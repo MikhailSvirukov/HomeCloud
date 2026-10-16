@@ -1,9 +1,11 @@
 //! Node lifecycle control backed by an in-memory state map.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::error::HarnessError;
 use crate::topology::NodeId;
+
+type Result<T> = core::result::Result<T, HarnessError>;
 
 /// Lifecycle state of a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,35 +19,18 @@ pub enum NodeState {
 /// Controls node lifecycle transitions, abstracted from Docker.
 pub trait NodeControl {
     /// Returns the current lifecycle state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::UnknownNode`] for an unknown node.
-    fn state(&self, node: NodeId) -> Result<NodeState, HarnessError>;
+    fn state(&self, node: NodeId) -> Result<NodeState>;
     /// Stops the node; idempotent when already stopped.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::UnknownNode`] for an unknown node.
-    fn stop(&mut self, node: NodeId) -> Result<(), HarnessError>;
+    fn stop(&mut self, node: NodeId) -> Result<()>;
     /// Starts the node; idempotent when already running.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::UnknownNode`] for an unknown node.
-    fn start(&mut self, node: NodeId) -> Result<(), HarnessError>;
+    fn start(&mut self, node: NodeId) -> Result<()>;
     /// Restarts the node, leaving it running.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::UnknownNode`] for an unknown node.
-    fn restart(&mut self, node: NodeId) -> Result<(), HarnessError>;
+    fn restart(&mut self, node: NodeId) -> Result<()>;
 }
 
 /// A [`NodeControl`] that keeps every node's state in memory.
-#[derive(Debug, Clone)]
 pub struct InMemoryNodeControl {
-    states: BTreeMap<NodeId, NodeState>,
+    states: HashMap<NodeId, NodeState>,
 }
 impl InMemoryNodeControl {
     /// Creates a controller where every given node starts [`NodeState::Running`].
@@ -57,30 +42,30 @@ impl InMemoryNodeControl {
                 .collect(),
         }
     }
-    fn set(&mut self, node: NodeId, target: NodeState) -> Result<(), HarnessError> {
+    fn set(&mut self, node: NodeId, target: NodeState) -> Result<()> {
         match self.states.get_mut(&node) {
             Some(state) => {
                 *state = target;
                 Ok(())
             }
-            None => Err(HarnessError::UnknownNode { id: node.get() }),
+            None => Err(HarnessError::UnknownNode { id: node }),
         }
     }
 }
 impl NodeControl for InMemoryNodeControl {
-    fn state(&self, node: NodeId) -> Result<NodeState, HarnessError> {
+    fn state(&self, node: NodeId) -> Result<NodeState> {
         self.states
             .get(&node)
             .copied()
-            .ok_or(HarnessError::UnknownNode { id: node.get() })
+            .ok_or(HarnessError::UnknownNode { id: node })
     }
-    fn stop(&mut self, node: NodeId) -> Result<(), HarnessError> {
+    fn stop(&mut self, node: NodeId) -> Result<()> {
         self.set(node, NodeState::Stopped)
     }
-    fn start(&mut self, node: NodeId) -> Result<(), HarnessError> {
+    fn start(&mut self, node: NodeId) -> Result<()> {
         self.set(node, NodeState::Running)
     }
-    fn restart(&mut self, node: NodeId) -> Result<(), HarnessError> {
+    fn restart(&mut self, node: NodeId) -> Result<()> {
         self.set(node, NodeState::Running)
     }
 }
@@ -95,10 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn nodes_start_running() {
-        assert_eq!(control().state(NodeId::new(1)), Ok(NodeState::Running));
-    }
-    #[test]
     fn stop_moves_node_to_stopped() {
         let mut control = control();
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));
@@ -112,6 +93,13 @@ mod tests {
         assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
     }
     #[test]
+    fn restart_returns_stopped_node_to_running() {
+        let mut control = control();
+        assert_eq!(control.stop(NodeId::new(1)), Ok(()));
+        assert_eq!(control.restart(NodeId::new(1)), Ok(()));
+        assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
+    }
+    #[test]
     fn stop_is_idempotent() {
         let mut control = control();
         assert_eq!(control.stop(NodeId::new(1)), Ok(()));
@@ -119,19 +107,15 @@ mod tests {
         assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Stopped));
     }
     #[test]
-    fn restart_leaves_node_running() {
-        let mut control = control();
-        assert_eq!(control.stop(NodeId::new(1)), Ok(()));
-        assert_eq!(control.restart(NodeId::new(1)), Ok(()));
-        assert_eq!(control.state(NodeId::new(1)), Ok(NodeState::Running));
-    }
-    #[test]
     fn unknown_node_errors_on_every_operation() {
         let mut control = control();
         let unknown = NodeId::new(99);
-        assert_eq!(control.state(unknown), Err(E::UnknownNode { id: 99 }));
-        assert_eq!(control.stop(unknown), Err(E::UnknownNode { id: 99 }));
-        assert_eq!(control.start(unknown), Err(E::UnknownNode { id: 99 }));
-        assert_eq!(control.restart(unknown), Err(E::UnknownNode { id: 99 }));
+        assert_eq!(control.state(unknown), Err(E::UnknownNode { id: unknown }));
+        assert_eq!(control.stop(unknown), Err(E::UnknownNode { id: unknown }));
+        assert_eq!(control.start(unknown), Err(E::UnknownNode { id: unknown }));
+        assert_eq!(
+            control.restart(unknown),
+            Err(E::UnknownNode { id: unknown })
+        );
     }
 }

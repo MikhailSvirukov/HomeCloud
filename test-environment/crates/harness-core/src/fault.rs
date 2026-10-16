@@ -6,10 +6,23 @@ use std::time::Duration;
 use crate::error::HarnessError;
 use crate::topology::{ClusterTopology, NodeId};
 
-const MAX_LOSS_PERCENT: u8 = 100;
+type Result<T> = core::result::Result<T, HarnessError>;
+
+/// A packet-loss percentage in `0..=100`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LossPercent(u8);
+impl LossPercent {
+    /// Wraps a percentage, rejecting values above 100.
+    pub fn new(percent: u8) -> Result<Self> {
+        match percent {
+            0..=100 => Ok(Self(percent)),
+            _ => Err(HarnessError::LossPercentOutOfRange { percent }),
+        }
+    }
+}
 
 /// An undirected peer link; `new(a, b)` equals `new(b, a)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerLink {
     a: NodeId,
     b: NodeId,
@@ -17,13 +30,13 @@ pub struct PeerLink {
 impl PeerLink {
     /// Creates a link, normalising endpoint order so both directions compare equal.
     pub fn new(a: NodeId, b: NodeId) -> Self {
-        if a.get() <= b.get() {
+        if a.0 <= b.0 {
             Self { a, b }
         } else {
             Self { a: b, b: a }
         }
     }
-    /// Lower endpoint by node id.
+    /// Lower endpoint by node id; `a`/`b` expose the normalised pair.
     pub fn a(self) -> NodeId {
         self.a
     }
@@ -41,42 +54,25 @@ impl fmt::Display for PeerLink {
 /// Artificial network conditions applied to a peer link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetworkConditions {
-    delay: Duration,
-    loss_percent: u8,
+    /// Configured one-way delay.
+    pub delay: Duration,
+    /// Configured loss percentage.
+    pub loss_percent: LossPercent,
 }
 impl NetworkConditions {
-    /// Creates conditions; `loss_percent` must be at most 100.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::InvalidNetworkCondition`] when `loss_percent`
-    /// exceeds 100.
-    pub fn new(delay: Duration, loss_percent: u8) -> Result<Self, HarnessError> {
-        if loss_percent > MAX_LOSS_PERCENT {
-            Err(HarnessError::InvalidNetworkCondition {
-                reason: format!("loss {loss_percent}% exceeds {MAX_LOSS_PERCENT}%"),
-            })
-        } else {
-            Ok(Self {
-                delay,
-                loss_percent,
-            })
+    /// Creates conditions.
+    pub fn new(delay: Duration, loss_percent: LossPercent) -> Self {
+        Self {
+            delay,
+            loss_percent,
         }
     }
     /// No delay, no loss.
     pub fn healthy() -> Self {
         Self {
             delay: Duration::ZERO,
-            loss_percent: 0,
+            loss_percent: LossPercent(0),
         }
-    }
-    /// Configured one-way delay.
-    pub fn delay(self) -> Duration {
-        self.delay
-    }
-    /// Configured loss percentage in `0..=100`.
-    pub fn loss_percent(self) -> u8 {
-        self.loss_percent
     }
 }
 
@@ -103,8 +99,7 @@ impl fmt::Display for Fault {
             Fault::LinkDegradation { link, conditions } => write!(
                 f,
                 "link degradation {link} delay={:?} loss={}%",
-                conditions.delay(),
-                conditions.loss_percent()
+                conditions.delay, conditions.loss_percent.0
             ),
         }
     }
@@ -113,25 +108,14 @@ impl fmt::Display for Fault {
 /// Applies and reverts faults against a cluster.
 pub trait FaultInjector {
     /// Applies the fault, rejecting unknown targets and duplicates.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::UnknownNode`] or
-    /// [`HarnessError::UnknownPeerLink`] for targets outside the topology, and
-    /// [`HarnessError::FaultAlreadyActive`] when the fault is already active.
-    fn apply(&mut self, fault: &Fault) -> Result<(), HarnessError>;
+    fn apply(&mut self, fault: &Fault) -> Result<()>;
     /// Reverts an active fault.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HarnessError::FaultNotActive`] when the fault is not active.
-    fn revert(&mut self, fault: &Fault) -> Result<(), HarnessError>;
+    fn revert(&mut self, fault: &Fault) -> Result<()>;
     /// Currently active faults, in application order.
     fn active_faults(&self) -> &[Fault];
 }
 
 /// An in-memory [`FaultInjector`] backed by a known [`ClusterTopology`].
-#[derive(Debug)]
 pub struct FakeFaultInjector {
     topology: ClusterTopology,
     active: Vec<Fault>,
@@ -144,48 +128,42 @@ impl FakeFaultInjector {
             active: Vec::new(),
         }
     }
-    fn validate_known(&self, fault: &Fault) -> Result<(), HarnessError> {
+    fn validate_known(&self, fault: &Fault) -> Result<()> {
         match fault {
             Fault::NodeShutdown { node } => self
                 .topology
                 .node(*node)
                 .map(|_| ())
-                .ok_or(HarnessError::UnknownNode { id: node.get() }),
+                .ok_or(HarnessError::UnknownNode { id: *node }),
             Fault::LinkDegradation { link, .. } => {
                 let (a, b) = (link.a(), link.b());
-                if self.topology.node(a).is_some() && self.topology.node(b).is_some() {
-                    Ok(())
-                } else {
-                    Err(HarnessError::UnknownPeerLink {
-                        a: a.get(),
-                        b: b.get(),
-                    })
+                match (self.topology.node(a), self.topology.node(b)) {
+                    (Some(_), Some(_)) => Ok(()),
+                    _ => Err(HarnessError::UnknownPeerLink { a, b }),
                 }
             }
         }
     }
 }
 impl FaultInjector for FakeFaultInjector {
-    fn apply(&mut self, fault: &Fault) -> Result<(), HarnessError> {
+    fn apply(&mut self, fault: &Fault) -> Result<()> {
         self.validate_known(fault)?;
         if self.active.contains(fault) {
-            Err(HarnessError::FaultAlreadyActive {
-                fault: fault.to_string(),
-            })
-        } else {
-            self.active.push(fault.clone());
-            Ok(())
+            return Err(HarnessError::FaultAlreadyActive {
+                fault: fault.clone(),
+            });
         }
+        self.active.push(fault.clone());
+        Ok(())
     }
-    fn revert(&mut self, fault: &Fault) -> Result<(), HarnessError> {
-        if let Some(index) = self.active.iter().position(|active| active == fault) {
-            self.active.remove(index);
-            Ok(())
-        } else {
-            Err(HarnessError::FaultNotActive {
-                fault: fault.to_string(),
-            })
-        }
+    fn revert(&mut self, fault: &Fault) -> Result<()> {
+        let Some(index) = self.active.iter().position(|active| active == fault) else {
+            return Err(HarnessError::FaultNotActive {
+                fault: fault.clone(),
+            });
+        };
+        self.active.remove(index);
+        Ok(())
     }
     fn active_faults(&self) -> &[Fault] {
         &self.active
@@ -237,25 +215,25 @@ mod tests {
         assert_eq!(link.to_string(), "1<->3");
     }
     #[test]
-    fn network_conditions_reject_loss_above_one_hundred() {
-        let result = NetworkConditions::new(Duration::from_millis(5), 101);
-        assert!(matches!(result, Err(E::InvalidNetworkCondition { .. })));
-    }
-    #[test]
-    fn healthy_network_conditions_are_zero() {
-        let c = NetworkConditions::healthy();
-        assert_eq!(c.delay(), Duration::ZERO);
-        assert_eq!(c.loss_percent(), 0);
+    fn loss_percent_rejects_above_one_hundred() {
+        let result = LossPercent::new(101);
+        assert_eq!(result, Err(E::LossPercentOutOfRange { percent: 101 }));
     }
     #[test]
     fn apply_rejects_unknown_node() {
         let result = injector().apply(&shutdown(99));
-        assert!(matches!(result, Err(E::UnknownNode { id: 99 })));
+        assert!(matches!(result, Err(E::UnknownNode { id: NodeId(99) })));
     }
     #[test]
     fn apply_rejects_link_with_unknown_endpoint() {
         let result = injector().apply(&degradation(1, 99));
-        assert!(matches!(result, Err(E::UnknownPeerLink { a: 1, b: 99 })));
+        assert!(matches!(
+            result,
+            Err(E::UnknownPeerLink {
+                a: NodeId(1),
+                b: NodeId(99)
+            })
+        ));
     }
     #[test]
     fn apply_rejects_duplicate_fault() {

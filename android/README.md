@@ -13,10 +13,16 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 
 ## Implemented so far
 
-- Photo/video classification from raw media rows (`media/MediaCatalog`).
-- The media read permission policy that selects permissions per API level (`permissions/MediaPermissionPolicy`).
-- An in-memory upload queue holding one entry per stable `upload_id`, with `requeueFailed()` for the next retry cycle (`queue/InMemoryUploadQueue`).
-- Not yet implemented: persistence, background scheduling (WorkManager), MediaStore access, and networking/protocol.
+- Reading photo and video rows from `MediaStore` and turning the cursor columns into raw media entries (`media/MediaStoreMediaRowSource`, `media/MediaDiscovery`, `media/MediaRowMapping`).
+- Classifying raw media rows into backup candidates, dropping everything that is not a photo or video (`media/MediaCatalog`).
+- The per-API-level read permission policy that selects the permissions needed to read photos and videos (`permissions/MediaPermissionPolicy`).
+- The permission request decision: which required permissions are still missing and whether asking for them is still possible (`permissions/MediaPermissionRequestPolicy`).
+- Planning that enqueues newly discovered media under a stable upload id (`backup/MediaBackupPlanner`, `backup/UploadIdFactory`).
+- The in-memory upload queue with its retry bookkeeping (`queue/InMemoryUploadQueue`, `queue/UploadQueue`).
+- The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
+- The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
+
+Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
 
 ## Declared permissions
 
@@ -43,7 +49,7 @@ The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDI
 - Root project name is `PicBackup`; the application module is `:app`.
 - Namespace and applicationId are `dev.picbackup.android`.
 - Kotlin test sources live under `app/src/test/kotlin` in package `dev.picbackup.android`.
-- Test framework is JUnit 4. `buildConfig` is enabled so `dev.picbackup.android.BuildConfig` is available to JVM unit tests.
+- Test framework is JUnit 4.
 - Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
 
 ## Directory layout
@@ -62,14 +68,27 @@ android/
     └── src/
         ├── main/kotlin/dev/picbackup/android/
         │   ├── MainActivity.kt   Compose entry point
-        │   ├── media/            photo/video classification from raw media rows
+        │   ├── backup/           planning discovered media into the queue
+        │   │   ├── MediaBackupPlanner.kt   enqueues new candidates under a stable upload id
+        │   │   ├── UploadIdFactory.kt      supplies the stable upload id
+        │   │   └── BackupCycleRunner.kt    sequences restore → plan → persist for one cycle
+        │   ├── media/            reading and classifying MediaStore rows
+        │   │   ├── MediaStoreMediaRowSource.kt   queries the device MediaStore
+        │   │   ├── MediaDiscovery.kt             reads all backup candidates
+        │   │   └── MediaCatalog.kt               classifies rows into candidates
         │   ├── permissions/      which media read permissions to request
-        │   └── queue/            in-memory upload queue and retry bookkeeping
+        │   │   ├── MediaPermissionPolicy.kt          required permissions per API level
+        │   │   └── MediaPermissionRequestPolicy.kt   missing permissions and whether to ask
+        │   └── queue/            upload queue and its persisted snapshot
+        │       ├── UploadQueue.kt           queue model and retry bookkeeping
+        │       ├── InMemoryUploadQueue.kt   in-memory implementation
+        │       ├── UploadQueueStore.kt      snapshot persistence boundary
+        │       └── FileUploadQueueStore.kt  snapshot file that survives a restart
         └── test/kotlin/dev/picbackup/android/
-            ├── BuildWiringTest.kt   build wiring checks
-            ├── media/               unit tests for media classification
-            ├── permissions/         unit tests for the permission policy
-            └── queue/               unit tests for the upload queue
+            ├── backup/              unit tests for planning and the cycle runner
+            ├── media/               unit tests for media discovery and classification
+            ├── permissions/         unit tests for the permission policy pair
+            └── queue/               unit tests for the queue and its store
 ```
 
 ## Build and test
