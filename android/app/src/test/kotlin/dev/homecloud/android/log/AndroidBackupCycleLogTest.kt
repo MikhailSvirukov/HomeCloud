@@ -65,9 +65,9 @@ class AndroidBackupCycleLogTest {
         const val NEWLY_ENQUEUED = 2
 
         /**
-         * Both events are compared against the production tag, which also proves it is stable
-         * across them.
+         * The tag is part of the log contract this test fixes, so it is pinned as a literal: a
+         * change to the production tag must fail the test instead of moving both sides together.
          */
-        val CYCLE_TAG: String = AndroidBackupCycleLog.TAG
+        const val CYCLE_TAG = "HomeCloudBackupCycle"
     }
 }
