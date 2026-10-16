@@ -19,25 +19,25 @@ const ALL_STATUSES: [UploadStatus; 6] = [
 ];
 
 #[test]
-fn every_status_round_trips_through_its_code() {
+fn every_status_round_trips_through_its_wire_code() {
     for status in ALL_STATUSES {
-        assert_eq!(UploadStatus::try_from(status.code()), Ok(status));
+        assert_eq!(UploadStatus::try_from(u8::from(status)), Ok(status));
     }
 }
 
 #[test]
-fn codes_are_pairwise_distinct() {
+fn wire_codes_are_pairwise_distinct() {
     let mut codes = HashSet::new();
     for status in ALL_STATUSES {
         assert!(
-            codes.insert(status.code()),
+            codes.insert(u8::from(status)),
             "duplicate wire code for {status}"
         );
     }
 }
 
 #[test]
-fn unknown_code_is_rejected() {
+fn unknown_wire_code_is_rejected() {
     for code in [UNKNOWN_CODE_LOW, UNKNOWN_CODE_HIGH] {
         assert_eq!(
             UploadStatus::try_from(code),
@@ -63,7 +63,7 @@ fn retryable_outcomes_are_the_transient_failures() {
 }
 
 #[test]
-fn display_phrases_are_non_empty_and_distinct() {
+fn display_phrases_are_non_empty_and_pairwise_distinct() {
     let mut phrases = HashSet::new();
     for status in ALL_STATUSES {
         let phrase = status.to_string();

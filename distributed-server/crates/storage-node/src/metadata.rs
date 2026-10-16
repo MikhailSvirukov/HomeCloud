@@ -9,6 +9,8 @@
 //! This module deliberately implements no cryptography. [`ContentHash`] only
 //! wraps 32 bytes produced elsewhere.
 
+use core::fmt::Write as _;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -17,9 +19,6 @@ use std::str::FromStr;
 pub const MAX_UPLOAD_ID_LEN: usize = 64;
 /// Length of a SHA-256 content digest in bytes.
 pub const CONTENT_HASH_LEN: usize = 32;
-
-/// Lowercase hexadecimal digits indexed by nibble value.
-const HEX_DIGITS: [u8; 16] = *b"0123456789abcdef";
 
 /// Result alias for metadata validation.
 type Result<T> = core::result::Result<T, MetadataError>;
@@ -85,8 +84,7 @@ impl ContentHash {
     pub fn to_hex(&self) -> String {
         let mut hex = String::with_capacity(CONTENT_HASH_LEN * 2);
         for byte in self.0 {
-            hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
-            hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
+            let _ = write!(hex, "{byte:02x}");
         }
         hex
     }
@@ -99,7 +97,19 @@ impl ContentHash {
         }
         let mut digest = [0u8; CONTENT_HASH_LEN];
         for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-            digest[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
+            if let Some(offending) = pair.iter().find(|byte| !byte.is_ascii_hexdigit()) {
+                return Err(MetadataError::InvalidContentHashHex {
+                    character: char::from(*offending),
+                });
+            }
+            let text =
+                core::str::from_utf8(pair).map_err(|_| MetadataError::InvalidContentHashHex {
+                    character: char::from(pair[0]),
+                })?;
+            digest[index] =
+                u8::from_str_radix(text, 16).map_err(|_| MetadataError::InvalidContentHashHex {
+                    character: char::from(pair[0]),
+                })?;
         }
         Ok(Self(digest))
     }
@@ -240,21 +250,11 @@ fn is_valid_upload_id_char(character: char) -> bool {
     character.is_ascii_alphanumeric() || character == '-' || character == '_'
 }
 
-fn hex_nibble(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        other => Err(MetadataError::InvalidContentHashHex {
-            character: char::from(other),
-        }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentHash, UploadId, UploadLedger, UploadRecord, CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
+        ContentHash, MetadataError, UploadId, UploadLedger, UploadRecord, CONTENT_HASH_LEN,
+        MAX_UPLOAD_ID_LEN,
     };
 
     fn upload_id(value: &str) -> UploadId {
@@ -280,6 +280,15 @@ mod tests {
         let hash = content_hash();
         let uppercase = hash.to_hex().to_uppercase();
         assert_eq!(ContentHash::parse_hex(&uppercase), Ok(hash));
+    }
+
+    #[test]
+    fn content_hash_parse_hex_rejects_leading_plus() {
+        let hex = "+0".repeat(CONTENT_HASH_LEN);
+        assert_eq!(
+            ContentHash::parse_hex(&hex),
+            Err(MetadataError::InvalidContentHashHex { character: '+' })
+        );
     }
 
     #[test]
