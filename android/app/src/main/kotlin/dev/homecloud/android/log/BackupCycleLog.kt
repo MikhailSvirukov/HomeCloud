@@ -1,15 +1,15 @@
 package dev.homecloud.android.log
 
-import dev.homecloud.android.backup.PlanResult
-
 /**
  * Structured record of what a backup cycle did, carrying only cycle counts by construction, so the
  * area rule that file names, payloads and credentials must never be logged cannot be broken here.
+ *
+ * Implementations must not throw: a log failure must not turn a completed cycle into a failure.
  */
 interface BackupCycleLog {
 
     /** Records a cycle that completed. */
-    fun cyclePlanned(result: PlanResult)
+    fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int)
 
     /** Records a cycle that did not complete. */
     fun cycleFailed()
@@ -18,7 +18,7 @@ interface BackupCycleLog {
 /** [BackupCycleLog] that records nothing and neither allocates nor performs work. */
 object NoOpBackupCycleLog : BackupCycleLog {
 
-    override fun cyclePlanned(result: PlanResult) = Unit
+    override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) = Unit
 
     override fun cycleFailed() = Unit
 }

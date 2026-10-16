@@ -1,16 +1,15 @@
 package dev.homecloud.android.log
 
 import android.util.Log
-import dev.homecloud.android.backup.PlanResult
 
 /** [BackupCycleLog] that reports each cycle as one line in the Android log. */
 class AndroidBackupCycleLog : BackupCycleLog {
 
-    override fun cyclePlanned(result: PlanResult) {
+    override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
         Log.i(
             TAG,
-            "$PLANNED_MESSAGE $DISCOVERED_FIELD=${result.discoveredCandidates} " +
-                "$NEWLY_ENQUEUED_FIELD=${result.newlyEnqueued}",
+            "$PLANNED_MESSAGE $DISCOVERED_FIELD=$discoveredCandidates " +
+                "$NEWLY_ENQUEUED_FIELD=$newlyEnqueued",
         )
     }
 

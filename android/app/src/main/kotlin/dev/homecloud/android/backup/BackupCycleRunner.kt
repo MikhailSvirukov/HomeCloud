@@ -29,11 +29,11 @@ class BackupCycleRunner(
                 val planned = planner.plan()
                 store.write(planner.queue.entries())
                 planned
-            } catch (failure: Throwable) {
+            } catch (failure: Exception) {
                 log.cycleFailed()
                 throw failure
             }
-        log.cyclePlanned(planResult)
+        log.cyclePlanned(planResult.discoveredCandidates, planResult.newlyEnqueued)
         return planResult
     }
 }

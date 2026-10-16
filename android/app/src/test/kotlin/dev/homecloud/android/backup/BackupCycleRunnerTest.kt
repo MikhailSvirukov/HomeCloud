@@ -123,7 +123,7 @@ class BackupCycleRunnerTest {
         assertSame(failure, thrown)
         assertEquals(0, store.writeCount)
         assertEquals(SINGLE_FAILURE_EVENT, log.failureCount)
-        assertTrue(log.plannedResults.isEmpty())
+        assertTrue(log.plannedCounts.isEmpty())
     }
 
     @Test
@@ -153,7 +153,7 @@ class BackupCycleRunnerTest {
             PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = CANDIDATE_COUNT),
             result,
         )
-        assertEquals(listOf(result), log.plannedResults)
+        assertEquals(listOf(result.discoveredCandidates to result.newlyEnqueued), log.plannedCounts)
         assertEquals(NO_FAILURE_EVENTS, log.failureCount)
     }
 
@@ -167,12 +167,12 @@ class BackupCycleRunnerTest {
         runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS), log = secondLog).runOnce()
 
         assertEquals(
-            listOf(PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = CANDIDATE_COUNT)),
-            firstLog.plannedResults,
+            listOf(CANDIDATE_COUNT to CANDIDATE_COUNT),
+            firstLog.plannedCounts,
         )
         assertEquals(
-            listOf(PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = NO_NEW_ENQUEUES)),
-            secondLog.plannedResults,
+            listOf(CANDIDATE_COUNT to NO_NEW_ENQUEUES),
+            secondLog.plannedCounts,
         )
     }
 
@@ -228,16 +228,16 @@ class BackupCycleRunnerTest {
 
     private class RecordingBackupCycleLog : BackupCycleLog {
 
-        private val recordedPlannedResults = mutableListOf<PlanResult>()
+        private val recordedPlannedCounts = mutableListOf<Pair<Int, Int>>()
 
-        val plannedResults: List<PlanResult>
-            get() = recordedPlannedResults
+        val plannedCounts: List<Pair<Int, Int>>
+            get() = recordedPlannedCounts
 
         var failureCount: Int = 0
             private set
 
-        override fun cyclePlanned(result: PlanResult) {
-            recordedPlannedResults += result
+        override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
+            recordedPlannedCounts += discoveredCandidates to newlyEnqueued
         }
 
         override fun cycleFailed() {
