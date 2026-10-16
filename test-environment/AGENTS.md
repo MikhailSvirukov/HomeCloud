@@ -56,10 +56,12 @@ that recur most in `test-environment/`.
 
 ## Quality gates
 
-Run `test-environment/scripts/ci.sh` before hand-off. It runs:
+Run `test-environment/scripts/ci.sh` before hand-off. The same gates run in
+GitHub Actions through [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
+The script runs:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 ```
