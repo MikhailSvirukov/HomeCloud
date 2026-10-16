@@ -8,7 +8,8 @@
 //! upload outcome codes ([`UploadStatus`] and [`ResponseError`]), and the
 //! frame reader/writer halves ([`FrameReader`], [`FrameWriter`]) with
 //! [`split_frames`] and the forwarding [`pump_frames`], which move whole frames
-//! over an async byte stream.
+//! over an async byte stream, and the payload streaming path ([`send_payload`],
+//! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`].
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -35,6 +36,7 @@ mod frame_buffer;
 mod framing;
 mod metadata;
 mod payload;
+mod payload_stream;
 mod response;
 
 pub use buffer_pool::{
@@ -53,4 +55,5 @@ pub use metadata::{
     CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
 };
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
+pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};

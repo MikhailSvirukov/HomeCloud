@@ -26,13 +26,15 @@ for clients; it does not relay Raft or blob traffic.
   and the `pump_frames` forwarding pump),
   `src/buffer_pool.rs`,
   `src/payload.rs` (logical payload chain / chunked streaming
-  with backpressure), `src/config.rs` (node identity/configuration),
-  `src/response.rs` (typed upload outcomes / status codes), and
-  `src/metadata.rs` (idempotent upload ledger: upload id, content hash, upload
-  record).
+  with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
+  frames through the payload buffer pools), `src/config.rs` (node
+  identity/configuration), `src/response.rs` (typed upload outcomes / status
+  codes), and `src/metadata.rs` (idempotent upload ledger: upload id, content
+  hash, upload record).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
-  `connection_public_api.rs`, `payload_public_api.rs`, `config_public_api.rs`,
+  `connection_public_api.rs`, `payload_public_api.rs`,
+  `payload_stream_public_api.rs`, `config_public_api.rs`,
   `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`).
 
 ## Status
@@ -41,8 +43,9 @@ Early bootstrap increment: framing, the frame codec (whole-frame encode/decode
 over byte slices), the receive-side frame buffer (chunked bytes → whole frames),
 the frame reader/writer halves that move whole frames over an async byte stream
 with `split_frames` and the `pump_frames` forwarding pump, buffer-pool building
-blocks, the logical payload chain with chunked streaming/backpressure, the node
-identity/configuration model, the idempotent upload ledger (upload id, content
+blocks, the logical payload chain with chunked streaming/backpressure, the
+payload streaming path that frames pooled chunks onto the connection writer, the
+node identity/configuration model, the idempotent upload ledger (upload id, content
 hash, upload record), and the typed upload outcomes (status codes). Tokio is now
 a dependency for the async connection halves, and `tracing` backs the structured
 logs the node emits with a level configured through `RUST_LOG`. Networking,
