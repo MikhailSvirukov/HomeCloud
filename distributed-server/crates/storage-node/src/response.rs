@@ -52,10 +52,7 @@ impl fmt::Display for UploadStatus {
     }
 }
 
-/// Failure to convert a wire code back into an [`UploadStatus`].
-///
-/// Produced by the [`num_enum::TryFromPrimitive`] derivation on
-/// [`UploadStatus`] when a wire code matches no known outcome.
+/// A wire code that does not map to any known [`UploadStatus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ResponseError {
     /// The byte did not match any known [`UploadStatus`] wire code.

@@ -9,6 +9,8 @@
 //! This module deliberately implements no cryptography. [`ContentHash`] only
 //! wraps 32 bytes produced elsewhere.
 
+use core::fmt::Write as _;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -80,7 +82,11 @@ impl ContentHash {
 
     /// Returns the digest as lowercase hex, exactly 64 characters.
     pub fn to_hex(&self) -> String {
-        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+        let mut hex = String::with_capacity(CONTENT_HASH_LEN * 2);
+        for byte in self.0 {
+            let _ = write!(hex, "{byte:02x}");
+        }
+        hex
     }
 
     /// Parses exactly 64 hex characters (upper or lower case).
@@ -91,17 +97,19 @@ impl ContentHash {
         }
         let mut digest = [0u8; CONTENT_HASH_LEN];
         for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
+            if let Some(offending) = pair.iter().find(|byte| !byte.is_ascii_hexdigit()) {
+                return Err(MetadataError::InvalidContentHashHex {
+                    character: char::from(*offending),
+                });
+            }
             let text =
                 core::str::from_utf8(pair).map_err(|_| MetadataError::InvalidContentHashHex {
                     character: char::from(pair[0]),
                 })?;
-            digest[index] = u8::from_str_radix(text, 16).map_err(|_| {
-                let character = text
-                    .chars()
-                    .find(|character| !character.is_ascii_hexdigit())
-                    .unwrap_or_else(|| char::from(pair[0]));
-                MetadataError::InvalidContentHashHex { character }
-            })?;
+            digest[index] =
+                u8::from_str_radix(text, 16).map_err(|_| MetadataError::InvalidContentHashHex {
+                    character: char::from(pair[0]),
+                })?;
         }
         Ok(Self(digest))
     }
@@ -245,7 +253,8 @@ fn is_valid_upload_id_char(character: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ContentHash, UploadId, UploadLedger, UploadRecord, CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
+        ContentHash, MetadataError, UploadId, UploadLedger, UploadRecord, CONTENT_HASH_LEN,
+        MAX_UPLOAD_ID_LEN,
     };
 
     fn upload_id(value: &str) -> UploadId {
@@ -271,6 +280,15 @@ mod tests {
         let hash = content_hash();
         let uppercase = hash.to_hex().to_uppercase();
         assert_eq!(ContentHash::parse_hex(&uppercase), Ok(hash));
+    }
+
+    #[test]
+    fn content_hash_parse_hex_rejects_leading_plus() {
+        let hex = "+0".repeat(CONTENT_HASH_LEN);
+        assert_eq!(
+            ContentHash::parse_hex(&hex),
+            Err(MetadataError::InvalidContentHashHex { character: '+' })
+        );
     }
 
     #[test]

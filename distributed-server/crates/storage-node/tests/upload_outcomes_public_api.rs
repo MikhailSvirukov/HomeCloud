@@ -63,11 +63,14 @@ fn retryable_outcomes_are_the_transient_failures() {
 }
 
 #[test]
-fn display_phrases_are_non_empty() {
+fn display_phrases_are_non_empty_and_pairwise_distinct() {
+    let mut phrases = HashSet::new();
     for status in ALL_STATUSES {
+        let phrase = status.to_string();
+        assert!(!phrase.is_empty(), "empty display phrase for {status}");
         assert!(
-            !status.to_string().is_empty(),
-            "empty display phrase for {status}"
+            phrases.insert(phrase),
+            "duplicate display phrase for {status}"
         );
     }
 }
