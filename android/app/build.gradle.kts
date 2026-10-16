@@ -26,6 +26,10 @@ android {
     }
 
     testOptions {
+        // Compose/Robolectric render tests read the merged debug manifest and resources; without
+        // this Robolectric only sees the framework and cannot resolve the test activity that
+        // ui-test-manifest declares.
+        unitTests.isIncludeAndroidResources = true
         unitTests.all {
             // Robolectric keeps its runtime-jar cache and download lock under
             // `user.home`, which agent containers can map to a read-only path. Always
@@ -58,6 +62,10 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
