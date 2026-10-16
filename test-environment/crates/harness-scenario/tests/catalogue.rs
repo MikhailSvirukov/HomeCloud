@@ -3,7 +3,8 @@
 //! These integration tests consume the re-exported `node_shutdown_recovery`,
 //! `link_degradation_recovery`, `quorum_loss_recovery`, and
 //! `network_partition_recovery` entries exactly as a downstream harness user
-//! would, running them through [`ScenarioRunner`] over the in-memory fakes.
+//! would, running them through [`harness_scenario::ScenarioRunner`] over the
+//! in-memory fakes.
 
 mod common;
 
@@ -13,7 +14,7 @@ use harness_core::{
     ClusterTopology, Fault, FaultInjector, HarnessError, NodeControl, NodeId, NodeState, PeerLink,
 };
 use harness_scenario::{
-    Action, Scenario, ScenarioRunner, link_degradation_recovery, network_partition_recovery,
+    Action, Scenario, link_degradation_recovery, network_partition_recovery,
     node_shutdown_recovery, quorum_loss_recovery,
 };
 
@@ -85,8 +86,7 @@ fn node_shutdown_recovery_scenario_stops_then_restores_the_node() {
     let mut cluster = Cluster::new();
     let node = NodeId::new(4);
     let scenario = node_shutdown_recovery(node);
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
 
     assert!(
         report.is_success(),
@@ -113,8 +113,7 @@ fn link_degradation_recovery_scenario_heals_the_link() {
     let link = PeerLink::new(NodeId::new(2), NodeId::new(3));
     let conditions = degraded_conditions(Duration::from_millis(20), 5);
     let scenario = link_degradation_recovery(link, conditions);
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
 
     assert!(
         report.is_success(),
@@ -138,8 +137,7 @@ fn link_degradation_recovery_scenario_heals_the_link() {
 fn catalogue_scenario_fails_when_the_target_node_is_unknown() {
     let mut cluster = Cluster::new();
     let scenario = node_shutdown_recovery(NodeId::new(99));
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
 
     assert!(!report.is_success());
     let failure = report
@@ -159,8 +157,7 @@ fn catalogue_scenario_fails_when_the_target_node_is_unknown() {
 fn quorum_loss_recovery_loses_then_restores_quorum() {
     let mut cluster = Cluster::new();
     let scenario = quorum_loss_recovery(&cluster.topology);
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
 
     assert!(
         report.is_success(),
@@ -186,8 +183,7 @@ fn network_partition_recovery_degrades_and_heals_every_storage_link() {
     let expected_links = storage_links(&cluster.topology);
     let conditions = degraded_conditions(Duration::from_millis(20), 5);
     let scenario = network_partition_recovery(&cluster.topology, conditions);
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
 
     assert!(
         report.is_success(),

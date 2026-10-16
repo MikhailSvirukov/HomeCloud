@@ -1,8 +1,9 @@
 //! End-to-end recovery scenarios exercising the reusable library checks.
 //!
-//! Each test runs a [`Scenario`] through [`ScenarioRunner`] over the
-//! in-memory fakes and asserts the resulting [`ScenarioReport`], so the
-//! composable checks are validated through the same path scenario authors use.
+//! Each test runs a [`Scenario`] through [`harness_scenario::ScenarioRunner`]
+//! over the in-memory fakes and asserts the resulting
+//! [`harness_scenario::ScenarioReport`], so the composable checks are validated
+//! through the same path scenario authors use.
 
 mod common;
 
@@ -11,7 +12,7 @@ use std::time::Duration;
 use harness_core::{Fault, FaultInjector, HarnessError, NodeId, PeerLink};
 use harness_scenario::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost, Scenario,
-    ScenarioRunner, StorageQuorumHeld,
+    StorageQuorumHeld,
 };
 
 use common::{Cluster, degraded_conditions};
@@ -48,8 +49,7 @@ fn node_shutdown_recovery_restores_quorum_and_running_state() {
         .check(Box::new(AllNodesRunning), "every node is running")
         .check(Box::new(NoActiveFaults), "no faults remain")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(report.is_success());
     assert_eq!(report.steps.len(), 9);
     assert!(report.failed_step().is_none());
@@ -68,8 +68,7 @@ fn link_degradation_round_trip_tracks_active_fault() {
         .revert_fault(fault.clone(), "heal peer link")
         .check(Box::new(NoActiveFaults), "no faults remain")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(report.is_success());
     assert!(cluster.faults.active_faults().is_empty());
 }
@@ -86,8 +85,7 @@ fn quorum_lost_check_fails_on_a_healthy_cluster() {
         )
         .check(Box::new(QuorumLost), "quorum is lost")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(!report.is_success());
     assert_eq!(report.steps.len(), 3);
     let failed = report

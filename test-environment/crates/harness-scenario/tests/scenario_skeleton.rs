@@ -7,7 +7,7 @@ use std::time::Duration;
 use harness_core::{Fault, FaultInjector, HarnessError, NodeControl, NodeId, NodeState, PeerLink};
 use harness_scenario::{
     FaultActive, NoActiveFaults, NodeRunning, Scenario, ScenarioCheck, ScenarioContext,
-    ScenarioRunner, StorageQuorumHeld,
+    StorageQuorumHeld,
 };
 
 use common::{Cluster, degraded_conditions};
@@ -60,8 +60,7 @@ fn happy_path_scenario_executes_every_step() {
         .start_node(stopped, "restart the storage node")
         .check(Box::new(NodeRunning(stopped)), "restarted node is running")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(report.is_success());
     assert_eq!(report.steps.len(), 7);
     assert!(report.failed_step().is_none());
@@ -75,8 +74,7 @@ fn runner_stops_at_first_failing_check() {
         .check(always_fails(message), "always fails")
         .stop_node(NodeId::new(2), "must not run")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(!report.is_success());
     assert_eq!(report.steps.len(), 1);
     let failed = report.failed_step().expect("a failing step is recorded");
@@ -105,8 +103,7 @@ fn node_shutdown_fault_apply_and_revert_track_active_set() {
         .revert_fault(shutdown.clone(), "revert node shutdown")
         .check(Box::new(NoActiveFaults), "shutdown is gone")
         .build();
-    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
-        .run(&scenario);
+    let report = cluster.run(&scenario);
     assert!(report.is_success());
     assert!(cluster.faults.active_faults().is_empty());
 }

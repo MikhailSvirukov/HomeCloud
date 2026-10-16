@@ -6,15 +6,12 @@
 //! never file-specific helpers, and every item is `pub` so the test modules can
 //! import what they use.
 
-// Each test target uses a different subset of this module, so unused items in a
-// given target are expected rather than dead code.
-#![allow(dead_code)]
-
 use std::time::Duration;
 
 use harness_core::{
     ClusterTopology, FakeFaultInjector, InMemoryNodeControl, LossPercent, NetworkConditions,
 };
+use harness_scenario::{Scenario, ScenarioReport, ScenarioRunner};
 use harness_test_support::{faults, nodes, topology};
 
 /// A 1 dedicated + 3 storage cluster with all nodes running and no faults.
@@ -38,6 +35,11 @@ impl Cluster {
             nodes,
             faults,
         }
+    }
+
+    /// Runs `scenario` over this fixture's node control and fault injector.
+    pub fn run(&mut self, scenario: &Scenario) -> ScenarioReport {
+        ScenarioRunner::new(&self.topology, &mut self.nodes, &mut self.faults).run(scenario)
     }
 }
 
