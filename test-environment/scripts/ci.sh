@@ -11,5 +11,5 @@ workspace_root="$(cd "${script_dir}/.." && pwd)"
 cd "${workspace_root}"
 
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
