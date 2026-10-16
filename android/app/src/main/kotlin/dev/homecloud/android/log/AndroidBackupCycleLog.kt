@@ -17,7 +17,7 @@ internal class AndroidBackupCycleLog : BackupCycleLog {
         Log.w(TAG, FAILED_MESSAGE)
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "HomeCloudBackupCycle"
         const val PLANNED_MESSAGE = "Backup cycle planned"
         const val DISCOVERED_FIELD = "discovered"
