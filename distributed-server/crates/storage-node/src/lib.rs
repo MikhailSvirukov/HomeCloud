@@ -12,7 +12,9 @@
 //! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
 //! TCP listener ([`Listener`]) that yields frame reader/writer halves per
 //! accepted connection, and the node runtime ([`serve`]) that accepts
-//! connections until shutdown and serves each frame pump on its own task.
+//! connections until shutdown and serves each frame pump on its own task, and
+//! the bounded CPU pool ([`CpuPool`]) that runs CPU-bound work off the Tokio
+//! worker threads.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -35,6 +37,7 @@ mod buffer_pool;
 mod codec;
 mod config;
 mod connection;
+mod cpu_pool;
 mod frame_buffer;
 mod framing;
 mod listener;
@@ -51,6 +54,7 @@ pub use buffer_pool::{
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use connection::{pump_frames, split_frames, ConnectionError, FrameReader, FrameWriter};
+pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
