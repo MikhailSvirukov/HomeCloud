@@ -4,37 +4,19 @@
 //! build a validated topology, derive a [`ClusterPlan`], and exercise the in-memory
 //! runtime. No Docker daemon or socket is touched.
 
+mod common;
+
 use std::collections::BTreeMap;
 
 use harness_core::{NodeId, NodeRole, NodeSpec};
-use harness_docker::{ClusterPlan, ClusterRuntime, EnvBuilder, FakeClusterRuntime, PlanSettings};
-use harness_test_support::{addr, topology};
+use harness_docker::{ClusterPlan, ClusterRuntime, FakeClusterRuntime, PlanSettings};
+use harness_test_support::addr;
 
-/// Network name configured for the isolated test cluster.
-const NETWORK: &str = "harness-net";
-/// Image configured for the dedicated-server container.
-const SERVER_IMAGE: &str = "server:1";
-/// Image configured for storage containers.
-const STORAGE_IMAGE: &str = "storage:1";
-/// Node id of the single dedicated server.
-const DEDICATED_ID: u16 = 1;
-/// First node id handed out to storage nodes.
-const FIRST_STORAGE_ID: u16 = 2;
-/// Number of storage nodes in the shared fixture.
-const STORAGE_NODES: u16 = 3;
-
-/// Environment key holding the node id in the shared settings.
-const NODE_ID_KEY: &str = "NODE_ID";
-/// Environment key holding the node label in the shared settings.
-const NODE_LABEL_KEY: &str = "NODE_LABEL";
-/// Environment key holding the node role in the shared settings.
-const NODE_ROLE_KEY: &str = "NODE_ROLE";
-/// Environment key holding the listen address in the shared settings.
-const LISTEN_ADDRESS_KEY: &str = "LISTEN_ADDRESS";
-/// Role value rendered for the dedicated server.
-const DEDICATED_SERVER_ROLE: &str = "dedicated-server";
-/// Role value rendered for storage nodes.
-const STORAGE_ROLE: &str = "storage";
+use common::{
+    DEDICATED_ID, FIRST_STORAGE_ID, LISTEN_ADDRESS_KEY, NETWORK_NAME, NODE_ID_KEY, NODE_LABEL_KEY,
+    NODE_ROLE_KEY, SERVER_IMAGE, STORAGE_IMAGE, STORAGE_NODES, plan_order, plan_with_storage,
+    role_value, settings, topology,
+};
 
 /// Environment key holding the node id in the distinct caller mapping.
 const CUSTOM_NODE_ID_KEY: &str = "HC_NODE_ID";
@@ -49,24 +31,6 @@ const CUSTOM_DEDICATED_ROLE: &str = "control";
 /// Role value rendered for storage nodes in the distinct caller mapping.
 const CUSTOM_STORAGE_ROLE: &str = "data";
 
-/// Role value the shared settings builder renders for a role.
-fn role_value(role: NodeRole) -> &'static str {
-    match role {
-        NodeRole::DedicatedServer => DEDICATED_SERVER_ROLE,
-        NodeRole::Storage => STORAGE_ROLE,
-    }
-}
-
-/// Environment builder the shared settings use, matching the caller contract.
-fn node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (NODE_ID_KEY.to_string(), spec.id.to_string()),
-        (NODE_LABEL_KEY.to_string(), spec.label.clone()),
-        (NODE_ROLE_KEY.to_string(), role_value(spec.role).to_string()),
-        (LISTEN_ADDRESS_KEY.to_string(), spec.address.to_string()),
-    ])
-}
-
 /// Environment builder with distinct keys and role values, to catch fallbacks.
 fn custom_node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
     let role = match spec.role {
@@ -79,22 +43,6 @@ fn custom_node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
         (CUSTOM_ROLE_KEY.to_string(), role.to_string()),
         (CUSTOM_ADDRESS_KEY.to_string(), spec.address.to_string()),
     ])
-}
-
-/// Builds the plan settings used across these tests.
-fn settings() -> PlanSettings {
-    let env: EnvBuilder = node_env;
-    PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE, env)
-}
-
-/// Derives a plan for one dedicated server and `storage` storage nodes.
-fn plan_with_storage(storage: u16) -> ClusterPlan {
-    ClusterPlan::from_topology(&topology(storage), &settings())
-}
-
-/// The node ids in plan (topology) order.
-fn plan_order(plan: &ClusterPlan) -> Vec<NodeId> {
-    plan.containers.iter().map(|c| c.node).collect()
 }
 
 #[test]
@@ -132,7 +80,7 @@ fn container_hostname_mirrors_node_label_and_plan_carries_network_name() {
         );
     }
 
-    assert_eq!(plan.network.name, NETWORK);
+    assert_eq!(plan.network.name, NETWORK_NAME);
 }
 
 #[test]
@@ -160,7 +108,7 @@ fn plan_renders_the_settings_env_builder_for_every_container() {
 
 #[test]
 fn plan_forwards_a_distinct_caller_env_mapping_for_every_node() {
-    let custom = PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE, custom_node_env);
+    let custom = PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, custom_node_env);
     let plan = ClusterPlan::from_topology(&topology(STORAGE_NODES), &custom);
 
     let dedicated = plan

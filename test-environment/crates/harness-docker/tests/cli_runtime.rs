@@ -5,73 +5,15 @@
 //! [`ClusterPlan`], and assert the ordered Docker commands the lifecycle emits.
 //! No Docker daemon or socket is touched.
 
-use std::collections::BTreeMap;
+mod common;
 
-use harness_core::{HarnessError, NodeId, NodeRole, NodeSpec};
+use harness_core::HarnessError;
 use harness_docker::{
-    CliClusterRuntime, ClusterPlan, ClusterRuntime, Command, ContainerPlan, EnvBuilder,
-    PlanSettings, RecordingCommandRunner, container_remove, container_run, container_stop,
-    network_create,
+    CliClusterRuntime, ClusterPlan, ClusterRuntime, Command, ContainerPlan, RecordingCommandRunner,
+    container_remove, container_run, container_stop, network_create,
 };
-use harness_test_support::topology;
 
-/// The Docker CLI program every command invokes.
-const DOCKER: &str = "docker";
-/// Network name configured for the isolated test cluster.
-const NETWORK: &str = "harness-net";
-/// Image configured for the dedicated-server container.
-const SERVER_IMAGE: &str = "server:1";
-/// Image configured for storage containers.
-const STORAGE_IMAGE: &str = "storage:1";
-/// Number of storage nodes in the shared fixture: 1 dedicated + 3 storage.
-const STORAGE_NODES: u16 = 3;
-
-/// Environment key holding the node id in the shared settings.
-const NODE_ID_KEY: &str = "NODE_ID";
-/// Environment key holding the node label in the shared settings.
-const NODE_LABEL_KEY: &str = "NODE_LABEL";
-/// Environment key holding the node role in the shared settings.
-const NODE_ROLE_KEY: &str = "NODE_ROLE";
-/// Environment key holding the listen address in the shared settings.
-const LISTEN_ADDRESS_KEY: &str = "LISTEN_ADDRESS";
-/// Role value rendered for the dedicated server.
-const DEDICATED_SERVER_ROLE: &str = "dedicated-server";
-/// Role value rendered for storage nodes.
-const STORAGE_ROLE: &str = "storage";
-
-/// Role value the shared settings builder renders for a role.
-fn role_value(role: NodeRole) -> &'static str {
-    match role {
-        NodeRole::DedicatedServer => DEDICATED_SERVER_ROLE,
-        NodeRole::Storage => STORAGE_ROLE,
-    }
-}
-
-/// Environment builder the shared settings use, matching the caller contract.
-fn node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (NODE_ID_KEY.to_string(), spec.id.to_string()),
-        (NODE_LABEL_KEY.to_string(), spec.label.clone()),
-        (NODE_ROLE_KEY.to_string(), role_value(spec.role).to_string()),
-        (LISTEN_ADDRESS_KEY.to_string(), spec.address.to_string()),
-    ])
-}
-
-/// Builds the plan settings used across these tests.
-fn settings() -> PlanSettings {
-    let env: EnvBuilder = node_env;
-    PlanSettings::new(NETWORK, SERVER_IMAGE, STORAGE_IMAGE, env)
-}
-
-/// Derives a plan for one dedicated server and three storage nodes.
-fn plan() -> ClusterPlan {
-    ClusterPlan::from_topology(&topology(STORAGE_NODES), &settings())
-}
-
-/// The node ids in plan (topology) order.
-fn plan_order(plan: &ClusterPlan) -> Vec<NodeId> {
-    plan.containers.iter().map(|c| c.node).collect()
-}
+use common::{DOCKER, plan, plan_order};
 
 /// Renders the expected command for every plan container, in plan order.
 fn commands_for(
