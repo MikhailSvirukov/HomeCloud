@@ -7,14 +7,14 @@ plugins {
 }
 
 android {
-    namespace = "dev.picbackup.android"
+    namespace = "dev.homecloud.android"
     compileSdk = 36
     // Only build-tools 36.0.0 is installed and the SDK directory is read-only,
     // so AGP 8.13.2's default (35.0.0) cannot be provisioned.
     buildToolsVersion = libs.versions.buildTools.get()
 
     defaultConfig {
-        applicationId = "dev.picbackup.android"
+        applicationId = "dev.homecloud.android"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

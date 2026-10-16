@@ -9,7 +9,7 @@
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:theme="@style/Theme.PicBackup">
+        android:theme="@style/Theme.HomeCloud">
 
         <activity
             android:name=".MainActivity"

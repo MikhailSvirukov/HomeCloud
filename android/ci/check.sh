@@ -11,7 +11,7 @@ readonly SCRIPT_DIR
 ANDROID_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly ANDROID_DIR
 
-CACHE_DIR="${GRADLE_DIST_CACHE:-$HOME/.cache/picbackup-gradle}"
+CACHE_DIR="${GRADLE_DIST_CACHE:-$HOME/.cache/homecloud-gradle}"
 readonly CACHE_DIR
 readonly GRADLE_HOME="${CACHE_DIR}/gradle-${GRADLE_VERSION}"
 readonly GRADLE_BIN="${GRADLE_HOME}/bin/gradle"
