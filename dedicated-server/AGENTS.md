@@ -38,9 +38,9 @@ protocol/contract changes through `contracts/` and an issue.
 ## Reviews and pull requests
 
 - Write issues and pull requests in English.
-- Describe only what the change does: no verification or test-status sections,
-  no scope section, no notes about work deliberately left out, and no line
-  references into documents.
+- Describe only what the change does, in both issues and pull requests: no
+  verification or test-status sections, no scope section, no notes about work
+  deliberately left out, and no line references into documents.
 - Keep the description proportional to the change and stay within the area.
 - End the pull request description with the issue reference (`Closes #N`).
 - Write the review on the pull request itself as a `COMMENT` review carrying

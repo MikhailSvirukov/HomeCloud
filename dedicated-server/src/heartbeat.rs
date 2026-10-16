@@ -9,7 +9,7 @@
 //! boundary.
 
 use std::collections::{HashMap, HashSet};
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -25,10 +25,10 @@ enum Availability {
 
 /// Timing and consecutive-miss threshold for heartbeat exchanges.
 pub struct HeartbeatTiming {
-    /// Interval between heartbeat sends.
-    pub interval: Duration,
-    /// Time to wait for a response before an attempt times out.
-    pub timeout: Duration,
+    /// Interval between heartbeat sends, in milliseconds.
+    pub interval_ms: NonZeroU64,
+    /// Time to wait for a response before an attempt times out, in milliseconds.
+    pub timeout_ms: NonZeroU64,
     /// Consecutive misses tolerated before a node is considered unavailable.
     pub miss_threshold: NonZeroU32,
 }
@@ -106,8 +106,8 @@ impl HeartbeatTracker {
             .collect();
 
         Ok(Self {
-            interval: timing.interval,
-            timeout: timing.timeout,
+            interval: Duration::from_millis(timing.interval_ms.get()),
+            timeout: Duration::from_millis(timing.timeout_ms.get()),
             miss_threshold: timing.miss_threshold,
             nodes,
             index,
@@ -191,19 +191,21 @@ impl HeartbeatTracker {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use std::num::{NonZeroU32, NonZeroU64};
 
     use super::*;
 
     const LABELS: [&str; 2] = ["storage-a", "storage-b"];
     const UNKNOWN: &str = "storage-unknown";
 
-    const INTERVAL: Duration = Duration::from_millis(1000);
-    const TIMEOUT: Duration = Duration::from_millis(400);
+    const INTERVAL_MS: u64 = 1000;
+    const TIMEOUT_MS: u64 = 400;
     const MISS_THRESHOLD: u32 = 2;
+    const INTERVAL: Duration = Duration::from_millis(INTERVAL_MS);
+    const TIMEOUT: Duration = Duration::from_millis(TIMEOUT_MS);
     const TIMING: HeartbeatTiming = HeartbeatTiming {
-        interval: INTERVAL,
-        timeout: TIMEOUT,
+        interval_ms: NonZeroU64::new(INTERVAL_MS).expect("INTERVAL_MS is non-zero"),
+        timeout_ms: NonZeroU64::new(TIMEOUT_MS).expect("TIMEOUT_MS is non-zero"),
         miss_threshold: NonZeroU32::new(MISS_THRESHOLD).expect("MISS_THRESHOLD is non-zero"),
     };
 
