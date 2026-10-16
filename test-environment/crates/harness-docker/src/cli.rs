@@ -67,6 +67,7 @@ pub struct CliClusterRuntime<R> {
     pub runner: R,
     running: Vec<NodeId>,
     created: Vec<NodeId>,
+    network_created: bool,
 }
 
 impl<R> CliClusterRuntime<R> {
@@ -76,14 +77,16 @@ impl<R> CliClusterRuntime<R> {
             runner,
             running: Vec::new(),
             created: Vec::new(),
+            network_created: false,
         }
     }
 }
 
 impl<R: CommandRunner> ClusterRuntime for CliClusterRuntime<R> {
     fn start(&mut self, plan: &ClusterPlan) -> Result<()> {
-        if self.created.is_empty() {
+        if !self.network_created {
             self.runner.run(network_create(plan))?;
+            self.network_created = true;
         }
         for container in &plan.containers {
             if !self.created.contains(&container.node) {

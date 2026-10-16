@@ -90,6 +90,11 @@ fn assert_commands(recorded: &[Command], expected: &[Command]) {
     }
 }
 
+/// Whether two commands share the same program and ordered arguments.
+fn same_command(actual: &Command, expected: &Command) -> bool {
+    actual.program == expected.program && actual.args == expected.args
+}
+
 #[test]
 fn start_creates_the_network_then_each_container() {
     let plan = plan();
@@ -120,6 +125,37 @@ fn start_is_idempotent_and_does_not_recreate_containers() {
         "an idempotent start records no further commands"
     );
     assert_eq!(runtime.running_containers(), plan_order(&plan));
+}
+
+#[test]
+fn start_after_remove_reuses_the_network() {
+    let plan = plan();
+    let mut runtime = CliClusterRuntime::new(RecordingCommandRunner::new());
+    runtime.start(&plan).expect("a recording start cannot fail");
+    runtime
+        .remove(&plan)
+        .expect("a recording remove cannot fail");
+    let after_remove = runtime.runner.commands.len();
+
+    runtime
+        .start(&plan)
+        .expect("a recording restart cannot fail");
+
+    let network = network_create(&plan);
+    let network_creates = runtime
+        .runner
+        .commands
+        .iter()
+        .filter(|command| same_command(command, &network))
+        .count();
+    assert_eq!(
+        network_creates, 1,
+        "the network is created once per runtime and survives removal"
+    );
+    assert_commands(
+        &runtime.runner.commands[after_remove..],
+        &commands_for(&plan, container_run),
+    );
 }
 
 #[test]
