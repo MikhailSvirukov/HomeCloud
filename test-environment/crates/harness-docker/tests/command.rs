@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use harness_core::NodeId;
 use harness_docker::{
     ClusterPlan, Command, ContainerPlan, container_name, container_remove, container_run,
-    container_stop, network_create,
+    container_stop, network_create, network_remove,
 };
 
 use common::{DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan};
@@ -64,6 +64,11 @@ fn expected_network_create() -> Command {
     Command::new(DOCKER, strings(&[NETWORK, CREATE, NETWORK_NAME]))
 }
 
+/// The `docker network rm` command these tests expect for `plan`.
+fn expected_network_remove() -> Command {
+    Command::new(DOCKER, strings(&[NETWORK, REMOVE, NETWORK_NAME]))
+}
+
 /// The `docker run --detach` command these tests expect for one container.
 fn expected_run_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
     let name = container_name(plan, container);
@@ -109,6 +114,16 @@ fn network_create_matches_the_expected_command() {
     assert_eq!(actual.program, expected.program);
     assert_eq!(actual.args, expected.args);
     assert_eq!(plan.network.name, NETWORK_NAME);
+}
+
+#[test]
+fn network_remove_matches_the_expected_command() {
+    let plan = plan();
+    let actual = network_remove(&plan);
+    let expected = expected_network_remove();
+
+    assert_eq!(actual.program, expected.program);
+    assert_eq!(actual.args, expected.args);
 }
 
 #[test]

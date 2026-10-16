@@ -7,7 +7,9 @@
 
 use harness_core::{HarnessError, NodeId};
 
-use crate::command::{Command, container_remove, container_run, container_stop, network_create};
+use crate::command::{
+    Command, container_remove, container_run, container_stop, network_create, network_remove,
+};
 use crate::plan::ClusterPlan;
 use crate::runtime::ClusterRuntime;
 
@@ -115,6 +117,10 @@ impl<R: CommandRunner> ClusterRuntime for CliClusterRuntime<R> {
             if self.created.contains(&container.node) {
                 self.runner.run(container_remove(plan, container))?;
             }
+        }
+        if self.network_created {
+            self.runner.run(network_remove(plan))?;
+            self.network_created = false;
         }
         self.created.clear();
         self.running.clear();
