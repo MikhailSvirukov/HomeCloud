@@ -1,5 +1,7 @@
 package dev.homecloud.android.backup
 
+import dev.homecloud.android.log.BackupCycleLog
+import dev.homecloud.android.log.NoOpBackupCycleLog
 import dev.homecloud.android.media.MediaDiscovery
 import dev.homecloud.android.media.RawMediaEntry
 import dev.homecloud.android.queue.FileUploadQueueStore
@@ -113,12 +115,15 @@ class BackupCycleRunnerTest {
     fun `runOnce propagates a store read failure and writes nothing`() {
         val failure = UploadQueueStoreException(READ_FAILURE_MESSAGE)
         val store = FakeUploadQueueStore(readFailure = failure)
-        val runner = runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS))
+        val log = RecordingBackupCycleLog()
+        val runner = runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS), log = log)
 
         val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
 
         assertSame(failure, thrown)
         assertEquals(0, store.writeCount)
+        assertEquals(SINGLE_FAILURE_EVENT, log.failureCount)
+        assertTrue(log.plannedCounts.isEmpty())
     }
 
     @Test
@@ -132,14 +137,54 @@ class BackupCycleRunnerTest {
         assertSame(failure, thrown)
     }
 
+    @Test
+    fun `runOnce records one planned event carrying the counts of a completed cycle`() {
+        val log = RecordingBackupCycleLog()
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                log = log,
+            )
+
+        val result = runner.runOnce()
+
+        assertEquals(
+            PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = CANDIDATE_COUNT),
+            result,
+        )
+        assertEquals(listOf(result.discoveredCandidates to result.newlyEnqueued), log.plannedCounts)
+        assertEquals(NO_FAILURE_EVENTS, log.failureCount)
+    }
+
+    @Test
+    fun `runOnce over the same store twice records each cycle's own newly enqueued count`() {
+        val store = FileUploadQueueStore(storeFile())
+        val firstLog = RecordingBackupCycleLog()
+        val secondLog = RecordingBackupCycleLog()
+
+        runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS), log = firstLog).runOnce()
+        runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS), log = secondLog).runOnce()
+
+        assertEquals(
+            listOf(CANDIDATE_COUNT to CANDIDATE_COUNT),
+            firstLog.plannedCounts,
+        )
+        assertEquals(
+            listOf(CANDIDATE_COUNT to NO_NEW_ENQUEUES),
+            secondLog.plannedCounts,
+        )
+    }
+
     private fun runnerFor(
         store: UploadQueueStore,
         queue: InMemoryUploadQueue,
         rows: List<RawMediaEntry> = imageAndVideoRows(),
+        log: BackupCycleLog = NoOpBackupCycleLog,
     ): BackupCycleRunner {
         val planner =
             MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), FakeUploadIdFactory(), queue)
-        return BackupCycleRunner(planner = planner, store = store)
+        return BackupCycleRunner(planner = planner, store = store, log = log)
     }
 
     private fun imageAndVideoRows(): List<RawMediaEntry> =
@@ -181,6 +226,25 @@ class BackupCycleRunnerTest {
         }
     }
 
+    private class RecordingBackupCycleLog : BackupCycleLog {
+
+        private val recordedPlannedCounts = mutableListOf<Pair<Int, Int>>()
+
+        val plannedCounts: List<Pair<Int, Int>>
+            get() = recordedPlannedCounts
+
+        var failureCount: Int = 0
+            private set
+
+        override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
+            recordedPlannedCounts += discoveredCandidates to newlyEnqueued
+        }
+
+        override fun cycleFailed() {
+            failureCount += 1
+        }
+    }
+
     private companion object {
         const val IMAGE_ID = 1L
         const val VIDEO_ID = 2L
@@ -195,5 +259,9 @@ class BackupCycleRunnerTest {
         const val STORE_FILE_NAME = "upload-queue.txt"
         const val READ_FAILURE_MESSAGE = "store read failed"
         const val WRITE_FAILURE_MESSAGE = "store write failed"
+
+        const val NO_NEW_ENQUEUES = 0
+        const val NO_FAILURE_EVENTS = 0
+        const val SINGLE_FAILURE_EVENT = 1
     }
 }
