@@ -1,4 +1,3 @@
-import java.io.File
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -29,14 +28,11 @@ android {
     testOptions {
         unitTests.all {
             // Robolectric keeps its runtime-jar cache and download lock under
-            // `user.home`. Agent containers can map that to a read-only path, so fall
-            // back to the Gradle user home, which is writable and already used for
-            // caches (the same reason android/ci/check.sh exports writable homes).
-            val userHome = File(System.getProperty("user.home"))
-            val writableHome = gradle.gradleUserHomeDir
-            if (!userHome.canWrite() && writableHome.canWrite()) {
-                it.systemProperty("user.home", writableHome.absolutePath)
-            }
+            // `user.home`, which agent containers can map to a read-only path. Always
+            // point the forked test JVM at the Gradle user home: it is writable, it is
+            // where Gradle already keeps caches, and the CI workflow caches it, so a
+            // runner stops re-downloading the jars on every change.
+            it.systemProperty("user.home", gradle.gradleUserHomeDir.absolutePath)
         }
     }
 

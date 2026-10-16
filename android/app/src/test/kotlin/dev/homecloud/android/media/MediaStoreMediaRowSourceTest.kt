@@ -7,6 +7,7 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.MediaStore
+import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -56,7 +57,7 @@ class MediaStoreMediaRowSourceTest {
     fun `readAll maps each column to the raw entry and normalizes null text columns`() {
         installProvider(
             listOf(
-                arrayOf(ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, IMAGE_MIME_TYPE),
+                arrayOf(ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE),
                 arrayOf(NULL_TEXT_ID, null, NULL_TEXT_SIZE_BYTES, NULL_TEXT_DATE_MODIFIED, null),
             ),
         )
@@ -68,7 +69,7 @@ class MediaStoreMediaRowSourceTest {
         assertEquals(DISPLAY_NAME, entries[0].displayName)
         assertEquals(SIZE_BYTES, entries[0].sizeBytes)
         assertEquals(DATE_MODIFIED_EPOCH_SECONDS, entries[0].dateModifiedEpochSeconds)
-        assertEquals(IMAGE_MIME_TYPE, entries[0].mimeType)
+        assertEquals(MediaTestData.IMAGE_MIME_TYPE, entries[0].mimeType)
         assertEquals(NULL_TEXT_ID, entries[1].id)
         assertEquals(EMPTY_TEXT, entries[1].displayName)
         assertEquals(NULL_TEXT_SIZE_BYTES, entries[1].sizeBytes)
@@ -80,7 +81,7 @@ class MediaStoreMediaRowSourceTest {
     fun `readAll builds each entry uri from the collection uri and the row id`() {
         installProvider(
             listOf(
-                arrayOf(URI_ROW_ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, IMAGE_MIME_TYPE),
+                arrayOf(URI_ROW_ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE),
             ),
         )
 
@@ -143,7 +144,6 @@ class MediaStoreMediaRowSourceTest {
         const val DATE_MODIFIED_EPOCH_SECONDS = 1_700_000_000L
         const val NULL_TEXT_SIZE_BYTES = 5_120L
         const val NULL_TEXT_DATE_MODIFIED = 1_700_000_500L
-        const val IMAGE_MIME_TYPE = "image/jpeg"
         const val EMPTY_TEXT = ""
     }
 }
