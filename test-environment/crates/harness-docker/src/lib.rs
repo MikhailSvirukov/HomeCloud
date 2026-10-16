@@ -8,6 +8,7 @@
 mod cli;
 mod command;
 mod plan;
+mod process;
 mod runtime;
 
 pub use cli::{CliClusterRuntime, CommandRunner, RecordingCommandRunner};
@@ -15,4 +16,5 @@ pub use command::{
     Command, container_name, container_remove, container_run, container_stop, network_create,
 };
 pub use plan::{ClusterPlan, ContainerPlan, EnvBuilder, NetworkPlan, PlanSettings};
+pub use process::ProcessCommandRunner;
 pub use runtime::{ClusterRuntime, FakeClusterRuntime};

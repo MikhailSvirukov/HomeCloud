@@ -73,6 +73,12 @@ pub enum HarnessError {
     #[error("check failed: {message}")]
     CheckFailed { message: String },
     /// A process command run by the harness failed.
+    ///
+    /// `code` is `-1` when the process ended without an exit code, for example
+    /// when it was terminated by a signal.
     #[error("{program} exited with code {code}")]
     CommandFailed { program: String, code: i32 },
+    /// A command could not be started.
+    #[error("could not start {program}")]
+    CommandNotStarted { program: String },
 }
