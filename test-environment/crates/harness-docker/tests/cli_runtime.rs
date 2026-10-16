@@ -13,10 +13,7 @@ use harness_docker::{
     container_remove, container_run, container_stop, network_create,
 };
 
-use common::{plan, plan_order};
-
-/// The Docker CLI program every command invokes.
-const DOCKER: &str = "docker";
+use common::{DOCKER, plan, plan_order};
 
 /// Renders the expected command for every plan container, in plan order.
 fn commands_for(

@@ -15,7 +15,7 @@ use harness_test_support::addr;
 use common::{
     DEDICATED_ID, FIRST_STORAGE_ID, LISTEN_ADDRESS_KEY, NETWORK_NAME, NODE_ID_KEY, NODE_LABEL_KEY,
     NODE_ROLE_KEY, SERVER_IMAGE, STORAGE_IMAGE, STORAGE_NODES, plan_order, plan_with_storage,
-    role_value, settings, topology_with_storage,
+    role_value, settings, topology,
 };
 
 /// Environment key holding the node id in the distinct caller mapping.
@@ -109,7 +109,7 @@ fn plan_renders_the_settings_env_builder_for_every_container() {
 #[test]
 fn plan_forwards_a_distinct_caller_env_mapping_for_every_node() {
     let custom = PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, custom_node_env);
-    let plan = ClusterPlan::from_topology(&topology_with_storage(STORAGE_NODES), &custom);
+    let plan = ClusterPlan::from_topology(&topology(STORAGE_NODES), &custom);
 
     let dedicated = plan
         .container(NodeId::new(DEDICATED_ID))
@@ -176,7 +176,7 @@ fn fake_runtime_start_stop_round_trip_follows_plan_order_and_is_idempotent() {
 #[test]
 fn cluster_size_scales_container_count_and_container_lookup_finds_every_node() {
     for storage in [1_u16, 3, 5] {
-        let cluster = topology_with_storage(storage);
+        let cluster = topology(storage);
         let plan = ClusterPlan::from_topology(&cluster, &settings());
 
         let expected = usize::from(storage) + 1;

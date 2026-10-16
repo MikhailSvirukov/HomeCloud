@@ -14,10 +14,8 @@ use harness_docker::{
     container_stop, network_create,
 };
 
-use common::{FIRST_STORAGE_ID, NETWORK_NAME, plan};
+use common::{DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan};
 
-/// The Docker CLI program every command must invoke.
-const DOCKER: &str = "docker";
 /// `docker network` subcommand.
 const NETWORK: &str = "network";
 /// `network create` subcommand.

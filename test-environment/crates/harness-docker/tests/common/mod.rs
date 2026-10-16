@@ -11,10 +11,12 @@
 
 use std::collections::BTreeMap;
 
-use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
+use harness_core::{NodeId, NodeRole, NodeSpec};
 use harness_docker::{ClusterPlan, EnvBuilder, PlanSettings};
-use harness_test_support::topology;
+pub use harness_test_support::topology;
 
+/// The Docker CLI program every command must invoke.
+pub const DOCKER: &str = "docker";
 /// Network name configured for the isolated test cluster.
 pub const NETWORK_NAME: &str = "harness-net";
 /// Image configured for the dedicated-server container.
@@ -63,11 +65,6 @@ pub fn node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
 pub fn settings() -> PlanSettings {
     let env: EnvBuilder = node_env;
     PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, env)
-}
-
-/// Builds the shared fixture topology for `storage` storage nodes.
-pub fn topology_with_storage(storage: u16) -> ClusterTopology {
-    topology(storage)
 }
 
 /// Derives a plan for one dedicated server and the default storage count.
