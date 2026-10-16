@@ -7,7 +7,7 @@ package dev.homecloud.android.queue
  * mutating an existing entry. The [uploadId] is opaque and reused across retries and storage-node
  * switches; its wire format is owned by the protocol contract, not by this model.
  */
-data class UploadQueueEntry(
+internal data class UploadQueueEntry(
     val uploadId: String,
     val sourceId: Long,
     val sizeBytes: Long,

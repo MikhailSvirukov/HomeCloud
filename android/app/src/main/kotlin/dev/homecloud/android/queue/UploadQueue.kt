@@ -10,7 +10,7 @@ package dev.homecloud.android.queue
  * There is deliberately no delete operation, because a local deletion must not propagate to the
  * server.
  */
-interface UploadQueue {
+internal interface UploadQueue {
 
     /**
      * Records a file version as pending, or returns the existing entry for a repeated [uploadId]

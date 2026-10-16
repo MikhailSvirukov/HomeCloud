@@ -3,7 +3,7 @@ package dev.homecloud.android.permissions
 /**
  * Outcome of the media-read permission decision for the caller.
  */
-enum class MediaPermissionStatus {
+internal enum class MediaPermissionStatus {
     /** Every required media-read permission is granted, so the caller has nothing left to ask for. */
     GRANTED,
 
@@ -22,7 +22,7 @@ enum class MediaPermissionStatus {
  * it only reports which permissions still have to be asked for and whether asking is still
  * possible or the user has permanently refused.
  */
-object MediaPermissionRequestPolicy {
+internal object MediaPermissionRequestPolicy {
 
     /**
      * The required media-read permissions the caller still has to request, in the order the media

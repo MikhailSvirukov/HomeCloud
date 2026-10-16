@@ -19,7 +19,7 @@ import java.nio.file.StandardCopyOption
  * of dropping queued work silently. Not thread-safe; access must stay on one thread or be externally
  * synchronized.
  */
-class FileUploadQueueStore(private val file: File) : UploadQueueStore {
+internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
 
     override fun read(): List<UploadQueueEntry> {
         if (!file.exists()) {

@@ -18,7 +18,7 @@ import android.provider.MediaStore
  * callers must not invoke [readAll] on the main thread. The caller retains
  * ownership of the resolver's lifecycle.
  */
-class MediaStoreMediaRowSource(
+internal class MediaStoreMediaRowSource(
     private val contentResolver: ContentResolver,
 ) : MediaRowSource {
 

@@ -7,7 +7,7 @@ package dev.homecloud.android.media
  * [MediaCatalog.backupCandidates] classifies as photo or video. It performs no
  * caching, persistence, or change detection.
  */
-class MediaDiscovery(private val rowSource: MediaRowSource) {
+internal class MediaDiscovery(private val rowSource: MediaRowSource) {
 
     /**
      * Reads all rows once through [rowSource] and returns the photo/video

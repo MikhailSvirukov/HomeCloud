@@ -9,7 +9,7 @@ import dev.homecloud.android.media.RawMediaEntry
  * Shared media fixtures so tests build rows and fake seams from one definition
  * instead of copying literals from each other.
  */
-object MediaTestData {
+internal object MediaTestData {
 
     /** The mime type of a supported still image. */
     const val IMAGE_MIME_TYPE: String = "image/jpeg"
@@ -53,7 +53,7 @@ object MediaTestData {
 /**
  * A [MediaRowSource] that serves a fixed list and records how often it was read.
  */
-class FakeMediaRowSource(private val rows: List<RawMediaEntry>) : MediaRowSource {
+internal class FakeMediaRowSource(private val rows: List<RawMediaEntry>) : MediaRowSource {
 
     /** Number of times [readAll] has been called. */
     var readCount: Int = 0
@@ -69,7 +69,7 @@ class FakeMediaRowSource(private val rows: List<RawMediaEntry>) : MediaRowSource
  * An [UploadIdFactory] that hands out pre-registered ids and falls back to a
  * deterministic id derived from the item id for anything not registered.
  */
-class FakeUploadIdFactory(
+internal class FakeUploadIdFactory(
     private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
 ) : UploadIdFactory {
 

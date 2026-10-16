@@ -10,7 +10,7 @@ import dev.homecloud.android.queue.UploadQueueStore
  * The cycle is synchronous and performs blocking store I/O; threading and backgrounding belong to
  * the caller.
  */
-class BackupCycleRunner(
+internal class BackupCycleRunner(
     private val planner: MediaBackupPlanner,
     private val store: UploadQueueStore,
     private val log: BackupCycleLog = NoOpBackupCycleLog,

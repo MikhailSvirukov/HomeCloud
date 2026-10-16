@@ -3,7 +3,7 @@ package dev.homecloud.android.log
 import android.util.Log
 
 /** [BackupCycleLog] that reports each cycle as one line in the Android log. */
-class AndroidBackupCycleLog : BackupCycleLog {
+internal class AndroidBackupCycleLog : BackupCycleLog {
 
     override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
         Log.i(
