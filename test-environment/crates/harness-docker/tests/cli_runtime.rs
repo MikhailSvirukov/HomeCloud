@@ -10,7 +10,7 @@ mod common;
 use harness_core::HarnessError;
 use harness_docker::{
     CliClusterRuntime, ClusterPlan, ClusterRuntime, Command, ContainerPlan, RecordingCommandRunner,
-    container_remove, container_run, container_stop, network_create,
+    container_remove, container_run, container_stop, network_create, network_remove,
 };
 
 use common::{DOCKER, plan, plan_order};
@@ -70,7 +70,7 @@ fn start_is_idempotent_and_does_not_recreate_containers() {
 }
 
 #[test]
-fn start_after_remove_reuses_the_network() {
+fn start_after_remove_recreates_the_network() {
     let plan = plan();
     let mut runtime = CliClusterRuntime::new(RecordingCommandRunner::new());
     runtime.start(&plan).expect("a recording start cannot fail");
@@ -91,13 +91,13 @@ fn start_after_remove_reuses_the_network() {
         .filter(|command| same_command(command, &network))
         .count();
     assert_eq!(
-        network_creates, 1,
-        "the network is created once per runtime and survives removal"
+        network_creates, 2,
+        "each start recreates the network once removal has torn it down"
     );
-    assert_commands(
-        &runtime.runner.commands[after_remove..],
-        &commands_for(&plan, container_run),
-    );
+
+    let mut expected = vec![network_create(&plan)];
+    expected.extend(commands_for(&plan, container_run));
+    assert_commands(&runtime.runner.commands[after_remove..], &expected);
 }
 
 #[test]
@@ -135,10 +135,9 @@ fn remove_removes_every_container() {
         .remove(&plan)
         .expect("a recording remove cannot fail");
 
-    assert_commands(
-        &runtime.runner.commands[after_start..],
-        &commands_for(&plan, container_remove),
-    );
+    let mut expected = commands_for(&plan, container_remove);
+    expected.push(network_remove(&plan));
+    assert_commands(&runtime.runner.commands[after_start..], &expected);
     assert!(runtime.running_containers().is_empty());
 
     let after_first_remove = runtime.runner.commands.len();
