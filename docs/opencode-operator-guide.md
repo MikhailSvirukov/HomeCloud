@@ -42,11 +42,12 @@ Do not put provider keys or GitHub tokens in tracked files. `.env` is ignored by
 4. Create a fine-grained personal access token in GitHub. Limit it to this one repository. Grant repository permissions:
    - **Contents: Read and write** — create branches and publish changed files.
    - **Issues: Read and write** — list, read, and claim issues with labels.
-   - **Pull requests: Read and write** — create/read/merge PRs.
+   - **Pull requests: Read and write** — create/read PRs and submit review comments.
    - **Actions: Read-only** — inspect CI results.
    - **Metadata: Read-only** is normally selected automatically by GitHub.
 
    Set a short expiry that suits your rotation schedule, then paste the token into `GITHUB_MCP_TOKEN` in `.env`. Never paste it into `.opencode/opencode.jsonc`, an issue, a review note, or a commit. GitHub documents the repository permission model in its [fine-grained token permission reference](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens).
+Use this single GitHub account for every OpenCode role. The existing `GITHUB_MCP_TOKEN` needs **Pull requests: Read and write** to create PRs and write review comments. Since the same account authors and reviews PRs, GitHub will not accept a formal approval from the reviewer role. The reviewer records its internal result in a `COMMENT` review using `[agent-review: changes-requested]` or `[agent-review: approved]`; branch protection requiring approval by a different person cannot be satisfied automatically in this setup.
 5. The active `.env` and `.env.example` checkout paths match the existing `homecloud-clones/` directory. Confirm the four `*_CHECKOUT` values in `.env` are `../homecloud-clones/android`, `../homecloud-clones/distributed-server`, `../homecloud-clones/dedicated-server`, and `../homecloud-clones/test-environment`. Set `DEFAULT_BRANCH` if the repository does not use `main`. `GIT_AUTHOR_NAME` and `GIT_AUTHOR_EMAIL` are optional; Compose supplies `PicBackup Agent` and a noreply address when they are blank.
 6. The four clones already exist under `/home/mikhail/workdir/homecloud-clones/`. Each must have the same `origin`, track `main`, and remain a separate checkout. If recreating them, use:
 
@@ -79,11 +80,11 @@ The files currently in `/home/mikhail/workdir/backup/.opencode/` are only visibl
 
 ### GitHub MCP
 
-The MCP server is declared in [`.opencode/opencode.jsonc`](../.opencode/opencode.jsonc), under `mcp.servers.github`. It connects to `https://api.githubcopilot.com/mcp/`. The `X-MCP-Tools` header limits the server's advertised tools. OpenCode's ordered `permissions` then grants GitHub tools to the orchestrator or reviewer by role; workers have no GitHub MCP tool permissions.
+The MCP connections are declared in [`.opencode/opencode.jsonc`](../.opencode/opencode.jsonc). The `github` connection uses your one GitHub token and advertises only the required tools. OpenCode prefixes tool names with the server name, so workers create PRs with `github_create_pull_request`. Per-agent permissions grant the orchestrator merged-PR feedback reading and merge, workers PR creation/read, and the reviewer PR review/comment submission.
 
-The Remote GitHub MCP endpoint requires a bearer access token. GitHub's server documentation says the remote endpoint does not provide the OAuth login service and does not support dynamic client registration, so this setup uses a fine-grained PAT rather than relying on OpenCode's generic dynamic OAuth flow. The token value is supplied from `.env` to the OpenCode process and used only as the MCP `Authorization` header; the header is not written into the tracked config.
+The Remote GitHub MCP endpoint requires a bearer access token. GitHub's server documentation says the remote endpoint does not provide the OAuth login service and does not support dynamic client registration, so this setup uses fine-grained PATs rather than relying on OpenCode's generic dynamic OAuth flow. The token comes from `.env` and is used as the `Authorization` header; it is not written into tracked config. GitHub does not accept an official approval from the same account that authored the PR, so the reviewer role uses a `COMMENT` review with an internal status marker instead.
 
-There is an important security limit: the OpenCode process and shell/test commands run as the same container user. A command or project test could inspect that process environment and obtain the GitHub PAT or DeepSeek API key. The role permissions limit model-invoked MCP tools, but they are not an operating-system boundary against malicious code. Use this only with trusted repository code. A credential-free build runner plus a separate GitHub MCP credential broker would be needed before testing untrusted changes.
+There is an important security limit: the OpenCode process and shell/test commands run as the same container user. A command or project test could inspect that process environment and obtain the GitHub PAT or the DeepSeek API key. Role permissions limit model-invoked MCP tools, but neither is an operating-system boundary against malicious code. Use this only with trusted repository code. A credential-free build runner plus a separate GitHub MCP credential broker would be needed before testing untrusted changes.
 
 ### Model provider and model
 
