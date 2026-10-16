@@ -32,8 +32,8 @@ for clients; it does not relay Raft or blob traffic.
   codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
   hash, upload record), `src/listener.rs` (binds the node's listen address
   and yields frame reader/writer halves per accepted TCP connection), and
-  `src/node.rs` (node runtime: binds the listen address and serves frame
-  connections until shutdown).
+  `src/node.rs` (node runtime: serves frame connections on a bound listener
+  until shutdown).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,

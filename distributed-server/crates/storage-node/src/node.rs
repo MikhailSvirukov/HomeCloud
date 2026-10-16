@@ -1,4 +1,4 @@
-//! Node runtime: binds the listen address and serves frame connections.
+//! Node runtime: serves frame connections on a bound listener.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -6,30 +6,37 @@ use std::net::SocketAddr;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tracing::{debug, info, trace, warn};
 
 use crate::connection::{pump_halves, FrameReader, FrameWriter};
+use crate::listener::{Listener, ListenerError};
+
+type Result<T> = core::result::Result<T, ListenerError>;
 
 /// Frames buffered per direction for one connection.
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;
 
 /// Accepts connections until `shutdown` resolves, serving each on its own task.
-pub async fn serve<F>(
-    listener: crate::listener::Listener,
-    shutdown: F,
-) -> Result<(), crate::listener::ListenerError>
+pub async fn serve<F>(listener: Listener, shutdown: F) -> Result<()>
 where
     F: Future<Output = ()>,
 {
     tokio::pin!(shutdown);
+    let mut connections = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (reader, writer, peer) = accepted?;
                 info!(%peer, "connection accepted");
-                tokio::spawn(handle_connection(reader, writer, peer));
+                connections.spawn(handle_connection(reader, writer, peer));
+                while connections.try_join_next().is_some() {}
             }
-            () = &mut shutdown => return Ok(()),
+            () = &mut shutdown => {
+                connections.abort_all();
+                while connections.join_next().await.is_some() {}
+                return Ok(());
+            }
         }
     }
 }
