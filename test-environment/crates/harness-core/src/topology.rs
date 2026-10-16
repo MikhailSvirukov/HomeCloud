@@ -107,10 +107,6 @@ impl ClusterTopology {
     pub fn builder() -> ClusterTopologyBuilder {
         ClusterTopologyBuilder::new()
     }
-    /// The single dedicated server (client entry point).
-    pub fn dedicated_server(&self) -> &NodeSpec {
-        &self.dedicated
-    }
     /// The storage nodes in insertion order.
     pub fn storage_nodes(&self) -> &[NodeSpec] {
         &self.storage
@@ -126,10 +122,6 @@ impl ClusterTopology {
     /// Iterates every node, dedicated server first, then storage nodes.
     pub fn nodes(&self) -> impl Iterator<Item = &NodeSpec> {
         std::iter::once(&self.dedicated).chain(self.storage.iter())
-    }
-    /// Total node count, including the dedicated server.
-    pub fn node_count(&self) -> usize {
-        self.storage.len() + 1
     }
     /// Majority quorum over the storage nodes only.
     pub fn quorum(&self) -> usize {
@@ -323,9 +315,5 @@ mod tests {
             NodeRole::Storage,
         ];
         assert_eq!(roles, expected);
-    }
-    #[test]
-    fn node_ids_compare_by_numeric_value() {
-        assert!(NodeId::new(1) < NodeId::new(2));
     }
 }

@@ -1,28 +1,16 @@
 //! Fast, Docker-free scenario-engine tests over the harness-core fakes.
 
+mod common;
+
 use std::time::Duration;
 
-use harness_core::{
-    ClusterTopology, FakeFaultInjector, Fault, FaultInjector, HarnessError, InMemoryNodeControl,
-    LossPercent, NetworkConditions, NodeControl, NodeId, NodeState, PeerLink,
-};
+use harness_core::{Fault, FaultInjector, HarnessError, NodeControl, NodeId, NodeState, PeerLink};
 use harness_scenario::{
     FaultActive, NoActiveFaults, NodeRunning, Scenario, ScenarioCheck, ScenarioContext,
     ScenarioRunner, StorageQuorumHeld,
 };
-use harness_test_support::{faults, nodes, topology};
 
-/// One dedicated server plus three storage nodes, the standard recovery shape.
-fn fixture() -> (ClusterTopology, InMemoryNodeControl, FakeFaultInjector) {
-    let cluster = topology(3);
-    let node_control = nodes(&cluster);
-    let fault_injector = faults(&cluster);
-    (cluster, node_control, fault_injector)
-}
-
-fn loss(percent: u8) -> LossPercent {
-    LossPercent::new(percent).expect("loss percent is within the accepted range")
-}
+use common::{Cluster, degraded_conditions};
 
 type Assert = Box<dyn Fn(&ScenarioContext<'_>) -> Result<(), HarnessError>>;
 
@@ -51,10 +39,10 @@ fn always_fails(message: &'static str) -> Box<dyn ScenarioCheck> {
 
 #[test]
 fn happy_path_scenario_executes_every_step() {
-    let (topology, mut nodes, mut faults) = fixture();
+    let mut cluster = Cluster::new();
     let degradation = Fault::LinkDegradation {
         link: PeerLink::new(NodeId::new(2), NodeId::new(3)),
-        conditions: NetworkConditions::new(Duration::from_millis(25), loss(10)),
+        conditions: degraded_conditions(Duration::from_millis(25), 10),
     };
     let stopped = NodeId::new(4);
     let scenario = Scenario::builder("peer degradation and node recovery")
@@ -72,7 +60,8 @@ fn happy_path_scenario_executes_every_step() {
         .start_node(stopped, "restart the storage node")
         .check(Box::new(NodeRunning(stopped)), "restarted node is running")
         .build();
-    let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
+    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
+        .run(&scenario);
     assert!(report.is_success());
     assert_eq!(report.steps.len(), 7);
     assert!(report.failed_step().is_none());
@@ -80,13 +69,14 @@ fn happy_path_scenario_executes_every_step() {
 
 #[test]
 fn runner_stops_at_first_failing_check() {
-    let (topology, mut nodes, mut faults) = fixture();
+    let mut cluster = Cluster::new();
     let message = "recovery assertion failed";
     let scenario = Scenario::builder("failing check")
         .check(always_fails(message), "always fails")
         .stop_node(NodeId::new(2), "must not run")
         .build();
-    let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
+    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
+        .run(&scenario);
     assert!(!report.is_success());
     assert_eq!(report.steps.len(), 1);
     let failed = report.failed_step().expect("a failing step is recorded");
@@ -97,12 +87,12 @@ fn runner_stops_at_first_failing_check() {
             message: message.to_string(),
         })
     );
-    assert_eq!(nodes.state(NodeId::new(2)), Ok(NodeState::Running));
+    assert_eq!(cluster.nodes.state(NodeId::new(2)), Ok(NodeState::Running));
 }
 
 #[test]
 fn node_shutdown_fault_apply_and_revert_track_active_set() {
-    let (topology, mut nodes, mut faults) = fixture();
+    let mut cluster = Cluster::new();
     let shutdown = Fault::NodeShutdown {
         node: NodeId::new(3),
     };
@@ -115,7 +105,8 @@ fn node_shutdown_fault_apply_and_revert_track_active_set() {
         .revert_fault(shutdown.clone(), "revert node shutdown")
         .check(Box::new(NoActiveFaults), "shutdown is gone")
         .build();
-    let report = ScenarioRunner::new(&topology, &mut nodes, &mut faults).run(&scenario);
+    let report = ScenarioRunner::new(&cluster.topology, &mut cluster.nodes, &mut cluster.faults)
+        .run(&scenario);
     assert!(report.is_success());
-    assert!(faults.active_faults().is_empty());
+    assert!(cluster.faults.active_faults().is_empty());
 }
