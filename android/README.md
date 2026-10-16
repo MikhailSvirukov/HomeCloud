@@ -21,7 +21,7 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - The in-memory upload queue with its retry bookkeeping (`queue/InMemoryUploadQueue`, `queue/UploadQueue`).
 - The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
 - The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
-- A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, `log/NoOpBackupCycleLog`, `log/AndroidBackupCycleLog`).
+- A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, which also declares the no-op default, and `log/AndroidBackupCycleLog`).
 
 Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
 
@@ -91,10 +91,11 @@ android/
         │       └── FileUploadQueueStore.kt  snapshot file that survives a restart
         └── test/kotlin/dev/homecloud/android/
             ├── backup/              unit tests for planning and the cycle runner
+            ├── log/                 unit tests for the structured cycle log
             ├── media/               unit tests for media discovery and classification
             ├── permissions/         unit tests for the permission policy pair
             ├── queue/               unit tests for the queue and its store
-            └── testsupport/         shared test data for the media unit tests
+            └── testsupport/         shared test fixtures for the media and backup unit tests
 ```
 
 ## Build and test

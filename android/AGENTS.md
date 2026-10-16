@@ -31,6 +31,13 @@ Read the root `/workspace/AGENTS.md` first for repository-wide process rules; it
 - Use coroutines where the code needs asynchronous or background work; do not introduce manual threading or blocking calls on the main thread in their place.
 - Reviewing a change covers style, structure, clarity, and duplication, not only formatting and lint output.
 
+## Test and review conventions
+
+- Android framework code is tested in the unit-test source set (`app/src/test/kotlin`) with Robolectric; do not add a new test dependency without pinning it in the version catalog `gradle/libs.versions.toml`.
+- The module build file (`app/build.gradle.kts`) points the forked unit-test JVM's `user.home` at the Gradle user home, so Robolectric's runtime jars land in the directory the CI workflow caches.
+- A framework test that cannot run on a `noexec` temp filesystem disables Conscrypt with `@ConscryptMode(ConscryptMode.Mode.OFF)`, matching the area's other Robolectric tests.
+- A change is reviewed on its pull request with the `[agent-review: ...]` marker, not only in a local report.
+
 ## Quality gate
 
 Run the area-local check before handing off:
