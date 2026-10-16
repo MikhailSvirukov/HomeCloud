@@ -73,9 +73,11 @@ test-environment/scripts/ci.sh
 The same gates run in GitHub Actions via
 [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
 
-Fast isolated tests use the in-memory fakes, the CLI/process runtimes with a
-recording runner, and the shared fixtures, and need no Docker; Docker
-integration scenarios are intentionally separate and are not run by `ci.sh`.
+Fast isolated tests use the in-memory fakes, the shared fixtures, and
+`CliClusterRuntime` with `RecordingCommandRunner`, and need no Docker. The CLI
+runtime can also be driven by `ProcessCommandRunner`, which runs real child
+processes; Docker-backed end-to-end scenarios remain separate and are not run by
+`ci.sh`.
 
 ## Notes
 
