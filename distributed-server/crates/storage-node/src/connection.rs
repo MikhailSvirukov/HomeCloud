@@ -128,7 +128,8 @@ where
     pump_halves(reader, writer, inbound, outbound).await
 }
 
-/// Runs the frame-only pump over already-split halves.
+/// Runs the frame-only pump over already-split halves, returning when the
+/// stream ends or either channel closes.
 pub async fn pump_halves<R, W>(
     mut reader: FrameReader<R>,
     mut writer: FrameWriter<W>,
