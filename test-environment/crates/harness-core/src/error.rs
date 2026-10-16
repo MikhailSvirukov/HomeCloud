@@ -72,4 +72,7 @@ pub enum HarnessError {
     /// A custom scenario check failed.
     #[error("check failed: {message}")]
     CheckFailed { message: String },
+    /// A process command run by the harness failed.
+    #[error("{program} exited with code {code}")]
+    CommandFailed { program: String, code: i32 },
 }
