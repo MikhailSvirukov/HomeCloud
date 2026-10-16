@@ -18,9 +18,6 @@ pub const MAX_UPLOAD_ID_LEN: usize = 64;
 /// Length of a SHA-256 content digest in bytes.
 pub const CONTENT_HASH_LEN: usize = 32;
 
-/// Lowercase hexadecimal digits indexed by nibble value.
-const HEX_DIGITS: [u8; 16] = *b"0123456789abcdef";
-
 /// Result alias for metadata validation.
 type Result<T> = core::result::Result<T, MetadataError>;
 
@@ -83,12 +80,7 @@ impl ContentHash {
 
     /// Returns the digest as lowercase hex, exactly 64 characters.
     pub fn to_hex(&self) -> String {
-        let mut hex = String::with_capacity(CONTENT_HASH_LEN * 2);
-        for byte in self.0 {
-            hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
-            hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
-        }
-        hex
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     /// Parses exactly 64 hex characters (upper or lower case).
@@ -99,7 +91,17 @@ impl ContentHash {
         }
         let mut digest = [0u8; CONTENT_HASH_LEN];
         for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-            digest[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
+            let text =
+                core::str::from_utf8(pair).map_err(|_| MetadataError::InvalidContentHashHex {
+                    character: char::from(pair[0]),
+                })?;
+            digest[index] = u8::from_str_radix(text, 16).map_err(|_| {
+                let character = text
+                    .chars()
+                    .find(|character| !character.is_ascii_hexdigit())
+                    .unwrap_or_else(|| char::from(pair[0]));
+                MetadataError::InvalidContentHashHex { character }
+            })?;
         }
         Ok(Self(digest))
     }
@@ -238,17 +240,6 @@ pub enum MetadataError {
 
 fn is_valid_upload_id_char(character: char) -> bool {
     character.is_ascii_alphanumeric() || character == '-' || character == '_'
-}
-
-fn hex_nibble(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        other => Err(MetadataError::InvalidContentHashHex {
-            character: char::from(other),
-        }),
-    }
 }
 
 #[cfg(test)]
