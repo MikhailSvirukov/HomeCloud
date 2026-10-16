@@ -1,12 +1,15 @@
 //! `storage-node` binary entry point.
 //!
 //! Reads and validates the node configuration from environment variables and
-//! reports a concise startup summary. The actor runtime, TCP listener, and
+//! emits a structured startup log. The actor runtime, TCP listener, and
 //! `io_uring` disk thread are later increments.
 
 use std::process::ExitCode;
 
 use storage_node::{NodeConfig, PROTOCOL_VERSION};
+
+/// Default log filter used when `RUST_LOG` is unset or unparsable.
+const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Environment variable carrying the node identity label.
 const ENV_NODE_ID: &str = "NODE_ID";
@@ -27,10 +30,20 @@ const KEY_DATA_DIR: &str = "data_dir";
 const KEY_PEERS: &str = "peers";
 
 fn main() -> ExitCode {
+    init_tracing();
     run()
 }
 
-/// Loads and validates configuration, reporting the outcome.
+/// Installs the global subscriber, honouring `RUST_LOG`.
+///
+/// A second initialization attempt is ignored so repeated setup cannot panic.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+/// Loads and validates configuration, emitting the outcome.
 ///
 /// A missing environment variable is treated as an empty value so validation
 /// reports a missing key instead of aborting.
@@ -49,11 +62,19 @@ fn run() -> ExitCode {
 
     match NodeConfig::from_pairs(&pairs) {
         Ok(config) => {
-            print_startup_summary(&config);
+            tracing::info!(
+                crate_version = env!("CARGO_PKG_VERSION"),
+                protocol_version = PROTOCOL_VERSION,
+                node_id = %config.node_id,
+                listen_addr = %config.listen_addr,
+                data_dir = %config.data_dir.display(),
+                peers = config.peers.len(),
+                "storage node starting"
+            );
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("storage-node: invalid configuration: {error}");
+            tracing::error!(error = %error, "invalid configuration");
             ExitCode::FAILURE
         }
     }
@@ -62,17 +83,4 @@ fn run() -> ExitCode {
 /// Reads an environment variable, mapping an absent variable to an empty string.
 fn env_value(name: &str) -> String {
     std::env::var(name).unwrap_or_default()
-}
-
-/// Prints the validated identity and endpoint summary.
-fn print_startup_summary(config: &NodeConfig) {
-    println!(
-        "storage-node {} (protocol version {})",
-        env!("CARGO_PKG_VERSION"),
-        PROTOCOL_VERSION
-    );
-    println!("node id: {}", config.node_id);
-    println!("listen address: {}", config.listen_addr);
-    println!("data dir: {}", config.data_dir.display());
-    println!("peers: {}", config.peers.len());
 }

@@ -14,6 +14,7 @@ use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
+use tracing::trace;
 
 use crate::codec::encode_frame;
 use crate::frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
@@ -61,6 +62,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     pub async fn next_frame(&mut self) -> Result<Option<Vec<u8>>> {
         loop {
             if let Some(frame) = self.buffer.next_frame()? {
+                trace!(frame_len = frame.len(), "frame read");
                 return Ok(Some(frame));
             }
 
@@ -97,6 +99,7 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
     pub async fn send_frame(&mut self, payload: &[u8]) -> Result<()> {
         let frame = encode_frame(payload)?;
         self.writer.write_all(&frame).await?;
+        trace!(payload_len = payload.len(), "frame written");
         Ok(())
     }
 }
@@ -127,14 +130,21 @@ where
             frame = reader.next_frame() => match frame? {
                 Some(frame) => {
                     if inbound.send(frame).await.is_err() {
+                        trace!("frame pump stopped");
                         return Ok(());
                     }
                 }
-                None => return Ok(()),
+                None => {
+                    trace!("frame pump stopped");
+                    return Ok(());
+                }
             },
             payload = outbound.recv() => match payload {
                 Some(payload) => writer.send_frame(&payload).await?,
-                None => return Ok(()),
+                None => {
+                    trace!("frame pump stopped");
+                    return Ok(());
+                }
             },
         }
     }
