@@ -43,7 +43,7 @@ jobs:
       - name: Cache Gradle distribution
         uses: actions/cache@v6
         with:
-          path: ~/.cache/picbackup-gradle
+          path: ~/.cache/homecloud-gradle
           key: ${{ runner.os }}-gradle-dist-${{ hashFiles('android/gradle/libs.versions.toml', 'android/ci/check.sh') }}
           restore-keys: |
             ${{ runner.os }}-gradle-dist-

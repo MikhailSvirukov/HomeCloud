@@ -46,9 +46,9 @@ The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDI
 | lifecycle-runtime-ktx | 2.10.0 |
 | JUnit | 4.13.2 |
 
-- Root project name is `PicBackup`; the application module is `:app`.
-- Namespace and applicationId are `dev.picbackup.android`.
-- Kotlin test sources live under `app/src/test/kotlin` in package `dev.picbackup.android`.
+- Root project name is `HomeCloud`; the application module is `:app`.
+- Namespace and applicationId are `dev.homecloud.android`.
+- Kotlin test sources live under `app/src/test/kotlin` in package `dev.homecloud.android`.
 - Test framework is JUnit 4.
 - Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
 
@@ -66,7 +66,7 @@ android/
 └── app/
     ├── build.gradle.kts   application module configuration
     └── src/
-        ├── main/kotlin/dev/picbackup/android/
+        ├── main/kotlin/dev/homecloud/android/
         │   ├── MainActivity.kt   Compose entry point
         │   ├── backup/           planning discovered media into the queue
         │   │   ├── MediaBackupPlanner.kt   enqueues new candidates under a stable upload id
@@ -84,7 +84,7 @@ android/
         │       ├── InMemoryUploadQueue.kt   in-memory implementation
         │       ├── UploadQueueStore.kt      snapshot persistence boundary
         │       └── FileUploadQueueStore.kt  snapshot file that survives a restart
-        └── test/kotlin/dev/picbackup/android/
+        └── test/kotlin/dev/homecloud/android/
             ├── backup/              unit tests for planning and the cycle runner
             ├── media/               unit tests for media discovery and classification
             ├── permissions/         unit tests for the permission policy pair
@@ -109,4 +109,4 @@ The script resolves the `android/` directory from its own location and executes:
 
 Before invoking Gradle it exports `GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"` and `ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"`. The JVM's `user.home` can resolve to a read-only path in agent containers (for example `/home/node`) while `$HOME` is writable, so Gradle's native services and the Android tools need writable home directories. Both variables honor caller-provided overrides.
 
-The distribution is cached at `${GRADLE_DIST_CACHE:-$HOME/.cache/picbackup-gradle}`; set `GRADLE_DIST_CACHE` to relocate the cache. The script requires only `bash`, `curl`, `sha256sum`, and `unzip`, and fails with a non-zero exit code if any step fails.
+The distribution is cached at `${GRADLE_DIST_CACHE:-$HOME/.cache/homecloud-gradle}`; set `GRADLE_DIST_CACHE` to relocate the cache. The script requires only `bash`, `curl`, `sha256sum`, and `unzip`, and fails with a non-zero exit code if any step fails.
