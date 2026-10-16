@@ -56,15 +56,15 @@ fn config_path() -> PathBuf {
 }
 
 /// Report a startup failure as one error event and return the failure exit code.
-///
-/// The startup error renders its immediate cause on the first line, so the
-/// `caused by:` chain continues from the cause of that cause.
 fn report_failure(error: &StartupError) -> ExitCode {
     error!("{}", failure_message(error));
     ExitCode::FAILURE
 }
 
 /// Render the startup error together with its remaining `caused by:` chain.
+///
+/// The startup error renders its immediate cause on the first line, so the
+/// chain continues from the cause of that cause.
 fn failure_message(error: &StartupError) -> String {
     let mut message = error.to_string();
     let mut cause = error.source().and_then(|source| source.source());
