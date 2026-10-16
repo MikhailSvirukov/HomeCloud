@@ -133,7 +133,7 @@ pub enum ConfigError {
     #[error("cluster.nodes must not be empty")]
     EmptyCluster,
     /// A required [`ClusterNode`] field is empty.
-    #[error("cluster.nodes[{index}].{field} must not be empty")]
+    #[error("cluster.nodes[{index}].{field}] must not be empty")]
     EmptyNodeField { index: usize, field: NodeField },
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
@@ -168,15 +168,6 @@ impl ServerConfig {
                 source,
             })
             .and_then(|input| Self::from_toml_str(&input))
-    }
-
-    /// Label and private key paths needed to load this server's identity.
-    pub fn identity_key_material(&self) -> (&str, &Path, &Path) {
-        (
-            &self.identity.label,
-            &self.identity.encryption_private_key,
-            &self.identity.signing_private_key,
-        )
     }
 
     /// Apply every structural validation rule to the parsed configuration.
