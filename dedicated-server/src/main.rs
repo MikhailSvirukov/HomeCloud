@@ -1,18 +1,20 @@
 //! Binary entry point for the dedicated server control plane.
 //!
 //! Resolves the configuration path from the environment or the default file
-//! name, loads the configuration together with the key identity it names, and
-//! logs structured JSON Lines startup and shutdown events to stderr. Networking
-//! runtime behavior is added in later issues.
+//! name, loads the configuration to learn the structured log path, installs the
+//! non-blocking file writer, and then loads the key identity. Startup failures
+//! before the writer exists are written directly to stderr; later startup and
+//! shutdown events go to the configured file. Networking runtime behavior is
+//! added in later issues.
 
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use dedicated_server::{
-    init as init_logging, shutdown as log_shutdown, startup as log_startup,
-    startup_failed as log_startup_failed, Startup, StartupError, CONFIG_PATH_ENV,
-    DEFAULT_CONFIG_FILE_NAME,
+    init as init_logging, logging_failed_to_stderr, shutdown as log_shutdown,
+    startup as log_startup, startup_failed as log_startup_failed, startup_failed_to_stderr,
+    ServerConfig, Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
 
 /// Process allocator tuned for the concurrent workload of a server process
@@ -21,17 +23,34 @@ use dedicated_server::{
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    init_logging();
-
     let path = config_path();
+    let config = match ServerConfig::load(&path) {
+        Ok(config) => config,
+        Err(source) => {
+            let error = StartupError::Configuration { path, source };
+            let _ = startup_failed_to_stderr(&error);
+            return ExitCode::FAILURE;
+        }
+    };
 
-    match Startup::load(&path) {
+    let _guard = match init_logging(config.logging_path()) {
+        Ok(guard) => guard,
+        Err(_) => {
+            let _ = logging_failed_to_stderr();
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match Startup::from_config(config) {
         Ok(startup) => {
             log_startup(&startup.summary());
             log_shutdown();
             ExitCode::SUCCESS
         }
-        Err(error) => report_failure(&error),
+        Err(error) => {
+            log_startup_failed(&error);
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -41,10 +60,4 @@ fn config_path() -> PathBuf {
         Ok(value) if !value.is_empty() => PathBuf::from(value),
         _ => PathBuf::from(DEFAULT_CONFIG_FILE_NAME),
     }
-}
-
-/// Report a startup failure as one error event and return the failure exit code.
-fn report_failure(error: &StartupError) -> ExitCode {
-    log_startup_failed(error);
-    ExitCode::FAILURE
 }

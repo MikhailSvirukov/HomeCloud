@@ -1,8 +1,11 @@
 //! Startup wiring of a validated configuration and its key identity.
 //!
-//! Loading a [`Startup`] reads the configuration, then loads the key identity
-//! named by that configuration, so the binary never touches configuration
-//! fields directly. The summary renders both for the startup log line.
+//! Loading a [`Startup`] from a path reads the configuration and then delegates
+//! to [`Startup::from_config`], which loads the key identity named by that
+//! configuration, so the binary never touches configuration fields directly.
+//! The two-phase entry point loads the configuration first because it names the
+//! structured log file. The summary renders the loaded values for the startup
+//! log line.
 
 use std::path::{Path, PathBuf};
 
@@ -26,22 +29,24 @@ pub struct Startup {
 }
 
 impl Startup {
-    /// Load the configuration at `path` together with the key identity it names.
+    /// Load the configuration at `path` and then its key identity.
     pub fn load(path: &Path) -> Result<Self> {
         let config = ServerConfig::load(path).map_err(|source| StartupError::Configuration {
             path: path.to_path_buf(),
             source,
         })?;
 
+        Self::from_config(config)
+    }
+
+    /// Load the key identity named by an already loaded configuration.
+    pub fn from_config(config: ServerConfig) -> Result<Self> {
         let identity = ServerIdentity::load(
             &config.identity.label,
             &config.identity.encryption_private_key,
             &config.identity.signing_private_key,
         )
-        .map_err(|source| StartupError::Identity {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        .map_err(|source| StartupError::Identity { source })?;
 
         let accounts = AccountRegistry::new(config.password.params());
 
@@ -94,10 +99,8 @@ pub enum StartupError {
         source: ConfigError,
     },
     /// Loading the key identity named by the configuration failed.
-    #[error("failed to load key identity '{path}': {source}")]
+    #[error("failed to load key identity: {source}")]
     Identity {
-        /// Configuration path that named the key identity.
-        path: PathBuf,
         /// Underlying identity failure.
         #[source]
         source: IdentityError,
