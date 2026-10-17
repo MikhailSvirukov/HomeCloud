@@ -76,6 +76,17 @@ class MainActivityTest {
     }
 
     @Test
+    fun `launch with an unreadable media library shows the failure message`() {
+        installUnreadableMediaProvider()
+        grantRequiredPermissions()
+        resumeAgain()
+
+        waitForLibraryFailure()
+
+        composeRule.onNodeWithText(failureMessage()).assertIsDisplayed()
+    }
+
+    @Test
     fun `the manifest launcher entry point resolves to MainActivity`() {
         val application = RuntimeEnvironment.getApplication()
         val launcherIntent =
@@ -97,7 +108,10 @@ class MainActivityTest {
         composeRule.waitForIdle()
     }
 
-    private fun installMediaProvider(rows: List<Array<Any?>>) {
+    private fun installMediaProvider(
+        rows: List<Array<Any?>>,
+        queryReturnsNull: Boolean = false,
+    ) {
         val authority =
             requireNotNull(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL).authority) {
                 "media collection uri must carry an authority"
@@ -108,6 +122,11 @@ class MainActivityTest {
                 .create(authority)
                 .get()
         provider.rows = rows
+        provider.queryReturnsNull = queryReturnsNull
+    }
+
+    private fun installUnreadableMediaProvider() {
+        installMediaProvider(emptyList(), queryReturnsNull = true)
     }
 
     private fun mediaRow(
@@ -123,9 +142,17 @@ class MainActivityTest {
         )
 
     private fun waitForLibrarySummary() {
-        composeRule.waitUntil(timeoutMillis = SUMMARY_TIMEOUT_MILLIS) {
+        waitForText(foundMessage(EXPECTED_MEDIA_COUNT))
+    }
+
+    private fun waitForLibraryFailure() {
+        waitForText(failureMessage())
+    }
+
+    private fun waitForText(text: String) {
+        composeRule.waitUntil(timeoutMillis = LIBRARY_TIMEOUT_MILLIS) {
             composeRule
-                .onAllNodesWithText(foundMessage(EXPECTED_MEDIA_COUNT))
+                .onAllNodesWithText(text)
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
@@ -133,6 +160,8 @@ class MainActivityTest {
 
     private fun foundMessage(count: Int): String =
         composeRule.activity.resources.getQuantityString(R.plurals.media_library_found, count, count)
+
+    private fun failureMessage(): String = composeRule.activity.getString(R.string.media_library_failed)
 
     private fun grantRequiredPermissions() {
         val permissions = MediaPermissionPolicy.requiredPermissions(PER_TYPE_PERMISSIONS_SDK_INT)
@@ -156,6 +185,6 @@ class MainActivityTest {
         const val VIDEO_ID = 8L
         const val DISPLAY_NAME_PREFIX = "item-"
         const val EXPECTED_MEDIA_COUNT = 2
-        const val SUMMARY_TIMEOUT_MILLIS = 5_000L
+        const val LIBRARY_TIMEOUT_MILLIS = 5_000L
     }
 }
