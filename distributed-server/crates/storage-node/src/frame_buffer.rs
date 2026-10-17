@@ -10,19 +10,18 @@
 //! one maximum frame. Ignoring that contract lets the buffer grow without
 //! bound and eventually makes [`FrameBuffer::extend`] fail.
 
-use crate::codec::{decode_frame, DecodeOutcome};
-use crate::framing::{FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN};
+use core::num::NonZeroU32;
 
-/// Largest number of bytes the buffer retains: one maximum frame (header + payload).
-pub const MAX_BUFFERED_FRAME_LEN: usize = FRAME_HEADER_LEN + MAX_FRAME_PAYLOAD_LEN as usize;
+use crate::codec::{decode_frame, DecodeOutcome};
+use crate::framing::{FramingError, FRAME_LENGTH_PREFIX_LEN};
 
 /// Result alias for fallible [`FrameBuffer`] operations.
 type Result<T> = core::result::Result<T, FramingError>;
 
 /// Receive-side accumulator turning a chunked byte stream into whole frames.
-#[derive(Default)]
 pub struct FrameBuffer {
     buffer: Vec<u8>,
+    max_frame_len: NonZeroU32,
 }
 
 impl std::fmt::Debug for FrameBuffer {
@@ -35,33 +34,35 @@ impl std::fmt::Debug for FrameBuffer {
 }
 
 impl FrameBuffer {
-    /// Creates an empty buffer with no pre-allocated capacity.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates an empty buffer that pre-allocates `capacity` bytes.
-    pub fn with_capacity(capacity: usize) -> Self {
+    /// Creates an empty buffer for frames whose payloads do not exceed
+    /// `max_frame_len`.
+    pub fn new(max_frame_len: NonZeroU32) -> Self {
         Self {
-            buffer: Vec::with_capacity(capacity),
+            buffer: Vec::new(),
+            max_frame_len,
         }
     }
 
     /// Appends `data` to the buffered bytes, leaving the buffer unchanged when
-    /// it would exceed [`MAX_BUFFERED_FRAME_LEN`].
+    /// it would exceed one maximum frame (prefix plus payload).
     pub fn extend(&mut self, data: &[u8]) -> Result<()> {
-        if self.buffer.len() + data.len() > MAX_BUFFERED_FRAME_LEN {
-            Err(FramingError::PayloadTooLarge)
-        } else {
-            self.buffer.extend_from_slice(data);
-            Ok(())
+        let total = self.buffer.len().saturating_add(data.len());
+        if total > self.max_buffered_len() {
+            return Err(FramingError::FrameTooLarge {
+                len: u32::try_from(total.saturating_sub(FRAME_LENGTH_PREFIX_LEN))
+                    .unwrap_or(u32::MAX),
+                max: self.max_frame_len.get(),
+            });
         }
+
+        self.buffer.extend_from_slice(data);
+        Ok(())
     }
 
-    /// Removes and returns the next complete frame (header + payload) as owned
-    /// bytes, or `None` when no complete frame is buffered yet.
+    /// Removes and returns the next complete frame (prefix plus payload) as
+    /// owned bytes, or `None` when no complete frame is buffered yet.
     pub fn next_frame(&mut self) -> Result<Option<Vec<u8>>> {
-        match decode_frame(&self.buffer)? {
+        match decode_frame(&self.buffer, self.max_frame_len)? {
             DecodeOutcome::Complete { consumed, .. } => {
                 let frame = self.buffer[..consumed].to_vec();
                 self.buffer.drain(..consumed);
@@ -76,23 +77,85 @@ impl FrameBuffer {
         self.buffer.len()
     }
 
+    /// Number of bytes that can still be appended before the buffer holds one
+    /// maximum frame.
+    pub fn remaining_capacity(&self) -> usize {
+        self.max_buffered_len().saturating_sub(self.buffer.len())
+    }
+
     /// Returns `true` when no bytes are retained.
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+
+    fn max_buffered_len(&self) -> usize {
+        FRAME_LENGTH_PREFIX_LEN.saturating_add(self.max_frame_len.get() as usize)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::num::NonZeroU32;
+
     use super::FrameBuffer;
+    use crate::framing::FramingError;
+
+    fn max_frame_len(value: u32) -> NonZeroU32 {
+        NonZeroU32::new(value).expect("test limit is non-zero")
+    }
 
     #[test]
     fn debug_reports_only_buffered_length_without_bytes() {
-        let mut buffer = FrameBuffer::new();
+        let mut buffer = FrameBuffer::new(max_frame_len(64));
         buffer
             .extend(b"SECRET-BYTES")
             .expect("chunk fits in the buffer");
 
         assert_eq!(format!("{buffer:?}"), "FrameBuffer { buffered_len: 12 }");
+    }
+
+    #[test]
+    fn next_frame_returns_prefix_and_payload() {
+        let mut buffer = FrameBuffer::new(max_frame_len(8));
+        let frame = [0, 0, 0, 3, b'a', b'b', b'c'];
+        buffer.extend(&frame).expect("frame fits in the buffer");
+
+        assert_eq!(
+            buffer.next_frame().expect("buffer holds a valid frame"),
+            Some(frame.to_vec())
+        );
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.next_frame().expect("empty buffer is valid"), None);
+    }
+
+    #[test]
+    fn next_frame_waits_for_the_complete_payload() {
+        let mut buffer = FrameBuffer::new(max_frame_len(8));
+        buffer
+            .extend(&[0, 0, 0, 3, b'a'])
+            .expect("partial frame fits in the buffer");
+        assert_eq!(buffer.next_frame().expect("partial frame is valid"), None);
+
+        buffer.extend(b"bc").expect("remainder fits");
+
+        assert_eq!(
+            buffer.next_frame().expect("buffer holds a valid frame"),
+            Some(vec![0, 0, 0, 3, b'a', b'b', b'c'])
+        );
+    }
+
+    #[test]
+    fn extend_rejects_data_beyond_capacity_without_changing_buffer() {
+        let mut buffer = FrameBuffer::new(max_frame_len(4));
+        buffer
+            .extend(&[0; 8])
+            .expect("a maximum frame fits in the buffer");
+
+        assert_eq!(buffer.remaining_capacity(), 0);
+        assert_eq!(
+            buffer.extend(&[0]),
+            Err(FramingError::FrameTooLarge { len: 5, max: 4 })
+        );
+        assert_eq!(buffer.buffered_len(), 8);
     }
 }

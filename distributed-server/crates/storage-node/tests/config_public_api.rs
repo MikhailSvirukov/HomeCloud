@@ -14,7 +14,9 @@ const KEY_LISTEN_ADDR: &str = "listen_addr";
 const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
+const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 const KEY_PEERS: &str = "peers";
+const MAX_FRAME_LEN: &str = "1048576";
 
 #[test]
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
@@ -24,6 +26,7 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_PEERS, " 10.0.0.2:9000 ,10.0.0.3:9000 "),
     ])
     .expect("valid pairs build a config");
@@ -36,6 +39,7 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         PathBuf::from(ENCRYPTION_KEY_PATH)
     );
     assert_eq!(config.signing_key_path, PathBuf::from(SIGNING_KEY_PATH));
+    assert_eq!(config.max_frame_len.get(), 1_048_576);
     assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
 }
 
@@ -82,6 +86,62 @@ fn from_pairs_without_signing_key_path_reports_missing_key() {
 }
 
 #[test]
+fn from_pairs_without_max_frame_len_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_MAX_FRAME_LEN,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_max_frame_len_reports_invalid_max_frame_len() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, "0"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidMaxFrameLen {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_max_frame_len_reports_invalid_max_frame_len() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, "not-a-number"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidMaxFrameLen {
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
@@ -89,6 +149,7 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
     ]);
 
     assert_eq!(
@@ -107,6 +168,7 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_PEERS, "10.0.0.2"),
     ]);
 
@@ -126,6 +188,7 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_PEERS, "10.0.0.2:9000,10.0.0.2:9000"),
     ]);
 

@@ -79,11 +79,15 @@ at startup:
 - `ENCRYPTION_KEY_PATH` — private encryption key file (maps to the
   `encryption_key_path` key).
 - `SIGNING_KEY_PATH` — private signing key file (maps to the `signing_key_path` key).
+- `MAX_FRAME_LEN` — maximum frame size in bytes; must be non-zero (maps to the
+  `max_frame_len` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
-`encryption_key_path`, `signing_key_path`, and `peers` keys; an absent or empty value
-for any required key is reported as missing, and unknown keys are ignored.
+`encryption_key_path`, `signing_key_path`, `max_frame_len`, and `peers` keys; an absent
+or empty value for any required key is reported as missing, and unknown keys are ignored.
+Frames use a 4-byte big-endian length prefix, and a prefix above the configured maximum is
+rejected.
 
 Startup loads both private key files after the configuration is validated and before
 the listener binds, so a missing or unreadable key stops the process without opening a

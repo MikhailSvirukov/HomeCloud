@@ -1,5 +1,6 @@
 //! TCP listener for the node's frame-only connections.
 
+use core::num::NonZeroU32;
 use std::net::SocketAddr;
 
 use tokio::io::{ReadHalf, WriteHalf};
@@ -45,16 +46,17 @@ impl Listener {
     }
 
     /// Accepts one connection, returning its frame reader/writer halves and the
-    /// peer address.
+    /// peer address; frames are bounded by `max_frame_len`.
     pub async fn accept(
         &self,
+        max_frame_len: NonZeroU32,
     ) -> Result<(
         FrameReader<ReadHalf<TcpStream>>,
         FrameWriter<WriteHalf<TcpStream>>,
         SocketAddr,
     )> {
         let (stream, peer) = self.listener.accept().await?;
-        let (reader, writer) = split_frames(stream);
+        let (reader, writer) = split_frames(stream, max_frame_len);
         Ok((reader, writer, peer))
     }
 }

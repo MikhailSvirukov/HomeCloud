@@ -23,6 +23,8 @@ const ENV_DATA_DIR: &str = "DATA_DIR";
 const ENV_ENCRYPTION_KEY_PATH: &str = "ENCRYPTION_KEY_PATH";
 /// Environment variable carrying the signing key file path.
 const ENV_SIGNING_KEY_PATH: &str = "SIGNING_KEY_PATH";
+/// Environment variable carrying the maximum frame length.
+const ENV_MAX_FRAME_LEN: &str = "MAX_FRAME_LEN";
 /// Environment variable carrying the comma-separated peer list.
 const ENV_PEERS: &str = "PEERS";
 
@@ -36,6 +38,8 @@ const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 /// `from_pairs` key for the signing key file path.
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
+/// `from_pairs` key for the maximum frame length.
+const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 
@@ -65,6 +69,7 @@ async fn run() -> ExitCode {
     let data_dir = env_value(ENV_DATA_DIR);
     let encryption_key_path = env_value(ENV_ENCRYPTION_KEY_PATH);
     let signing_key_path = env_value(ENV_SIGNING_KEY_PATH);
+    let max_frame_len = env_value(ENV_MAX_FRAME_LEN);
     let peers = env_value(ENV_PEERS);
 
     let pairs = [
@@ -73,6 +78,7 @@ async fn run() -> ExitCode {
         (KEY_DATA_DIR, data_dir.as_str()),
         (KEY_ENCRYPTION_KEY_PATH, encryption_key_path.as_str()),
         (KEY_SIGNING_KEY_PATH, signing_key_path.as_str()),
+        (KEY_MAX_FRAME_LEN, max_frame_len.as_str()),
         (KEY_PEERS, peers.as_str()),
     ];
 
@@ -131,7 +137,7 @@ async fn run() -> ExitCode {
     };
     tracing::info!(%address, "listening");
 
-    match serve(listener, shutdown_signal()).await {
+    match serve(listener, shutdown_signal(), config.max_frame_len).await {
         Ok(()) => {
             tracing::info!("storage node stopped");
             ExitCode::SUCCESS

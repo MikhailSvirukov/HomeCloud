@@ -115,7 +115,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use core::num::NonZeroUsize;
+    use core::num::{NonZeroU32, NonZeroUsize};
 
     use super::send_payload;
     use crate::buffer_pool::{PayloadBufferPool, SizeClass};
@@ -126,6 +126,10 @@ mod tests {
         NonZeroUsize::new(value).expect("test value is non-zero")
     }
 
+    fn max_frame_len() -> NonZeroU32 {
+        NonZeroU32::new(64).expect("test limit is non-zero")
+    }
+
     fn pool(capacity: usize, buffers: usize) -> PayloadBufferPool {
         PayloadBufferPool::new(&[SizeClass::new(capacity, buffers)]).expect("valid size class")
     }
@@ -133,7 +137,7 @@ mod tests {
     fn payloads(mut bytes: &[u8]) -> Vec<Vec<u8>> {
         let mut payloads = Vec::new();
         while !bytes.is_empty() {
-            match decode_frame(bytes).expect("frame decodes") {
+            match decode_frame(bytes, max_frame_len()).expect("frame decodes") {
                 DecodeOutcome::Complete {
                     payload, consumed, ..
                 } => {
@@ -155,7 +159,7 @@ mod tests {
         let mut pool = pool(4, 8);
         let mut sink = Vec::new();
         {
-            let mut writer = FrameWriter::new(&mut sink);
+            let mut writer = FrameWriter::new(&mut sink, max_frame_len());
             send_payload(
                 &mut writer,
                 &mut source,
