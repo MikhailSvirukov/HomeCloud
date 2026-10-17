@@ -13,4 +13,6 @@ internal data class MediaItem(
     val sizeBytes: Long,
     val dateModifiedEpochSeconds: Long,
     val kind: MediaKind,
+    /** The media store's taken time when it reports one. */
+    val dateTakenEpochMillis: Long? = null,
 )

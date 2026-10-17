@@ -14,7 +14,8 @@ internal object MediaRowMapping {
      * Maps one row's column values to a [RawMediaEntry].
      *
      * A null text column is normalized to `""`; an empty mime type is left for
-     * [MediaCatalog] to drop, so this mapping never classifies or filters.
+     * [MediaCatalog] to drop, so this mapping never classifies or filters. The
+     * media store's taken time is passed through unchanged.
      */
     fun toRawMediaEntry(
         id: Long,
@@ -22,6 +23,7 @@ internal object MediaRowMapping {
         displayName: String?,
         sizeBytes: Long,
         dateModifiedEpochSeconds: Long,
+        dateTakenEpochMillis: Long? = null,
         mimeType: String?,
     ): RawMediaEntry =
         RawMediaEntry(
@@ -31,5 +33,6 @@ internal object MediaRowMapping {
             sizeBytes = sizeBytes,
             dateModifiedEpochSeconds = dateModifiedEpochSeconds,
             mimeType = mimeType ?: EMPTY_TEXT,
+            dateTakenEpochMillis = dateTakenEpochMillis,
         )
 }

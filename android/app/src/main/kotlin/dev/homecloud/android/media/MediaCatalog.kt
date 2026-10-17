@@ -42,6 +42,7 @@ internal object MediaCatalog {
                         sizeBytes = entry.sizeBytes,
                         dateModifiedEpochSeconds = entry.dateModifiedEpochSeconds,
                         kind = kind,
+                        dateTakenEpochMillis = entry.dateTakenEpochMillis,
                     )
                 }
             }.sortedBy { it.id }

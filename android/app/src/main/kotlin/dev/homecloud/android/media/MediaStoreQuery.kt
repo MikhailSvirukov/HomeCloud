@@ -14,7 +14,7 @@ import android.provider.MediaStore
  * levels that define them, because a query naming an unknown column fails.
  */
 internal object MediaStoreQuery {
-    /** Columns read for every candidate row. */
+    /** Columns read for every candidate row, including the media store's taken time (`FR-AND-009`). */
     val projection: Array<String> =
         arrayOf(
             MediaStore.MediaColumns._ID,
@@ -22,6 +22,7 @@ internal object MediaStoreQuery {
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.DATE_TAKEN,
         )
 
     /** Mime type prefix identifying photos. */

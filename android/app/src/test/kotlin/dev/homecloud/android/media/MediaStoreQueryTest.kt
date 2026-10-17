@@ -8,7 +8,7 @@ import org.junit.Test
 
 class MediaStoreQueryTest {
     @Test
-    fun `projection holds exactly the five expected media columns`() {
+    fun `projection holds exactly the six expected media columns`() {
         val expectedColumns =
             setOf(
                 MediaStore.MediaColumns._ID,
@@ -16,6 +16,7 @@ class MediaStoreQueryTest {
                 MediaStore.MediaColumns.SIZE,
                 MediaStore.MediaColumns.DATE_MODIFIED,
                 MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.DATE_TAKEN,
             )
 
         assertEquals(expectedColumns, MediaStoreQuery.projection.toSet())

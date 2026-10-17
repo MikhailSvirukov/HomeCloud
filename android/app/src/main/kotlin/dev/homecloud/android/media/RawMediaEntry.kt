@@ -13,4 +13,6 @@ internal data class RawMediaEntry(
     val sizeBytes: Long,
     val dateModifiedEpochSeconds: Long,
     val mimeType: String,
+    /** The media store's taken time when it reports one. */
+    val dateTakenEpochMillis: Long? = null,
 )

@@ -61,6 +61,20 @@ class MediaCatalogTest {
     }
 
     @Test
+    fun `backupCandidates carries the taken time onto the candidate`() {
+        val entry =
+            MediaTestData.row(
+                id = TAKEN_TIME_ID,
+                mimeType = MediaTestData.IMAGE_MIME_TYPE,
+                dateTakenEpochMillis = MediaTestData.DATE_TAKEN_EPOCH_MILLIS,
+            )
+
+        val candidate = MediaCatalog.backupCandidates(listOf(entry)).single()
+
+        assertEquals(MediaTestData.DATE_TAKEN_EPOCH_MILLIS, candidate.dateTakenEpochMillis)
+    }
+
+    @Test
     fun `backupCandidates preserves source fields`() {
         val entry = MediaTestData.row(id = 7L, mimeType = MediaTestData.IMAGE_MIME_TYPE)
 
@@ -74,6 +88,7 @@ class MediaCatalogTest {
     }
 
     private companion object {
+        const val TAKEN_TIME_ID = 8L
         const val UNKNOWN_MIME_TYPE = "application/pdf"
         const val BLANK_MIME_TYPE = "   "
         const val UPPERCASE_IMAGE_MIME_TYPE = "IMAGE/PNG"

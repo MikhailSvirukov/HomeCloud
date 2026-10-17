@@ -26,6 +26,22 @@ class MediaRowMappingTest {
     }
 
     @Test
+    fun `toRawMediaEntry passes the taken time through unchanged`() {
+        val entry =
+            MediaRowMapping.toRawMediaEntry(
+                id = ID,
+                uri = URI,
+                displayName = DISPLAY_NAME,
+                sizeBytes = MediaTestData.SIZE_BYTES,
+                dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+                dateTakenEpochMillis = MediaTestData.DATE_TAKEN_EPOCH_MILLIS,
+                mimeType = MediaTestData.IMAGE_MIME_TYPE,
+            )
+
+        assertEquals(MediaTestData.DATE_TAKEN_EPOCH_MILLIS, entry.dateTakenEpochMillis)
+    }
+
+    @Test
     fun `toRawMediaEntry normalizes null text columns to an empty string`() {
         val entry =
             MediaRowMapping.toRawMediaEntry(

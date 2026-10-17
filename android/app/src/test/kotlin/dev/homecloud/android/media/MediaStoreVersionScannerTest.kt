@@ -32,33 +32,49 @@ class MediaStoreVersionScannerTest {
     }
 
     @Test
-    fun `identity carries the file SHA-256 the display name and the resolved tracked time`() {
+    fun `identity carries the file SHA-256 and the display name`() {
         val imageRow = imageRow()
         val videoRow = videoRow()
-        val metadataTime =
-            RecordingMetadataTimeSource(
-                mapOf(
-                    imageRow.uri to FIXED_METADATA_TIME,
-                    videoRow.uri to FIXED_METADATA_TIME,
-                ),
-            )
 
         val candidates =
             scanner(
                 rows = FakeMediaRowSource(listOf(imageRow, videoRow)),
                 content = FakeContentSource(mapOf(imageRow.uri to ABC_BYTES, videoRow.uri to EMPTY_BYTES)),
-                metadataTime = metadataTime,
             ).scan()
 
         assertEquals(listOf(ABC_SHA256, EMPTY_SHA256), candidates.map { it.identity.contentSha256 })
         assertEquals(listOf(imageRow.displayName, videoRow.displayName), candidates.map { it.identity.originalName })
-        assertEquals(
-            listOf(FIXED_METADATA_EPOCH_MILLIS, FIXED_METADATA_EPOCH_MILLIS),
-            candidates.map { it.identity.trackedTimeMillis },
-        )
-        val mimeTypeByUri = metadataTime.calls.associate { it.uri to it.mimeType }
-        assertTrue(mimeTypeByUri.getValue(imageRow.uri).startsWith(IMAGE_MIME_PREFIX))
-        assertTrue(mimeTypeByUri.getValue(videoRow.uri).startsWith(VIDEO_MIME_PREFIX))
+    }
+
+    @Test
+    fun `identity tracked time comes from the metadata capture time when the fake returns one`() {
+        val imageRow = imageRow()
+        val metadataTime = RecordingMetadataTimeSource(mapOf(imageRow.uri to FIXED_METADATA_TIME))
+
+        val candidate =
+            scanner(
+                rows = FakeMediaRowSource(listOf(imageRow)),
+                content = FakeContentSource(mapOf(imageRow.uri to ABC_BYTES)),
+                metadataTime = metadataTime,
+            ).scan().single()
+
+        assertEquals(FIXED_METADATA_EPOCH_MILLIS, candidate.identity.trackedTimeMillis)
+    }
+
+    @Test
+    fun `scan passes each candidate item to the metadata time source`() {
+        val imageRow = imageRow()
+        val videoRow = videoRow()
+        val metadataTime = RecordingMetadataTimeSource()
+
+        scanner(
+            rows = FakeMediaRowSource(listOf(imageRow, videoRow)),
+            content = FakeContentSource(mapOf(imageRow.uri to ABC_BYTES, videoRow.uri to EMPTY_BYTES)),
+            metadataTime = metadataTime,
+        ).scan()
+
+        assertEquals(listOf(imageRow.uri, videoRow.uri), metadataTime.calls.map { it.uri })
+        assertEquals(listOf(MediaKind.IMAGE, MediaKind.VIDEO), metadataTime.calls.map { it.kind })
     }
 
     @Test
@@ -187,21 +203,13 @@ class MediaStoreVersionScannerTest {
     private class RecordingMetadataTimeSource(
         private val captureTimeByUri: Map<String, MediaCaptureTime> = emptyMap(),
     ) : MediaMetadataTimeSource {
-        val calls = mutableListOf<MetadataCall>()
+        val calls = mutableListOf<MediaItem>()
 
-        override fun captureTime(
-            uri: String,
-            mimeType: String,
-        ): MediaCaptureTime? {
-            calls += MetadataCall(uri = uri, mimeType = mimeType)
-            return captureTimeByUri[uri]
+        override fun captureTime(item: MediaItem): MediaCaptureTime? {
+            calls += item
+            return captureTimeByUri[item.uri]
         }
     }
-
-    private data class MetadataCall(
-        val uri: String,
-        val mimeType: String,
-    )
 
     private companion object {
         const val IMAGE_ID = 1L
@@ -213,9 +221,6 @@ class MediaStoreVersionScannerTest {
 
         const val ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         const val EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-
-        const val IMAGE_MIME_PREFIX = "image/"
-        const val VIDEO_MIME_PREFIX = "video/"
 
         const val CONTENT_FAILURE_MESSAGE = "cannot read original bytes"
         const val SCAN_CALL_COUNT = 2
