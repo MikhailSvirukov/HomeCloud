@@ -15,7 +15,6 @@ internal class BackupCycleRunner(
     private val store: UploadQueueStore,
     private val log: BackupCycleLog = NoOpBackupCycleLog,
 ) {
-
     /**
      * Restores the stored snapshot before planning, so work that is already queued is known and not
      * planned again, then plans newly discovered media into the queue, then persists it, so the

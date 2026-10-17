@@ -43,19 +43,22 @@ internal fun mediaPermissionPrompt(
 ): MediaPermissionPrompt {
     val refused = if (hasRequested) permanentlyDenied else emptySet()
     return when (MediaPermissionRequestPolicy.status(sdkInt, granted, refused)) {
-        MediaPermissionStatus.GRANTED -> MediaPermissionPrompt(
-            messageResId = R.string.media_permission_granted_message,
-            action = MediaPermissionAction.NONE,
-        )
+        MediaPermissionStatus.GRANTED ->
+            MediaPermissionPrompt(
+                messageResId = R.string.media_permission_granted_message,
+                action = MediaPermissionAction.NONE,
+            )
 
-        MediaPermissionStatus.REQUESTABLE -> MediaPermissionPrompt(
-            messageResId = R.string.media_permission_request_message,
-            action = MediaPermissionAction.REQUEST,
-        )
+        MediaPermissionStatus.REQUESTABLE ->
+            MediaPermissionPrompt(
+                messageResId = R.string.media_permission_request_message,
+                action = MediaPermissionAction.REQUEST,
+            )
 
-        MediaPermissionStatus.BLOCKED -> MediaPermissionPrompt(
-            messageResId = R.string.media_permission_blocked_message,
-            action = MediaPermissionAction.OPEN_SETTINGS,
-        )
+        MediaPermissionStatus.BLOCKED ->
+            MediaPermissionPrompt(
+                messageResId = R.string.media_permission_blocked_message,
+                action = MediaPermissionAction.OPEN_SETTINGS,
+            )
     }
 }

@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ktlint)
 }
 
 android {
@@ -50,6 +51,11 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+ktlint {
+    // Compose mandates PascalCase composable names; the naming rule still applies elsewhere.
+    additionalEditorconfig.put("ktlint_function_naming_ignore_when_annotated_with", "Composable")
 }
 
 dependencies {

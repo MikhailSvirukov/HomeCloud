@@ -7,7 +7,6 @@ package dev.homecloud.android.media
  * functions here perform no I/O and hold no state.
  */
 internal object MediaCatalog {
-
     private const val IMAGE_MIME_PREFIX = "image/"
     private const val VIDEO_MIME_PREFIX = "video/"
 
@@ -45,6 +44,5 @@ internal object MediaCatalog {
                         kind = kind,
                     )
                 }
-            }
-            .sortedBy { it.id }
+            }.sortedBy { it.id }
 }

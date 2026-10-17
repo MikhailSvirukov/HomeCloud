@@ -40,7 +40,6 @@ private const val BELOW_PENDING_API = 28
 @Config(sdk = [TRASHED_API])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class MediaStoreMediaRowSourceTest {
-
     @Test
     fun `readAll queries with the projection selection and arguments of the media store query`() {
         val provider = installProvider(emptyList())
@@ -120,12 +119,15 @@ class MediaStoreMediaRowSourceTest {
     }
 
     private fun installProvider(rows: List<Array<Any?>>): RecordingMediaContentProvider {
-        val authority = requireNotNull(collectionUri().authority) {
-            "media collection uri must carry an authority"
-        }
-        val installed = Robolectric.buildContentProvider(RecordingMediaContentProvider::class.java)
-            .create(authority)
-            .get()
+        val authority =
+            requireNotNull(collectionUri().authority) {
+                "media collection uri must carry an authority"
+            }
+        val installed =
+            Robolectric
+                .buildContentProvider(RecordingMediaContentProvider::class.java)
+                .create(authority)
+                .get()
         installed.rows = rows
         return installed
     }
@@ -153,7 +155,6 @@ class MediaStoreMediaRowSourceTest {
  * fixed set of rows through a [RecordingMatrixCursor].
  */
 internal class RecordingMediaContentProvider : ContentProvider() {
-
     /** Rows served to the next query, each in projection order. */
     var rows: List<Array<Any?>> = emptyList()
 
@@ -193,9 +194,16 @@ internal class RecordingMediaContentProvider : ContentProvider() {
 
     override fun getType(uri: Uri): String? = null
 
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun insert(
+        uri: Uri,
+        values: ContentValues?,
+    ): Uri? = null
 
-    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?): Int = 0
+    override fun delete(
+        uri: Uri,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): Int = 0
 
     override fun update(
         uri: Uri,
@@ -206,8 +214,9 @@ internal class RecordingMediaContentProvider : ContentProvider() {
 }
 
 /** A [MatrixCursor] that records whether it was closed, so a leaked cursor fails the test. */
-internal class RecordingMatrixCursor(columns: Array<String>) : MatrixCursor(columns) {
-
+internal class RecordingMatrixCursor(
+    columns: Array<String>,
+) : MatrixCursor(columns) {
     var closed: Boolean = false
         private set
 

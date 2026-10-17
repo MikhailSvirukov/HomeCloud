@@ -11,7 +11,6 @@ package dev.homecloud.android.queue
  * server.
  */
 internal interface UploadQueue {
-
     /**
      * Records a file version as pending, or returns the existing entry for a repeated [uploadId]
      * unchanged.

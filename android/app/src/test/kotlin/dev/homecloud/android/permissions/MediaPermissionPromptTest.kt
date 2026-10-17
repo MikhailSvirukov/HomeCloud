@@ -5,7 +5,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaPermissionPromptTest {
-
     @Test
     fun `every required permission granted prompts with the granted message on both sides of api 33`() {
         assertEquals(

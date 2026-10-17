@@ -7,8 +7,9 @@ package dev.homecloud.android.media
  * [MediaCatalog.backupCandidates] classifies as photo or video. It performs no
  * caching, persistence, or change detection.
  */
-internal class MediaDiscovery(private val rowSource: MediaRowSource) {
-
+internal class MediaDiscovery(
+    private val rowSource: MediaRowSource,
+) {
     /**
      * Reads all rows once through [rowSource] and returns the photo/video
      * candidates, sorted by [MediaItem.id] ascending.
@@ -16,6 +17,5 @@ internal class MediaDiscovery(private val rowSource: MediaRowSource) {
      * The underlying read is synchronous, so callers must keep this off the
      * main thread.
      */
-    fun discoverBackupCandidates(): List<MediaItem> =
-        MediaCatalog.backupCandidates(rowSource.readAll())
+    fun discoverBackupCandidates(): List<MediaItem> = MediaCatalog.backupCandidates(rowSource.readAll())
 }

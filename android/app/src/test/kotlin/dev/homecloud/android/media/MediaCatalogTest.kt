@@ -6,7 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class MediaCatalogTest {
-
     @Test
     fun `image mime classifies as IMAGE`() {
         assertEquals(MediaKind.IMAGE, MediaCatalog.classify(MediaTestData.IMAGE_MIME_TYPE))
@@ -33,12 +32,13 @@ class MediaCatalogTest {
 
     @Test
     fun `backupCandidates keeps images and videos and drops audio and unknown`() {
-        val entries = listOf(
-            MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-            MediaTestData.row(id = 2L, mimeType = MediaTestData.AUDIO_MIME_TYPE),
-            MediaTestData.row(id = 3L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            MediaTestData.row(id = 4L, mimeType = UNKNOWN_MIME_TYPE),
-        )
+        val entries =
+            listOf(
+                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                MediaTestData.row(id = 2L, mimeType = MediaTestData.AUDIO_MIME_TYPE),
+                MediaTestData.row(id = 3L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                MediaTestData.row(id = 4L, mimeType = UNKNOWN_MIME_TYPE),
+            )
 
         val candidates = MediaCatalog.backupCandidates(entries)
 
@@ -48,11 +48,12 @@ class MediaCatalogTest {
 
     @Test
     fun `backupCandidates sorts output by id ascending`() {
-        val entries = listOf(
-            MediaTestData.row(id = 30L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            MediaTestData.row(id = 10L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-            MediaTestData.row(id = 20L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-        )
+        val entries =
+            listOf(
+                MediaTestData.row(id = 30L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                MediaTestData.row(id = 10L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                MediaTestData.row(id = 20L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+            )
 
         val candidates = MediaCatalog.backupCandidates(entries)
 

@@ -7,9 +7,11 @@ package dev.homecloud.android.log
  * Implementations must not throw: a log failure must not turn a completed cycle into a failure.
  */
 internal interface BackupCycleLog {
-
     /** Records a cycle that completed. */
-    fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int)
+    fun cyclePlanned(
+        discoveredCandidates: Int,
+        newlyEnqueued: Int,
+    )
 
     /** Records a cycle that did not complete. */
     fun cycleFailed()
@@ -17,8 +19,10 @@ internal interface BackupCycleLog {
 
 /** [BackupCycleLog] that records nothing and neither allocates nor performs work. */
 internal object NoOpBackupCycleLog : BackupCycleLog {
-
-    override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) = Unit
+    override fun cyclePlanned(
+        discoveredCandidates: Int,
+        newlyEnqueued: Int,
+    ) = Unit
 
     override fun cycleFailed() = Unit
 }
