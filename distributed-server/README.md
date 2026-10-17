@@ -76,10 +76,18 @@ at startup:
 - `NODE_ID` — stable node label (maps to the `node_id` key).
 - `LISTEN_ADDR` — `host:port` listen address (maps to the `listen_addr` key).
 - `DATA_DIR` — data directory (maps to the `data_dir` key).
+- `ENCRYPTION_KEY_PATH` — private encryption key file (maps to the
+  `encryption_key_path` key).
+- `SIGNING_KEY_PATH` — private signing key file (maps to the `signing_key_path` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
-`NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`, and
-`peers` keys; unknown keys are ignored.
+`NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
+`encryption_key_path`, `signing_key_path`, and `peers` keys; an absent or empty value
+for any required key is reported as missing, and unknown keys are ignored.
+
+Startup loads both private key files after the configuration is validated and before
+the listener binds, so a missing or unreadable key stops the process without opening a
+port.
 
 ## Build and test
 
