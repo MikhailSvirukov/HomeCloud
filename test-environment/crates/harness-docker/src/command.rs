@@ -22,6 +22,8 @@ const NETWORK_ALIAS: &str = "--network-alias";
 const VOLUME: &str = "--volume";
 const ENV: &str = "-e";
 const STOP: &str = "stop";
+const KILL: &str = "kill";
+const START: &str = "start";
 const REMOVE: &str = "rm";
 const FORCE: &str = "--force";
 
@@ -102,6 +104,16 @@ pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
 /// `docker stop <container>`.
 pub fn container_stop(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
     Command::new(DOCKER, [STOP.to_string(), container_name(plan, container)])
+}
+
+/// `docker kill <container>`; stops immediately without a graceful shutdown.
+pub fn container_kill(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(DOCKER, [KILL.to_string(), container_name(plan, container)])
+}
+
+/// `docker start <container>`; restarts an already created container.
+pub fn container_start(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(DOCKER, [START.to_string(), container_name(plan, container)])
 }
 
 /// `docker rm --force <container>`.

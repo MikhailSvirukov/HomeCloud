@@ -7,14 +7,14 @@
 
 mod common;
 
-use harness_core::HarnessError;
+use harness_core::{HarnessError, NodeId};
 use harness_docker::{
     CliClusterRuntime, ClusterPlan, ClusterRuntime, Command, ContainerPlan, RecordingCommandRunner,
-    container_name, container_remove, container_run, container_stop, network_create,
-    network_remove,
+    container_kill, container_name, container_remove, container_run, container_start,
+    container_stop, network_create, network_remove,
 };
 
-use common::{DATA_VOLUME_PATH, DOCKER, plan, plan_order, plan_with_data_volume};
+use common::{DATA_VOLUME_PATH, DOCKER, FIRST_STORAGE_ID, plan, plan_order, plan_with_data_volume};
 
 /// Volume-mount flag for `docker run`.
 const VOLUME: &str = "--volume";
@@ -210,6 +210,69 @@ fn re_created_container_reattaches_the_same_data_volume() {
     assert_commands(
         &runtime.runner.commands[after_first_start..after_remove],
         &expected_removals,
+    );
+}
+
+#[test]
+fn kill_force_stops_a_running_container() {
+    let plan = plan();
+    let node = NodeId::new(FIRST_STORAGE_ID);
+    let container = plan
+        .container(node)
+        .expect("the plan always has the first storage container");
+    let mut runtime = CliClusterRuntime::new(RecordingCommandRunner::new());
+    runtime.start(&plan).expect("a recording start cannot fail");
+    let after_start = runtime.runner.commands.len();
+
+    runtime
+        .kill(&plan, node)
+        .expect("a recording kill cannot fail");
+
+    assert_commands(
+        &runtime.runner.commands[after_start..],
+        &[container_kill(&plan, container)],
+    );
+    assert!(
+        !runtime.running_containers().contains(&node),
+        "a killed container is no longer running"
+    );
+
+    let after_first_kill = runtime.runner.commands.len();
+    runtime
+        .kill(&plan, node)
+        .expect("repeated kill is idempotent");
+    assert_eq!(
+        runtime.runner.commands.len(),
+        after_first_kill,
+        "an idempotent kill records no further commands"
+    );
+}
+
+#[test]
+fn a_killed_container_is_restarted_with_docker_start() {
+    let plan = plan();
+    let node = NodeId::new(FIRST_STORAGE_ID);
+    let container = plan
+        .container(node)
+        .expect("the plan always has the first storage container");
+    let mut runtime = CliClusterRuntime::new(RecordingCommandRunner::new());
+    runtime.start(&plan).expect("a recording start cannot fail");
+    runtime
+        .kill(&plan, node)
+        .expect("a recording kill cannot fail");
+    let after_kill = runtime.runner.commands.len();
+
+    runtime
+        .start(&plan)
+        .expect("a recording restart cannot fail");
+
+    assert_commands(
+        &runtime.runner.commands[after_kill..],
+        &[container_start(&plan, container)],
+    );
+    assert!(
+        runtime.running_containers().contains(&node),
+        "a restarted container is running again"
     );
 }
 
