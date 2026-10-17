@@ -28,7 +28,6 @@ private const val SDK = 30
 @Config(sdk = [SDK])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class AndroidBackupCycleLogTest {
-
     @Test
     fun `cyclePlanned writes one info line carrying only the two counts`() {
         ShadowLog.clear()

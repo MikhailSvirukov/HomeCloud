@@ -7,7 +7,6 @@ package dev.homecloud.android.media
  * with plain JVM unit tests before MediaStore access is wired up.
  */
 internal object MediaRowMapping {
-
     /** Fallback for a MediaStore text column that was read as `null`. */
     private const val EMPTY_TEXT = ""
 

@@ -10,7 +10,6 @@ package dev.homecloud.android.media
  * not invoking it on the main thread.
  */
 internal fun interface MediaRowSource {
-
     /**
      * Reads all rows; synchronous and may block, so callers must keep it off
      * the main thread.

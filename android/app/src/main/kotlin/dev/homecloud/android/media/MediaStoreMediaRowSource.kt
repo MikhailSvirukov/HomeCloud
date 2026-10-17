@@ -21,7 +21,6 @@ import android.provider.MediaStore
 internal class MediaStoreMediaRowSource(
     private val contentResolver: ContentResolver,
 ) : MediaRowSource {
-
     /**
      * Reads every photo and video currently visible in the external `MediaStore`.
      *
@@ -32,13 +31,14 @@ internal class MediaStoreMediaRowSource(
      * off the main thread.
      */
     override fun readAll(): List<RawMediaEntry> {
-        val cursor = contentResolver.query(
-            COLLECTION,
-            MediaStoreQuery.projection,
-            MediaStoreQuery.selection(Build.VERSION.SDK_INT),
-            MediaStoreQuery.selectionArgs,
-            null,
-        ) ?: return emptyList()
+        val cursor =
+            contentResolver.query(
+                COLLECTION,
+                MediaStoreQuery.projection,
+                MediaStoreQuery.selection(Build.VERSION.SDK_INT),
+                MediaStoreQuery.selectionArgs,
+                null,
+            ) ?: return emptyList()
 
         return cursor.use { rows ->
             val idColumn = rows.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -50,21 +50,21 @@ internal class MediaStoreMediaRowSource(
             val entries = mutableListOf<RawMediaEntry>()
             while (rows.moveToNext()) {
                 val id = rows.getLong(idColumn)
-                entries += MediaRowMapping.toRawMediaEntry(
-                    id = id,
-                    uri = ContentUris.withAppendedId(COLLECTION, id).toString(),
-                    displayName = rows.getString(displayNameColumn),
-                    sizeBytes = rows.getLong(sizeColumn),
-                    dateModifiedEpochSeconds = rows.getLong(dateModifiedColumn),
-                    mimeType = rows.getString(mimeTypeColumn),
-                )
+                entries +=
+                    MediaRowMapping.toRawMediaEntry(
+                        id = id,
+                        uri = ContentUris.withAppendedId(COLLECTION, id).toString(),
+                        displayName = rows.getString(displayNameColumn),
+                        sizeBytes = rows.getLong(sizeColumn),
+                        dateModifiedEpochSeconds = rows.getLong(dateModifiedColumn),
+                        mimeType = rows.getString(mimeTypeColumn),
+                    )
             }
             entries
         }
     }
 
     private companion object {
-
         /** The external `MediaStore.Files` collection shared by all volumes. */
         val COLLECTION: Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
     }

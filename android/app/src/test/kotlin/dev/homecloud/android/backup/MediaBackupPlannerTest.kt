@@ -12,17 +12,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaBackupPlannerTest {
-
     @Test
     fun `plan enqueues every discovered image and video candidate on an empty queue`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(
-                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            ),
-            queue = queue,
-        )
+        val planner =
+            plannerFor(
+                rows =
+                    listOf(
+                        MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                        MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                    ),
+                queue = queue,
+            )
 
         val result = planner.plan()
 
@@ -37,12 +38,13 @@ class MediaBackupPlannerTest {
     @Test
     fun `plan called twice does not re-enqueue the already tracked candidates`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val source = FakeMediaRowSource(
-            listOf(
-                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            ),
-        )
+        val source =
+            FakeMediaRowSource(
+                listOf(
+                    MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                    MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                ),
+            )
         val planner = MediaBackupPlanner(MediaDiscovery(source), FakeUploadIdFactory(), queue)
         planner.plan()
 
@@ -56,10 +58,11 @@ class MediaBackupPlannerTest {
     @Test
     fun `plan with only audio rows enqueues nothing`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(MediaTestData.row(id = 1L, mimeType = MediaTestData.AUDIO_MIME_TYPE)),
-            queue = queue,
-        )
+        val planner =
+            plannerFor(
+                rows = listOf(MediaTestData.row(id = 1L, mimeType = MediaTestData.AUDIO_MIME_TYPE)),
+                queue = queue,
+            )
 
         val result = planner.plan()
 
@@ -70,17 +73,19 @@ class MediaBackupPlannerTest {
     @Test
     fun `plan enqueues the candidate source id size and modification time verbatim`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(
-                MediaTestData.row(
-                    id = CANDIDATE_ID,
-                    mimeType = MediaTestData.IMAGE_MIME_TYPE,
-                    sizeBytes = CANDIDATE_SIZE_BYTES,
-                    dateModifiedEpochSeconds = CANDIDATE_DATE_MODIFIED_EPOCH_SECONDS,
-                ),
-            ),
-            queue = queue,
-        )
+        val planner =
+            plannerFor(
+                rows =
+                    listOf(
+                        MediaTestData.row(
+                            id = CANDIDATE_ID,
+                            mimeType = MediaTestData.IMAGE_MIME_TYPE,
+                            sizeBytes = CANDIDATE_SIZE_BYTES,
+                            dateModifiedEpochSeconds = CANDIDATE_DATE_MODIFIED_EPOCH_SECONDS,
+                        ),
+                    ),
+                queue = queue,
+            )
 
         planner.plan()
 
@@ -93,16 +98,19 @@ class MediaBackupPlannerTest {
     @Test
     fun `plan enqueues a single entry when two candidates share an upload id`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val planner = plannerFor(
-            rows = listOf(
-                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            ),
-            queue = queue,
-            uploadIdFactory = FakeUploadIdFactory(
-                mapOf(1L to SHARED_UPLOAD_ID, 2L to SHARED_UPLOAD_ID),
-            ),
-        )
+        val planner =
+            plannerFor(
+                rows =
+                    listOf(
+                        MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                        MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                    ),
+                queue = queue,
+                uploadIdFactory =
+                    FakeUploadIdFactory(
+                        mapOf(1L to SHARED_UPLOAD_ID, 2L to SHARED_UPLOAD_ID),
+                    ),
+            )
 
         val result = planner.plan()
 
@@ -114,8 +122,7 @@ class MediaBackupPlannerTest {
         rows: List<RawMediaEntry>,
         queue: InMemoryUploadQueue,
         uploadIdFactory: UploadIdFactory = FakeUploadIdFactory(),
-    ): MediaBackupPlanner =
-        MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), uploadIdFactory, queue)
+    ): MediaBackupPlanner = MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), uploadIdFactory, queue)
 
     private companion object {
         const val CANDIDATE_ID = 42L

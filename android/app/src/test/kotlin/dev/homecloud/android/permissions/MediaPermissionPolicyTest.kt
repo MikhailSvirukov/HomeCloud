@@ -5,7 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class MediaPermissionPolicyTest {
-
     @Test
     fun `sdk below 33 requires only read external storage`() {
         LEGACY_SDK_LEVELS.forEach { sdkInt ->
@@ -45,13 +44,14 @@ class MediaPermissionPolicyTest {
         val LEGACY_SDK_LEVELS = listOf(26, 32)
         val MODERN_SDK_LEVELS = listOf(33, 36)
         val ALL_SDK_LEVELS = LEGACY_SDK_LEVELS + MODERN_SDK_LEVELS
-        val FORBIDDEN_PERMISSIONS = listOf(
-            "android.permission.READ_MEDIA_AUDIO",
-            "android.permission.ACCESS_FINE_LOCATION",
-            "android.permission.ACCESS_COARSE_LOCATION",
-            "android.permission.READ_CONTACTS",
-            "android.permission.CAMERA",
-            "android.permission.WRITE_EXTERNAL_STORAGE",
-        )
+        val FORBIDDEN_PERMISSIONS =
+            listOf(
+                "android.permission.READ_MEDIA_AUDIO",
+                "android.permission.ACCESS_FINE_LOCATION",
+                "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.READ_CONTACTS",
+                "android.permission.CAMERA",
+                "android.permission.WRITE_EXTERNAL_STORAGE",
+            )
     }
 }

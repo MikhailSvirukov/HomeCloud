@@ -48,26 +48,29 @@ internal fun MediaPermissionRequestContent(
     var hasRequested by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
 
-    val prompt = remember(revision, hasRequested) {
-        mediaPermissionPrompt(
-            sdkInt = Build.VERSION.SDK_INT,
-            granted = grantedPermissions(activity),
-            permanentlyDenied = permanentlyDeniedPermissions(activity),
-            hasRequested = hasRequested,
-        )
-    }
+    val prompt =
+        remember(revision, hasRequested) {
+            mediaPermissionPrompt(
+                sdkInt = Build.VERSION.SDK_INT,
+                granted = grantedPermissions(activity),
+                permanentlyDenied = permanentlyDeniedPermissions(activity),
+                hasRequested = hasRequested,
+            )
+        }
 
-    val permissionsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { _ ->
-        hasRequested = true
-        revision += 1
-    }
+    val permissionsLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestMultiplePermissions(),
+        ) { _ ->
+            hasRequested = true
+            revision += 1
+        }
 
     DisposableEffect(activity) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) revision += 1
-        }
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) revision += 1
+            }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
     }
@@ -97,20 +100,23 @@ private fun MediaPermissionSurface(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
     ) {
         Text(text = stringResource(prompt.messageResId), style = MaterialTheme.typography.bodyLarge)
         when (prompt.action) {
-            MediaPermissionAction.REQUEST -> Button(onClick = onRequestPermissions) {
-                Text(text = stringResource(R.string.media_permission_request_action))
-            }
+            MediaPermissionAction.REQUEST ->
+                Button(onClick = onRequestPermissions) {
+                    Text(text = stringResource(R.string.media_permission_request_action))
+                }
 
-            MediaPermissionAction.OPEN_SETTINGS -> Button(onClick = onOpenSettings) {
-                Text(text = stringResource(R.string.media_permission_settings_action))
-            }
+            MediaPermissionAction.OPEN_SETTINGS ->
+                Button(onClick = onOpenSettings) {
+                    Text(text = stringResource(R.string.media_permission_settings_action))
+                }
 
             MediaPermissionAction.NONE -> Unit
         }
@@ -119,7 +125,8 @@ private fun MediaPermissionSurface(
 
 /** Collects the required media-read permissions that are currently granted to the context. */
 private fun grantedPermissions(context: Context): Set<String> =
-    MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+    MediaPermissionPolicy
+        .requiredPermissions(Build.VERSION.SDK_INT)
         .filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         .toSet()
 
@@ -129,15 +136,17 @@ private fun grantedPermissions(context: Context): Set<String> =
  * as refusals once a request has been answered.
  */
 private fun permanentlyDeniedPermissions(activity: ComponentActivity): Set<String> =
-    MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+    MediaPermissionPolicy
+        .requiredPermissions(Build.VERSION.SDK_INT)
         .filterNot { activity.shouldShowRequestPermissionRationale(it) }
         .toSet()
 
 /** Opens the app's system details settings page so the user can change the refused permission. */
 private fun openAppSettings(context: Context) {
-    val intent = Intent(
-        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-        Uri.fromParts(PACKAGE_URI_SCHEME, context.packageName, null),
-    )
+    val intent =
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts(PACKAGE_URI_SCHEME, context.packageName, null),
+        )
     context.startActivity(intent)
 }

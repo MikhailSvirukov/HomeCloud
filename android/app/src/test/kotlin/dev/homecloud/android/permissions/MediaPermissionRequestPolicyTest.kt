@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaPermissionRequestPolicyTest {
-
     @Test
     fun `status is granted when every required permission is granted on both sides of api 33`() {
         assertEquals(

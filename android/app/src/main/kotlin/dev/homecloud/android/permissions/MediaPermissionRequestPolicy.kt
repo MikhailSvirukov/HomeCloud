@@ -23,14 +23,15 @@ internal enum class MediaPermissionStatus {
  * possible or the user has permanently refused.
  */
 internal object MediaPermissionRequestPolicy {
-
     /**
      * The required media-read permissions the caller still has to request, in the order the media
      * permission policy lists them. It is empty when everything required is granted and never
      * contains permissions the policy does not require.
      */
-    fun pendingPermissions(sdkInt: Int, granted: Set<String>): List<String> =
-        MediaPermissionPolicy.requiredPermissions(sdkInt).filterNot(granted::contains)
+    fun pendingPermissions(
+        sdkInt: Int,
+        granted: Set<String>,
+    ): List<String> = MediaPermissionPolicy.requiredPermissions(sdkInt).filterNot(granted::contains)
 
     /**
      * Reports the permission status for the given API level, granted set and permanently refused
