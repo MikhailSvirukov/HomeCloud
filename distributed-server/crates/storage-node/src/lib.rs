@@ -15,8 +15,10 @@
 //! accepted connection, and the node runtime ([`serve`]) that accepts
 //! connections until shutdown and serves each frame pump on its own task, and
 //! the bounded CPU pool ([`CpuPool`]) that runs CPU-bound work off the Tokio
-//! worker threads, and the on-disk storage layout ([`StorageLayout`]) with
-//! separate accounts and Raft roots and hex-encoded account/blob paths.
+//! worker threads, the on-disk storage layout ([`StorageLayout`]) with
+//! separate accounts and Raft roots and hex-encoded account/blob paths, and
+//! private-key file loading ([`PrivateKey`], [`KeyError`]) from configured
+//! owner-only files.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -42,6 +44,7 @@ mod connection;
 mod cpu_pool;
 mod frame_buffer;
 mod framing;
+mod keys;
 mod listener;
 mod metadata;
 mod node;
@@ -64,6 +67,7 @@ pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
 pub use framing::{
     FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
 };
+pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
