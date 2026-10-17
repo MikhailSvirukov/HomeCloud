@@ -20,7 +20,8 @@ FROM debian:bookworm-slim AS runtime
 RUN groupadd --gid 10001 homecloud \
     && useradd --uid 10001 --gid homecloud --no-create-home \
         --home-dir /nonexistent --shell /usr/sbin/nologin homecloud \
-    && install -d -o homecloud -g homecloud /etc/homecloud
+    && install -d -o homecloud -g homecloud /etc/homecloud \
+    && install -d -o homecloud -g homecloud /var/log/homecloud
 
 COPY --from=build /src/target/release/dedicated-server /usr/local/bin/dedicated-server
 

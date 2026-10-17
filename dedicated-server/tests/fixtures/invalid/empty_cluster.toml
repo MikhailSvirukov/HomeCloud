@@ -17,5 +17,8 @@ iterations = 1
 parallelism = 1
 salt_length_bytes = 16
 
+[logging]
+path = "/var/log/homecloud/dedicated-server.log"
+
 [cluster]
 nodes = []

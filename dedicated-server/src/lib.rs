@@ -21,7 +21,10 @@ pub use config::{
 };
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
-pub use logging::{init, shutdown, startup, startup_failed};
+pub use logging::{
+    init, logging_failed_to_stderr, shutdown, startup, startup_failed, startup_failed_to_stderr,
+    LogError, LogGuard,
+};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
     Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,

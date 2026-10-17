@@ -34,6 +34,7 @@ const CONFIG_TEMPLATE: &str = include_str!("fixtures/server_config.toml.tmpl");
 const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
+const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 
 /// Owns a per-test temporary directory and removes it on drop.
 struct TempDir {
@@ -62,15 +63,16 @@ impl Drop for TempDir {
     }
 }
 
-/// Write a complete, valid configuration pointing at the given identity paths.
-fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
+/// Write a complete, valid configuration pointing at the given file paths.
+fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) -> PathBuf {
     let config = CONFIG_TEMPLATE
         .replace(
             ENCRYPTION_KEY_PLACEHOLDER,
             &encryption.display().to_string(),
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
-        .replace(LABEL_PLACEHOLDER, LABEL);
+        .replace(LABEL_PLACEHOLDER, LABEL)
+        .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string());
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path
@@ -125,6 +127,51 @@ fn stderr_events(output: &Output) -> Vec<Value> {
         .collect()
 }
 
+/// Read the configured log file and parse every non-empty line.
+fn configured_log(path: &Path) -> (String, Vec<Value>) {
+    let contents = std::fs::read_to_string(path).expect("the configured log file must be readable");
+    let lines: Vec<&str> = contents.lines().collect();
+    assert!(
+        lines.iter().all(|line| !line.is_empty()),
+        "the log file must not contain blank lines: {contents}"
+    );
+    let events = lines
+        .into_iter()
+        .map(|line| serde_json::from_str(line).expect("log line must be a JSON object"))
+        .collect();
+    (contents, events)
+}
+
+/// Assert that the log records contain no paths, file names or key material.
+fn assert_no_forbidden_data(contents: &str, paths: &[&Path]) {
+    for path in paths {
+        let rendered = path.display().to_string();
+        assert!(
+            !contents.contains(&rendered),
+            "log records must not contain the path {rendered}: {contents}"
+        );
+    }
+    for name in [
+        "dedicated-server.toml",
+        "dedicated-server.log",
+        "encryption.key",
+        "signing.key",
+        "absent-encryption.key",
+    ] {
+        assert!(
+            !contents.contains(name),
+            "log records must not contain the file name {name}: {contents}"
+        );
+    }
+    for key in [ENCRYPTION_KEY, SIGNING_KEY] {
+        let material = std::str::from_utf8(key).expect("test key material must be UTF-8");
+        assert!(
+            !contents.contains(material),
+            "log records must not contain key material: {contents}"
+        );
+    }
+}
+
 /// Assert that a timestamp is RFC 3339 in UTC with milliseconds.
 fn assert_utc_timestamp(event: &Value) {
     let timestamp = event["timestamp"]
@@ -156,9 +203,10 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
     let dir = TempDir::new("valid");
     let encryption = dir.file("encryption.key");
     let signing = dir.file("signing.key");
+    let log = dir.file("dedicated-server.log");
     std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
-    let config = write_config(&dir, &encryption, &signing);
+    let config = write_config(&dir, &encryption, &signing, &log);
 
     let output = run_with_config(&config);
 
@@ -168,8 +216,13 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
         "stdout must stay empty, got: {:?}",
         stdout_of(&output)
     );
-    let events = stderr_events(&output);
-    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must stay empty once the log file is configured, got: {}",
+        stderr_of(&output)
+    );
+    let (contents, events) = configured_log(&log);
+    assert_eq!(events.len(), 2, "log contents: {contents}");
     let event = &events[0];
     assert_eq!(event["event"], "startup");
     assert_eq!(event["outcome"], "success");
@@ -200,15 +253,22 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
         summary.contains(&format!("signing_key_bytes={}", SIGNING_KEY.len())),
         "message: {summary}"
     );
+    assert_no_forbidden_data(&contents, &[&config, &log, &encryption, &signing]);
 }
 
 #[test]
-fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths() {
-    let dir = TempDir::new("missing-encryption");
-    let missing = dir.file("absent-encryption.key");
+fn invalid_configuration_writes_one_bootstrap_failure_record_to_stderr() {
+    let dir = TempDir::new("invalid-configuration");
+    let encryption = dir.file("encryption.key");
     let signing = dir.file("signing.key");
+    let log = dir.file("dedicated-server.log");
+    std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
-    let config = write_config(&dir, &missing, &signing);
+    let config = write_config(&dir, &encryption, &signing, &log);
+    let invalid = std::fs::read_to_string(&config)
+        .expect("test configuration must be readable")
+        .replace("listen = \"10.0.0.1:7000\"", "listen = \"not-a-socket\"");
+    std::fs::write(&config, invalid).expect("invalid configuration must be written");
 
     let output = run_with_config(&config);
 
@@ -229,6 +289,79 @@ fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths()
     assert_eq!(event["event"], "startup");
     assert_eq!(event["outcome"], "failure");
     assert_eq!(event["level"], "ERROR");
+    assert_eq!(event["error_code"], "configuration_error");
+    assert_eq!(event["message"], "configuration loading failed");
+    assert!(!log.exists(), "no log file may be opened before the config");
+    assert_no_forbidden_data(&stderr_of(&output), &[&config, &log, &encryption, &signing]);
+}
+
+#[test]
+fn unopenable_log_path_fails_with_the_logging_error_code_on_stderr() {
+    let dir = TempDir::new("unopenable-log");
+    let encryption = dir.file("encryption.key");
+    let signing = dir.file("signing.key");
+    let log = dir.file("missing").join("dedicated-server.log");
+    std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
+    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    let config = write_config(&dir, &encryption, &signing, &log);
+
+    let output = run_with_config(&config);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the process must exit with the failure code, stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    let events = stderr_events(&output);
+    assert_eq!(events.len(), 1, "stderr: {}", stderr_of(&output));
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "failure");
+    assert_eq!(event["level"], "ERROR");
+    assert_eq!(event["error_code"], "logging_error");
+    assert_eq!(event["message"], "logging initialization failed");
+    assert_no_forbidden_data(&stderr_of(&output), &[&config, &encryption, &signing]);
+}
+
+#[test]
+fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths() {
+    let dir = TempDir::new("missing-encryption");
+    let missing = dir.file("absent-encryption.key");
+    let signing = dir.file("signing.key");
+    let log = dir.file("dedicated-server.log");
+    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    let config = write_config(&dir, &missing, &signing, &log);
+
+    let output = run_with_config(&config);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the process must exit with the failure code, stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must stay empty once the log file is configured, got: {}",
+        stderr_of(&output)
+    );
+    let (contents, events) = configured_log(&log);
+    assert_eq!(events.len(), 1, "log contents: {contents}");
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "failure");
+    assert_eq!(event["level"], "ERROR");
     assert_eq!(event["error_code"], IDENTITY_ERROR_CODE);
     assert_eq!(event["component"], "dedicated-server");
     assert_utc_timestamp(event);
@@ -236,23 +369,7 @@ fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths()
         .as_str()
         .expect("startup failure event must carry a message");
     assert_eq!(message, IDENTITY_FAILURE_MESSAGE);
-    let raw = stderr_of(&output);
-    assert!(
-        !raw.contains(&missing.display().to_string()),
-        "stderr must not name the key file: {raw}"
-    );
-    assert!(
-        !raw.contains(&config.display().to_string()),
-        "stderr must not name the configuration file: {raw}"
-    );
-    assert!(
-        !raw.contains("absent-encryption.key"),
-        "stderr must not contain a file name: {raw}"
-    );
-    assert!(
-        !raw.contains("dedicated-server.toml"),
-        "stderr must not contain a file name: {raw}"
-    );
+    assert_no_forbidden_data(&contents, &[&config, &log, &missing, &signing]);
 }
 
 #[test]
@@ -260,9 +377,10 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
     let dir = TempDir::new("default-log-filter");
     let encryption = dir.file("encryption.key");
     let signing = dir.file("signing.key");
+    let log = dir.file("dedicated-server.log");
     std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
-    let config = write_config(&dir, &encryption, &signing);
+    let config = write_config(&dir, &encryption, &signing, &log);
 
     let output = run_with_config_without_log_filter(&config);
 
@@ -272,8 +390,13 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
         "stdout must stay empty, got: {:?}",
         stdout_of(&output)
     );
-    let events = stderr_events(&output);
-    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must stay empty once the log file is configured, got: {}",
+        stderr_of(&output)
+    );
+    let (contents, events) = configured_log(&log);
+    assert_eq!(events.len(), 2, "log contents: {contents}");
     let event = &events[0];
     assert_eq!(event["event"], "startup");
     assert_eq!(event["outcome"], "success");
@@ -292,4 +415,5 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
         summary.contains(&format!("label={LABEL}")),
         "message: {summary}"
     );
+    assert_no_forbidden_data(&contents, &[&config, &log, &encryption, &signing]);
 }

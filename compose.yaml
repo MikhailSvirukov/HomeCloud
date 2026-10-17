@@ -126,6 +126,8 @@ services:
       context: .
       dockerfile: dedicated-server/Dockerfile
     read_only: true
+    tmpfs:
+      - /var/log/homecloud:rw,nosuid,nodev,size=1g,mode=0750,uid=10001,gid=10001
     cap_drop:
       - ALL
     security_opt:

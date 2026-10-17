@@ -10,10 +10,11 @@ addresses, labels, and public keys here, then send files straight to storage.
 
 Configuration loading and validation, key-identity loading for the server's own
 key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
-account registration model are implemented. The binary loads the configuration
-and the key identity, logs a structured startup event to stderr, and exits.
-Network I/O, the wire protocol, registration over the network, cluster
-replication, and topology responses are not implemented yet.
+account registration model are implemented. The binary loads the configuration,
+installs the configured structured log file, loads the key identity, logs
+startup and shutdown events, and exits. Network I/O, the wire protocol,
+registration over the network, cluster replication, and topology responses are
+not implemented yet.
 
 ## Build and run
 
@@ -78,8 +79,10 @@ docker compose up dedicated-server-runtime
 
 The `dedicated-server-runtime` service requires `DEDICATED_SERVER_CONFIG_DIR`
 and mounts it at `/etc/homecloud`. If you cannot change ownership, skip the
-`sudo chown`, keep the keys owned by your host user with the same modes, and add
-`--user "$(id -u):$(id -g)"` to the `docker run` command below.
+`sudo chown`, keep the keys owned by your host user with the same modes, add
+`--user "$(id -u):$(id -g)"` to the `docker run` command below, and replace the
+log tmpfs `uid=10001,gid=10001` values with `uid=$(id -u),gid=$(id -g)` so
+`/var/log/homecloud` stays writable for the overridden user.
 
 The equivalent without Compose:
 
@@ -88,21 +91,23 @@ docker build -f dedicated-server/Dockerfile -t homecloud-dedicated-server:0.1.0 
 docker run --rm --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
+  --tmpfs /var/log/homecloud:rw,nosuid,nodev,size=1g,mode=0750,uid=10001,gid=10001 \
   -v "$DEDICATED_SERVER_CONFIG_DIR:/etc/homecloud:ro" \
   homecloud-dedicated-server:0.1.0
 ```
 
 The two key files named by `[identity]` must exist under the mounted directory,
 be non-empty and contain different material. The process validates its
-configuration, writes JSON Lines events to stderr, and exits; it does not listen
-on `listen` and publishes no ports until the network layer exists.
+configuration, writes JSON Lines events to the file named by `[logging] path`,
+and exits; it does not listen on `listen` and publishes no ports until the
+network layer exists. The log directory must be writable by the container user.
 
 ## Logging
 
-The binary writes UTF-8 JSON Lines events to stderr: each line is one JSON
-object and one event. stdout stays empty. The default level is `info`; set
-`RUST_LOG` to override it (for example `RUST_LOG=debug`). Lines are emitted
-without ANSI colours.
+The binary writes UTF-8 JSON Lines events to the file named by
+`[logging] path`: each line is one JSON object and one event. stdout stays
+empty. The default level is `info`; set `RUST_LOG` to override it (for example
+`RUST_LOG=debug`). Lines are emitted without ANSI colours.
 
 Each event carries:
 
@@ -116,15 +121,40 @@ Each event carries:
 A successful startup is one `startup` event with `outcome` set to `success`,
 followed by one `shutdown` event with `outcome` set to `success` and the message
 `server stopped`. A failed startup is one `startup` event with `outcome` set to
-`failure`, an `error_code` of `configuration_error` or `identity_error`, and a
-fixed stage-specific `message`; the failure event is the last record. Records
-never contain file paths or names, logins, cryptographic keys, verifiers,
-payloads or other user metadata.
+`failure`, an `error_code` of `configuration_error`, `logging_error`, or
+`identity_error`, and a fixed stage-specific `message`; the failure event is the
+last record. Records never contain file paths or names, logins, cryptographic
+keys, verifiers, payloads or other user metadata.
+
+### Two-phase start and the non-blocking writer
+
+The configuration names the log file, so the binary starts in two phases:
+
+1. It loads and validates the configuration. If that fails, the log path is
+   unknown, so it writes exactly one `startup` failure record (error code
+   `configuration_error`) directly to stderr and exits with the failure code.
+2. It opens `[logging] path` in append mode and installs the JSON Lines
+   subscriber. If the file cannot be opened or a global subscriber is already
+   installed, it writes exactly one `startup` failure record (error code
+   `logging_error`) directly to stderr and exits with the failure code.
+   Otherwise the key identity is loaded; an identity failure is written through
+   the installed writer to the configured file.
+
+After a successful start, startup and shutdown events also go to the configured
+file. Both stderr fallbacks are one-off bootstrap records, not a second log
+stream.
+
+Emitting an event never performs a synchronous file operation on the calling
+thread. Records are handed to a bounded queue (4096 buffered lines) drained by a
+background writer; a full queue drops the record instead of blocking. The
+writer's dropped-or-errored record count is exposed as `LogGuard::dropped_records`
+and is the diagnostic counter required by `NFR-OBS-004`. The guard stays alive
+for the whole process and flushes buffered records when dropped.
 
 ## Configuration schema
 
 - Top level: `listen` (socket address string), `max_label_bytes`, `[identity]`,
-  `[heartbeat]`, `[password]`, `[[cluster.nodes]]`.
+  `[heartbeat]`, `[password]`, `[logging]`, `[[cluster.nodes]]`.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
@@ -135,6 +165,9 @@ payloads or other user metadata.
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
   (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
+- `logging`: `path`, the structured JSON Lines log file. It is required and has
+  no default; the process opens it in append mode. An unopenable path is a
+  startup failure.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -163,6 +196,9 @@ iterations = 1
 parallelism = 1
 salt_length_bytes = 16
 
+[logging]
+path = "/var/log/homecloud/dedicated-server.log"
+
 [[cluster.nodes]]
 sender_id = "00000000000000000000000000000001"
 label = "storage-1"
@@ -188,8 +224,8 @@ fails when either file cannot be read, is empty, is larger than the 64 KiB
 limit, or when the same material would serve both the decryption and the
 signing role. At most 64 KiB plus one byte of each file is read, so an
 oversized file is rejected without being loaded in full, and the returned
-identity error names both the configuration file and the offending key file;
-log records omit both. The configured
+identity error names the offending key file; log records omit every path and
+file name. The configured
 `identity.label` is bound to the loaded identity and is used as the node's
 sender label. `ServerIdentity`'s `Debug` output deliberately reports only the
 label and key lengths, never the key bytes.

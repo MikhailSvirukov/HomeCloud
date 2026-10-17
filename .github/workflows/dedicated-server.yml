@@ -75,9 +75,10 @@ jobs:
       - name: Smoke-run the runtime image
         run: |
           config_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-smoke.XXXXXX")"
+          log_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-logs.XXXXXX")"
           stderr_file="$(mktemp "$RUNNER_TEMP/dedicated-server-stderr.XXXXXX")"
           cleanup() {
-            rm -rf "$config_dir"
+            sudo rm -rf "$config_dir" "$log_dir"
             rm -f "$stderr_file"
           }
           trap cleanup EXIT
@@ -90,11 +91,13 @@ jobs:
           chmod 600 "$config_dir/dedicated-server.toml" \
             "$config_dir/keys/encryption.key" \
             "$config_dir/keys/signing.key"
+          sudo chown -R 10001:10001 "$config_dir" "$log_dir"
+          sudo chmod 0755 "$log_dir"
 
           status=0
           docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --user "$(id -u):$(id -g)" \
             -v "$config_dir:/etc/homecloud:ro" \
+            -v "$log_dir:/var/log/homecloud:rw" \
             homecloud-dedicated-server:ci 2>"$stderr_file" || status=$?
 
           cat "$stderr_file" >&2
@@ -102,7 +105,8 @@ jobs:
             echo "runtime image exited with status $status" >&2
             exit 1
           fi
-          if ! grep -Fq '"event":"startup"' "$stderr_file"; then
-            echo 'runtime image did not emit an "event":"startup" record' >&2
+          if ! grep -Fq '"event":"startup"' "$log_dir/dedicated-server.log"; then
+            echo 'runtime image did not emit an "event":"startup" record in its log file' >&2
+            cat "$log_dir/dedicated-server.log" >&2 || true
             exit 1
           fi

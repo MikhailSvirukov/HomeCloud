@@ -11,6 +11,7 @@ const CONFIG_TEMPLATE: &str = include_str!("fixtures/server_config.toml.tmpl");
 const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
+const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 const LABEL: &str = "dedicated-1";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
@@ -70,7 +71,11 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
             &encryption.display().to_string(),
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
-        .replace(LABEL_PLACEHOLDER, LABEL);
+        .replace(LABEL_PLACEHOLDER, LABEL)
+        .replace(
+            LOG_PATH_PLACEHOLDER,
+            &dir.file("dedicated-server.log").display().to_string(),
+        );
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path
