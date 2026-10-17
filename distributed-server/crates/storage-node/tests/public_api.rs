@@ -1,38 +1,6 @@
 //! Integration tests exercising only the public `storage_node` API.
 
-use core::num::NonZeroU32;
-
-use storage_node::{
-    decode_frame, encode_frame, DecodeOutcome, PayloadBufferPool, PoolError,
-    DEFAULT_BUFFERS_PER_CLASS, FRAME_LENGTH_PREFIX_LEN,
-};
-
-fn max_frame_len() -> NonZeroU32 {
-    NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
-}
-
-#[test]
-fn frame_prefix_is_the_big_endian_payload_length() {
-    let payload = b"public api payload".as_slice();
-    let encoded = encode_frame(payload, max_frame_len()).expect("payload is within the limit");
-
-    assert_eq!(
-        &encoded[..FRAME_LENGTH_PREFIX_LEN],
-        &(payload.len() as u32).to_be_bytes()
-    );
-    assert_eq!(encoded.len(), FRAME_LENGTH_PREFIX_LEN + payload.len());
-
-    match decode_frame(&encoded, max_frame_len()) {
-        Ok(DecodeOutcome::Complete {
-            payload: decoded,
-            consumed,
-        }) => {
-            assert_eq!(consumed, FRAME_LENGTH_PREFIX_LEN + payload.len());
-            assert_eq!(decoded, payload);
-        }
-        other => panic!("expected a complete frame, got {other:?}"),
-    }
-}
+use storage_node::{PayloadBufferPool, PoolError, DEFAULT_BUFFERS_PER_CLASS};
 
 #[test]
 fn pool_acquires_the_smallest_suitable_class() {

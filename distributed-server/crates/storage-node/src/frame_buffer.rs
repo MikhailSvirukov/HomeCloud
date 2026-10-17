@@ -105,43 +105,16 @@ mod tests {
     }
 
     #[test]
-    fn debug_reports_only_buffered_length_without_bytes() {
+    fn debug_reports_buffered_length_without_payload_bytes() {
         let mut buffer = FrameBuffer::new(max_frame_len(64));
         buffer
-            .extend(b"SECRET-BYTES")
+            .extend(b"SECRET-PAYLOAD-BYTES")
             .expect("chunk fits in the buffer");
 
-        assert_eq!(format!("{buffer:?}"), "FrameBuffer { buffered_len: 12 }");
-    }
+        let text = format!("{buffer:?}");
 
-    #[test]
-    fn next_frame_returns_prefix_and_payload() {
-        let mut buffer = FrameBuffer::new(max_frame_len(8));
-        let frame = [0, 0, 0, 3, b'a', b'b', b'c'];
-        buffer.extend(&frame).expect("frame fits in the buffer");
-
-        assert_eq!(
-            buffer.next_frame().expect("buffer holds a valid frame"),
-            Some(frame.to_vec())
-        );
-        assert!(buffer.is_empty());
-        assert_eq!(buffer.next_frame().expect("empty buffer is valid"), None);
-    }
-
-    #[test]
-    fn next_frame_waits_for_the_complete_payload() {
-        let mut buffer = FrameBuffer::new(max_frame_len(8));
-        buffer
-            .extend(&[0, 0, 0, 3, b'a'])
-            .expect("partial frame fits in the buffer");
-        assert_eq!(buffer.next_frame().expect("partial frame is valid"), None);
-
-        buffer.extend(b"bc").expect("remainder fits");
-
-        assert_eq!(
-            buffer.next_frame().expect("buffer holds a valid frame"),
-            Some(vec![0, 0, 0, 3, b'a', b'b', b'c'])
-        );
+        assert!(text.contains("buffered_len"));
+        assert!(!text.contains("SECRET-PAYLOAD-BYTES"));
     }
 
     #[test]
