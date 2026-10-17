@@ -42,9 +42,24 @@ internal class InMemoryUploadQueue(
     override fun findVersion(identity: MediaVersionIdentity): UploadQueueEntry? =
         entriesById.values.firstOrNull { entry -> entry.identity == identity }
 
+    /**
+     * Replaces the tracked entries with the given persisted snapshot so a queue can continue after a
+     * restart (`FR-AND-016`). An [UploadQueueState.IN_FLIGHT] entry is restored as
+     * [UploadQueueState.PENDING] with the same upload id, source id, identity, size and attempt
+     * count, because an upload that was in flight when the previous process stopped never finished
+     * and must become available to the next attempt (`CON-AND-003`). Entries in any other state are
+     * kept as given.
+     */
     override fun restore(entries: List<UploadQueueEntry>) {
         entriesById.clear()
-        entries.forEach { entry -> entriesById[entry.uploadId] = entry }
+        entries.forEach { entry ->
+            entriesById[entry.uploadId] =
+                if (entry.state == UploadQueueState.IN_FLIGHT) {
+                    entry.copy(state = UploadQueueState.PENDING)
+                } else {
+                    entry
+                }
+        }
     }
 
     override fun entries(): List<UploadQueueEntry> = entriesById.values.toList()

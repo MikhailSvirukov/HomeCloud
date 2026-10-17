@@ -285,7 +285,7 @@ class InMemoryUploadQueueTest {
         val snapshot =
             listOf(
                 restoredEntry(UPLOAD_ID_A, UploadQueueState.PENDING),
-                restoredEntry(UPLOAD_ID_B, UploadQueueState.IN_FLIGHT),
+                restoredEntry(UPLOAD_ID_B, UploadQueueState.COMPLETED),
             )
 
         queue.restore(snapshot)
@@ -317,12 +317,59 @@ class InMemoryUploadQueueTest {
             listOf(
                 restoredEntry(UPLOAD_ID_A, UploadQueueState.COMPLETED),
                 restoredEntry(UPLOAD_ID_B, UploadQueueState.PENDING),
-                restoredEntry(UPLOAD_ID_C, UploadQueueState.IN_FLIGHT),
+                restoredEntry(UPLOAD_ID_C, UploadQueueState.FAILED),
                 restoredEntry(UPLOAD_ID_D, UploadQueueState.PENDING),
             ),
         )
 
         assertEquals(UPLOAD_ID_B, queue.nextPending()?.uploadId)
+    }
+
+    @Test
+    fun restoreRequeuesInFlightEntryToPendingAndReturnsItFromNextPending() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+
+        queue.restore(listOf(restoredEntry(UPLOAD_ID_A, UploadQueueState.IN_FLIGHT)))
+
+        assertEquals(UploadQueueState.PENDING, queue.entry(UPLOAD_ID_A).state)
+        assertEquals(UPLOAD_ID_A, queue.nextPending()?.uploadId)
+    }
+
+    @Test
+    fun restoreDoesNotRequeueCompletedOrFailedEntries() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS_TWO)
+        queue.restore(
+            listOf(
+                restoredEntry(UPLOAD_ID_A, UploadQueueState.COMPLETED),
+                restoredEntry(UPLOAD_ID_B, UploadQueueState.FAILED, RESTORED_ATTEMPT_COUNT),
+            ),
+        )
+
+        assertEquals(UploadQueueState.COMPLETED, queue.entry(UPLOAD_ID_A).state)
+        assertEquals(UploadQueueState.FAILED, queue.entry(UPLOAD_ID_B).state)
+        assertNull(queue.nextPending())
+        assertEquals(0, queue.pendingCount())
+    }
+
+    @Test
+    fun restoreRequeuesInFlightEntryWithItsIdentityAndAttemptCount() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val inFlight = restoredEntry(UPLOAD_ID_B, UploadQueueState.IN_FLIGHT, RESTORED_ATTEMPT_COUNT)
+
+        queue.restore(listOf(inFlight))
+
+        assertEquals(inFlight.copy(state = UploadQueueState.PENDING), queue.entry(UPLOAD_ID_B))
+    }
+
+    @Test
+    fun restoreReplacesPreviouslyTrackedEntries() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        val restored = restoredEntry(UPLOAD_ID_B, UploadQueueState.PENDING)
+
+        queue.restore(listOf(restored))
+
+        assertEquals(listOf(restored), queue.entries())
     }
 
     @Test

@@ -29,8 +29,11 @@ internal interface UploadQueue {
 
     /**
      * Replaces the tracked entries with the given persisted snapshot so a queue can continue after a
-     * restart. Each entry keeps its own state and attempt count; a later entry with an already
-     * present upload id replaces the earlier one.
+     * restart (`FR-AND-016`). An [UploadQueueState.IN_FLIGHT] entry is restored as
+     * [UploadQueueState.PENDING] with the same upload id, source id, identity, size and attempt
+     * count, because an upload that was in flight when the previous process stopped never finished
+     * and must become available to the next attempt (`CON-AND-003`). Entries in any other state are
+     * kept as given; a later entry with an already present upload id replaces the earlier one.
      */
     fun restore(entries: List<UploadQueueEntry>)
 
