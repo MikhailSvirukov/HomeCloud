@@ -1,5 +1,6 @@
 package dev.homecloud.android.queue
 
+import dev.homecloud.android.media.MediaVersionIdentity
 import java.io.File
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
@@ -10,14 +11,15 @@ import java.nio.file.StandardCopyOption
  * [UploadQueueStore] that keeps the whole snapshot in one UTF-8 text file.
  *
  * The file holds one entry per line, separated by `\n`, with tab-separated fields in the order
- * `uploadId`, `sourceId`, `sizeBytes`, `dateModifiedEpochSeconds`, `attemptCount`, `state`. Inside
- * `uploadId` the backslash, tab, newline and carriage-return characters are escaped as `\\`, `\t`,
- * `\n` and `\r`, and the reader reverses that escaping. A write builds a temporary sibling and
- * renames it over the target, using an atomic move where the file system supports it, so a partial
- * snapshot is not read back; the caller owns the directory and a missing directory is not created.
- * Reading an absent or empty file yields no entries, while a malformed line fails the read instead
- * of dropping queued work silently. Not thread-safe; access must stay on one thread or be externally
- * synchronized.
+ * `uploadId`, `sourceId`, `contentSha256`, `originalName`, `trackedTimeMillis`, `sizeBytes`,
+ * `attemptCount`, `state`. Inside `uploadId` and `originalName` the backslash, tab, newline and
+ * carriage-return characters are escaped as `\\`, `\t`, `\n` and `\r`, and the reader reverses that
+ * escaping. The format mirrors the entry fields and is local to this app; it is not a wire contract.
+ * A write builds a temporary sibling and renames it over the target, using an atomic move where the
+ * file system supports it, so a partial snapshot is not read back; the caller owns the directory and
+ * a missing directory is not created. Reading an absent or empty file yields no entries, while a
+ * malformed line fails the read instead of dropping queued work silently. Not thread-safe; access
+ * must stay on one thread or be externally synchronized.
  */
 internal class FileUploadQueueStore(
     private val file: File,
@@ -71,8 +73,10 @@ internal class FileUploadQueueStore(
             when (column) {
                 Column.UPLOAD_ID -> escape(entry.uploadId)
                 Column.SOURCE_ID -> entry.sourceId.toString()
+                Column.CONTENT_SHA256 -> entry.identity.contentSha256
+                Column.ORIGINAL_NAME -> escape(entry.identity.originalName)
+                Column.TRACKED_TIME_MILLIS -> entry.identity.trackedTimeMillis.toString()
                 Column.SIZE_BYTES -> entry.sizeBytes.toString()
-                Column.DATE_MODIFIED_EPOCH_SECONDS -> entry.dateModifiedEpochSeconds.toString()
                 Column.ATTEMPT_COUNT -> entry.attemptCount.toString()
                 Column.STATE -> entry.state.name
             }
@@ -92,9 +96,13 @@ internal class FileUploadQueueStore(
         return UploadQueueEntry(
             uploadId = unescape(fields[Column.UPLOAD_ID.ordinal], lineNumber),
             sourceId = parseLong(fields[Column.SOURCE_ID.ordinal], lineNumber),
+            identity =
+                MediaVersionIdentity(
+                    contentSha256 = fields[Column.CONTENT_SHA256.ordinal],
+                    originalName = unescape(fields[Column.ORIGINAL_NAME.ordinal], lineNumber),
+                    trackedTimeMillis = parseLong(fields[Column.TRACKED_TIME_MILLIS.ordinal], lineNumber),
+                ),
             sizeBytes = parseLong(fields[Column.SIZE_BYTES.ordinal], lineNumber),
-            dateModifiedEpochSeconds =
-                parseLong(fields[Column.DATE_MODIFIED_EPOCH_SECONDS.ordinal], lineNumber),
             attemptCount = parseInt(fields[Column.ATTEMPT_COUNT.ordinal], lineNumber),
             state = parseState(fields[Column.STATE.ordinal], lineNumber),
         )
@@ -189,8 +197,10 @@ internal class FileUploadQueueStore(
     private enum class Column {
         UPLOAD_ID,
         SOURCE_ID,
+        CONTENT_SHA256,
+        ORIGINAL_NAME,
+        TRACKED_TIME_MILLIS,
         SIZE_BYTES,
-        DATE_MODIFIED_EPOCH_SECONDS,
         ATTEMPT_COUNT,
         STATE,
     }

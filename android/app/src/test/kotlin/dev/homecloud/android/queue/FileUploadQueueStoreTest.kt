@@ -1,5 +1,6 @@
 package dev.homecloud.android.queue
 
+import dev.homecloud.android.media.MediaVersionIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -20,16 +21,20 @@ class FileUploadQueueStoreTest {
                 entry(
                     uploadId = UPLOAD_ID_A,
                     sourceId = SOURCE_ID_A,
+                    contentSha256 = CONTENT_SHA256_A,
+                    originalName = ORIGINAL_NAME_A,
+                    trackedTimeMillis = TRACKED_TIME_A,
                     sizeBytes = SIZE_BYTES_A,
-                    dateModifiedEpochSeconds = DATE_MODIFIED_A,
                     attemptCount = ATTEMPT_COUNT,
                     state = UploadQueueState.FAILED,
                 ),
                 entry(
                     uploadId = UPLOAD_ID_B,
                     sourceId = SOURCE_ID_B,
+                    contentSha256 = CONTENT_SHA256_B,
+                    originalName = ORIGINAL_NAME_B,
+                    trackedTimeMillis = TRACKED_TIME_B,
                     sizeBytes = SIZE_BYTES_B,
-                    dateModifiedEpochSeconds = DATE_MODIFIED_B,
                     attemptCount = 0,
                     state = UploadQueueState.PENDING,
                 ),
@@ -38,6 +43,27 @@ class FileUploadQueueStoreTest {
         store.write(entries)
 
         assertEquals(entries, store.read())
+    }
+
+    @Test
+    fun writeFormatsEachEntryAsTabSeparatedFieldsInEntryOrder() {
+        val file = storeFile()
+        val store = FileUploadQueueStore(file)
+
+        store.write(listOf(entry(uploadId = UPLOAD_ID_A)))
+
+        val expectedLine =
+            listOf(
+                UPLOAD_ID_A,
+                SOURCE_ID_A.toString(),
+                CONTENT_SHA256_A,
+                ORIGINAL_NAME_A,
+                TRACKED_TIME_A.toString(),
+                SIZE_BYTES_A.toString(),
+                ATTEMPT_COUNT.toString(),
+                UploadQueueState.IN_FLIGHT.name,
+            ).joinToString(separator = FIELD_SEPARATOR)
+        assertEquals(expectedLine, file.readText(Charsets.UTF_8))
     }
 
     @Test
@@ -60,6 +86,16 @@ class FileUploadQueueStoreTest {
     fun uploadIdWithTabNewlineAndBackslashRoundTripsExactly() {
         val store = FileUploadQueueStore(storeFile())
         val entry = entry(uploadId = ESCAPED_UPLOAD_ID)
+
+        store.write(listOf(entry))
+
+        assertEquals(listOf(entry), store.read())
+    }
+
+    @Test
+    fun originalNameWithTabNewlineAndBackslashRoundTripsExactly() {
+        val store = FileUploadQueueStore(storeFile())
+        val entry = entry(uploadId = UPLOAD_ID_A, originalName = ESCAPED_ORIGINAL_NAME)
 
         store.write(listOf(entry))
 
@@ -105,6 +141,13 @@ class FileUploadQueueStoreTest {
     }
 
     @Test
+    fun readThrowsWhenTrackedTimeIsNotANumber() {
+        val store = storeWithRawText(rawLine(trackedTimeMillis = NOT_A_NUMBER))
+
+        assertThrows(UploadQueueStoreException::class.java) { store.read() }
+    }
+
+    @Test
     fun readThrowsWhenStateNameIsUnknown() {
         val store = storeWithRawText(rawLine(state = UNKNOWN_STATE))
 
@@ -143,27 +186,44 @@ class FileUploadQueueStoreTest {
     private fun rawLine(
         uploadId: String = UPLOAD_ID_A,
         sourceId: String = SOURCE_ID_A.toString(),
+        contentSha256: String = CONTENT_SHA256_A,
+        originalName: String = ORIGINAL_NAME_A,
+        trackedTimeMillis: String = TRACKED_TIME_A.toString(),
         sizeBytes: String = SIZE_BYTES_A.toString(),
-        dateModifiedEpochSeconds: String = DATE_MODIFIED_A.toString(),
         attemptCount: String = ATTEMPT_COUNT.toString(),
         state: String = UploadQueueState.PENDING.name,
     ): String =
-        listOf(uploadId, sourceId, sizeBytes, dateModifiedEpochSeconds, attemptCount, state)
-            .joinToString(separator = FIELD_SEPARATOR)
+        listOf(
+            uploadId,
+            sourceId,
+            contentSha256,
+            originalName,
+            trackedTimeMillis,
+            sizeBytes,
+            attemptCount,
+            state,
+        ).joinToString(separator = FIELD_SEPARATOR)
 
     private fun entry(
         uploadId: String,
         sourceId: Long = SOURCE_ID_A,
+        contentSha256: String = CONTENT_SHA256_A,
+        originalName: String = ORIGINAL_NAME_A,
+        trackedTimeMillis: Long = TRACKED_TIME_A,
         sizeBytes: Long = SIZE_BYTES_A,
-        dateModifiedEpochSeconds: Long = DATE_MODIFIED_A,
         attemptCount: Int = ATTEMPT_COUNT,
         state: UploadQueueState = UploadQueueState.IN_FLIGHT,
     ): UploadQueueEntry =
         UploadQueueEntry(
             uploadId = uploadId,
             sourceId = sourceId,
+            identity =
+                MediaVersionIdentity(
+                    contentSha256 = contentSha256,
+                    originalName = originalName,
+                    trackedTimeMillis = trackedTimeMillis,
+                ),
             sizeBytes = sizeBytes,
-            dateModifiedEpochSeconds = dateModifiedEpochSeconds,
             attemptCount = attemptCount,
             state = state,
         )
@@ -180,11 +240,16 @@ class FileUploadQueueStoreTest {
         const val SOURCE_ID_B = 2L
         const val SIZE_BYTES_A = 1024L
         const val SIZE_BYTES_B = 2048L
-        const val DATE_MODIFIED_A = 1_700_000_000L
-        const val DATE_MODIFIED_B = 1_700_000_100L
+        const val CONTENT_SHA256_A = "sha256-a"
+        const val CONTENT_SHA256_B = "sha256-b"
+        const val ORIGINAL_NAME_A = "photo-a.jpg"
+        const val ORIGINAL_NAME_B = "photo-b.jpg"
+        const val TRACKED_TIME_A = 1_700_000_000L
+        const val TRACKED_TIME_B = 1_700_000_100L
         const val ATTEMPT_COUNT = 3
 
         const val ESCAPED_UPLOAD_ID = "tab\tnewline\nbackslash\\"
+        const val ESCAPED_ORIGINAL_NAME = "tab\tnewline\nbackslash\\"
         const val CARRIAGE_RETURN_UPLOAD_ID = "carriage\rreturn"
         const val TRAILING_ESCAPE_UPLOAD_ID = "trailing\\"
         const val UNKNOWN_ESCAPE_UPLOAD_ID = "unknown\\x"
