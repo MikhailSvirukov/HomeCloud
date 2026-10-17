@@ -9,9 +9,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
-import dev.homecloud.android.media.RecordingMediaContentProvider
 import dev.homecloud.android.permissions.MediaPermissionPolicy
 import dev.homecloud.android.testsupport.MediaTestData
+import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
