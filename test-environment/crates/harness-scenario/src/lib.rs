@@ -9,10 +9,10 @@
 mod catalogue;
 mod checks;
 mod scenario;
+mod spec;
 
 pub use catalogue::{
-    link_degradation_recovery, network_partition_recovery, node_shutdown_recovery,
-    quorum_loss_recovery,
+    LinkDegradationRecovery, NetworkPartitionRecovery, NodeShutdownRecovery, QuorumLossRecovery,
 };
 pub use checks::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost,
@@ -22,3 +22,4 @@ pub use scenario::{
     Action, Scenario, ScenarioBuilder, ScenarioCheck, ScenarioContext, ScenarioReport,
     ScenarioRunner, Step, StepOutcome,
 };
+pub use spec::{ScenarioRegistry, ScenarioSpec};
