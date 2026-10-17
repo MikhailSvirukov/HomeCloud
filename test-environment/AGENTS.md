@@ -67,4 +67,8 @@ CI script runs:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+cargo test --workspace --all-features --locked -- --ignored
 ```
+
+The ignored-tests pass runs the Docker-backed integration tests in the CI
+environment that provides Docker.

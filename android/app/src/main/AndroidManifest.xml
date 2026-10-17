@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Media read policy: API 33+ uses per-type photo/video reads; below 33 the legacy broad read is capped at API 32. No other permission may be declared (no audio, contacts, location, camera, or storage write). -->
+    <!-- Media read policy: API 33+ uses per-type photo/video reads; API 34+ adds the user-selected visual access permission; below 33 the legacy broad read is capped at API 32. INTERNET is a normal permission for the server connection and is never requested at runtime. No other permission may be declared (no audio, contacts, location, camera, or storage write). -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="false"

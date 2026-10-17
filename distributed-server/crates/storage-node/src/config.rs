@@ -1,8 +1,9 @@
 //! Node identity and static configuration.
 //!
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
-//! a data directory, and the addresses of its fixed peers. v1 clusters are
-//! fixed, so this model is validated when it is built.
+//! a data directory, the paths of its encryption and signing key files, and the
+//! addresses of its fixed peers. v1 clusters are fixed, so this model is
+//! validated when it is built.
 
 use core::num::NonZeroU16;
 use std::path::PathBuf;
@@ -19,6 +20,10 @@ const KEY_NODE_ID: &str = "node_id";
 const KEY_LISTEN_ADDR: &str = "listen_addr";
 /// Recognized `from_pairs` key for the data directory.
 const KEY_DATA_DIR: &str = "data_dir";
+/// Recognized `from_pairs` key for the encryption key file path.
+const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
+/// Recognized `from_pairs` key for the signing key file path.
+const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 /// Recognized `from_pairs` key for the peer address list.
 const KEY_PEERS: &str = "peers";
 /// Separator between peer addresses in the `peers` pair value.
@@ -72,6 +77,8 @@ pub struct NodeConfig {
     pub node_id: NodeId,
     pub listen_addr: String,
     pub data_dir: PathBuf,
+    pub encryption_key_path: PathBuf,
+    pub signing_key_path: PathBuf,
     pub peers: Vec<String>,
 }
 
@@ -81,6 +88,8 @@ impl NodeConfig {
         node_id: NodeId,
         listen_addr: &str,
         data_dir: PathBuf,
+        encryption_key_path: PathBuf,
+        signing_key_path: PathBuf,
         peers: Vec<String>,
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
@@ -89,15 +98,19 @@ impl NodeConfig {
             node_id,
             listen_addr: listen_addr.to_owned(),
             data_dir,
+            encryption_key_path,
+            signing_key_path,
             peers: normalize_peers(peers)?,
         })
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
         let mut data_dir = None;
+        let mut encryption_key_path = None;
+        let mut signing_key_path = None;
         let mut peers = Vec::new();
 
         for (key, value) in pairs {
@@ -105,6 +118,12 @@ impl NodeConfig {
                 KEY_NODE_ID if !value.is_empty() => node_id = Some(NodeId::parse(value)?),
                 KEY_LISTEN_ADDR if !value.is_empty() => listen_addr = Some((*value).to_owned()),
                 KEY_DATA_DIR if !value.is_empty() => data_dir = Some(PathBuf::from(value)),
+                KEY_ENCRYPTION_KEY_PATH if !value.is_empty() => {
+                    encryption_key_path = Some(PathBuf::from(value));
+                }
+                KEY_SIGNING_KEY_PATH if !value.is_empty() => {
+                    signing_key_path = Some(PathBuf::from(value));
+                }
                 KEY_PEERS => peers = split_peers(value),
                 _ => {}
             }
@@ -121,8 +140,25 @@ impl NodeConfig {
         let Some(data_dir) = data_dir else {
             return Err(ConfigError::MissingKey { key: KEY_DATA_DIR });
         };
+        let Some(encryption_key_path) = encryption_key_path else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_ENCRYPTION_KEY_PATH,
+            });
+        };
+        let Some(signing_key_path) = signing_key_path else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_SIGNING_KEY_PATH,
+            });
+        };
 
-        Self::new(node_id, &listen_addr, data_dir, peers)
+        Self::new(
+            node_id,
+            &listen_addr,
+            data_dir,
+            encryption_key_path,
+            signing_key_path,
+            peers,
+        )
     }
 }
 
@@ -225,9 +261,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        ConfigError, NodeConfig, NodeId, KEY_DATA_DIR, KEY_LISTEN_ADDR, KEY_NODE_ID,
-        MAX_NODE_ID_LEN,
+        ConfigError, NodeConfig, NodeId, KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR,
+        KEY_NODE_ID, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
+
+    const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
+    const SIGNING_KEY_PATH: &str = "/keys/signing.key";
 
     fn node_id(label: &str) -> NodeId {
         NodeId::parse(label).expect("test label is valid")
@@ -235,6 +274,14 @@ mod tests {
 
     fn data_dir() -> PathBuf {
         PathBuf::from("/data")
+    }
+
+    fn encryption_key_path() -> PathBuf {
+        PathBuf::from(ENCRYPTION_KEY_PATH)
+    }
+
+    fn signing_key_path() -> PathBuf {
+        PathBuf::from(SIGNING_KEY_PATH)
     }
 
     #[test]
@@ -263,6 +310,8 @@ mod tests {
             node_id("node-1"),
             " 0.0.0.0:9000 ",
             data_dir(),
+            encryption_key_path(),
+            signing_key_path(),
             vec![" 10.0.0.2:9000 ".to_owned()],
         )
         .expect("config is valid");
@@ -270,13 +319,22 @@ mod tests {
         assert_eq!(config.node_id.as_str(), "node-1");
         assert_eq!(config.listen_addr, "0.0.0.0:9000");
         assert_eq!(config.data_dir, PathBuf::from("/data"));
+        assert_eq!(config.encryption_key_path, encryption_key_path());
+        assert_eq!(config.signing_key_path, signing_key_path());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
 
     #[test]
     fn new_rejects_invalid_listen_addresses() {
         for value in ["10.0.0.1", "10.0.0.1:http", "10.0.0.1:0"] {
-            let result = NodeConfig::new(node_id("node-1"), value, data_dir(), Vec::new());
+            let result = NodeConfig::new(
+                node_id("node-1"),
+                value,
+                data_dir(),
+                encryption_key_path(),
+                signing_key_path(),
+                Vec::new(),
+            );
             let expected = ConfigError::InvalidListenAddr {
                 value: value.to_owned(),
             };
@@ -290,6 +348,8 @@ mod tests {
             node_id("node-1"),
             "10.0.0.1:9000",
             data_dir(),
+            encryption_key_path(),
+            signing_key_path(),
             vec!["   ".to_owned()],
         );
         assert_eq!(result, Err(ConfigError::EmptyPeerAddr));
@@ -301,6 +361,8 @@ mod tests {
             node_id("node-1"),
             "10.0.0.1:9000",
             data_dir(),
+            encryption_key_path(),
+            signing_key_path(),
             vec!["10.0.0.2".to_owned()],
         );
         let expected = ConfigError::InvalidPeerAddr {
@@ -315,6 +377,8 @@ mod tests {
             ("node_id", "node-1"),
             ("listen_addr", "0.0.0.0:9000"),
             ("data_dir", "/data"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
             ("peers", ""),
         ])
         .expect("pairs are valid");
@@ -324,7 +388,12 @@ mod tests {
 
     #[test]
     fn from_pairs_requires_listen_addr() {
-        let pairs = [("node_id", "node-1"), ("data_dir", "/data")];
+        let pairs = [
+            ("node_id", "node-1"),
+            ("data_dir", "/data"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        ];
         assert_eq!(
             NodeConfig::from_pairs(&pairs),
             Err(ConfigError::MissingKey {
@@ -335,7 +404,12 @@ mod tests {
 
     #[test]
     fn from_pairs_requires_data_dir() {
-        let pairs = [("node_id", "node-1"), ("listen_addr", "0.0.0.0:9000")];
+        let pairs = [
+            ("node_id", "node-1"),
+            ("listen_addr", "0.0.0.0:9000"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        ];
         assert_eq!(
             NodeConfig::from_pairs(&pairs),
             Err(ConfigError::MissingKey { key: KEY_DATA_DIR })
@@ -348,6 +422,8 @@ mod tests {
             ("node_id", "node-1"),
             ("listen_addr", "0.0.0.0:9000"),
             ("data_dir", ""),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         ];
         assert_eq!(
             NodeConfig::from_pairs(&pairs),
@@ -361,6 +437,8 @@ mod tests {
             ("node_id", ""),
             ("listen_addr", "0.0.0.0:9000"),
             ("data_dir", "/data"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         ];
         assert_eq!(
             NodeConfig::from_pairs(&pairs),
@@ -374,6 +452,8 @@ mod tests {
             ("node_id", "node-1"),
             ("listen_addr", ""),
             ("data_dir", "/data"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         ];
         assert_eq!(
             NodeConfig::from_pairs(&pairs),
@@ -390,6 +470,8 @@ mod tests {
             ("node_id", "node-1"),
             ("listen_addr", "0.0.0.0:9000"),
             ("data_dir", "/data"),
+            (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+            (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         ])
         .expect("unknown keys are ignored");
 

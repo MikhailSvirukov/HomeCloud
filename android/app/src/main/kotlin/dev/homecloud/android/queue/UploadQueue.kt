@@ -1,26 +1,31 @@
 package dev.homecloud.android.queue
 
+import dev.homecloud.android.media.MediaVersionIdentity
+
 /**
  * Client-side model of the pending upload work for the v1 backup flow.
  *
- * At most one [UploadQueueEntry] is tracked per `uploadId`, and enqueueing is idempotent so a
- * repeated upload id never creates a second version. The queue is a pure domain model: it performs
- * no I/O, persistence, or scheduling.
+ * At most one [UploadQueueEntry] is tracked per version identity and per `uploadId`, and enqueueing
+ * is idempotent for both, so a repeated version never creates a second entry and a changed version
+ * does. The queue is a pure domain model: it performs no I/O, persistence, or scheduling.
  *
  * There is deliberately no delete operation, because a local deletion must not propagate to the
  * server.
  */
 internal interface UploadQueue {
     /**
-     * Records a file version as pending, or returns the existing entry for a repeated [uploadId]
-     * unchanged.
+     * Records a file version as pending, or returns the already tracked entry unchanged when the
+     * same `uploadId` or the same version identity is present.
      */
     fun enqueue(
         uploadId: String,
         sourceId: Long,
+        identity: MediaVersionIdentity,
         sizeBytes: Long,
-        dateModifiedEpochSeconds: Long,
     ): UploadQueueEntry
+
+    /** Returns the tracked entry for exactly this version identity, or `null` when it is not queued. */
+    fun findVersion(identity: MediaVersionIdentity): UploadQueueEntry?
 
     /**
      * Replaces the tracked entries with the given persisted snapshot so a queue can continue after a

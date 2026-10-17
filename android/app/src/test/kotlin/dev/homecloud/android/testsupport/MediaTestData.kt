@@ -1,8 +1,11 @@
 package dev.homecloud.android.testsupport
 
-import dev.homecloud.android.backup.UploadIdFactory
 import dev.homecloud.android.media.MediaItem
+import dev.homecloud.android.media.MediaKind
 import dev.homecloud.android.media.MediaRowSource
+import dev.homecloud.android.media.MediaVersionCandidate
+import dev.homecloud.android.media.MediaVersionIdentity
+import dev.homecloud.android.media.MediaVersionScanner
 import dev.homecloud.android.media.RawMediaEntry
 
 /**
@@ -22,6 +25,10 @@ internal object MediaTestData {
     private const val MEDIA_URI_PREFIX: String = "content://media/external/file/"
 
     private const val DISPLAY_NAME_PREFIX: String = "item-"
+
+    private const val CONTENT_SHA256_PREFIX: String = "sha256-"
+
+    private const val TRACKED_TIME_MILLIS: Long = 1_700_000_000_000
 
     /** The default size of a raw row in bytes. */
     const val SIZE_BYTES: Long = 1_024
@@ -47,6 +54,46 @@ internal object MediaTestData {
             dateModifiedEpochSeconds = dateModifiedEpochSeconds,
             mimeType = mimeType,
         )
+
+    /**
+     * Builds a version identity derived from the given source id, so candidates
+     * are distinguishable without repeating the identity literals in each test.
+     */
+    fun versionIdentity(
+        sourceId: Long,
+        contentSha256: String = CONTENT_SHA256_PREFIX + sourceId,
+        originalName: String = DISPLAY_NAME_PREFIX + sourceId,
+        trackedTimeMillis: Long = TRACKED_TIME_MILLIS,
+    ): MediaVersionIdentity =
+        MediaVersionIdentity(
+            contentSha256 = contentSha256,
+            originalName = originalName,
+            trackedTimeMillis = trackedTimeMillis,
+        )
+
+    /**
+     * Builds a discovered candidate whose item and identity are derived from the
+     * given id, unless a different identity is supplied.
+     */
+    fun candidate(
+        id: Long,
+        kind: MediaKind,
+        sizeBytes: Long = SIZE_BYTES,
+        dateModifiedEpochSeconds: Long = DATE_MODIFIED_EPOCH_SECONDS,
+        identity: MediaVersionIdentity = versionIdentity(sourceId = id),
+    ): MediaVersionCandidate =
+        MediaVersionCandidate(
+            item =
+                MediaItem(
+                    id = id,
+                    uri = MEDIA_URI_PREFIX + id,
+                    displayName = DISPLAY_NAME_PREFIX + id,
+                    sizeBytes = sizeBytes,
+                    dateModifiedEpochSeconds = dateModifiedEpochSeconds,
+                    kind = kind,
+                ),
+            identity = identity,
+        )
 }
 
 /**
@@ -66,12 +113,18 @@ internal class FakeMediaRowSource(
 }
 
 /**
- * An [UploadIdFactory] that hands out pre-registered ids and falls back to a
- * deterministic id derived from the item id for anything not registered.
+ * A [MediaVersionScanner] that serves a fixed candidate list and records how
+ * often it was scanned.
  */
-internal class FakeUploadIdFactory(
-    private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
-) : UploadIdFactory {
-    /** Maps a registered item id to its configured upload id, falling back to a deterministic id. */
-    override fun uploadIdFor(item: MediaItem): String = uploadIdsBySourceId[item.id] ?: ("upload-" + item.id)
+internal class FakeMediaVersionScanner(
+    private val candidates: List<MediaVersionCandidate> = emptyList(),
+) : MediaVersionScanner {
+    /** Number of times [scan] has been called. */
+    var scanCount: Int = 0
+        private set
+
+    override fun scan(): List<MediaVersionCandidate> {
+        scanCount += 1
+        return candidates
+    }
 }

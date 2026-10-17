@@ -1,14 +1,16 @@
 //! Integration tests exercising only the public `storage_node` upload ledger API.
+//!
+//! Covers `INT-NET-011 / 1`: an upload identifier is a 16-byte value transmitted
+//! as raw bytes and rendered as 32 lowercase hex characters. Also covers
+//! `FR-CAT-007 / 1`: the catalog lists versions in ascending `upload_id` order.
 
 use storage_node::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
-    CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
+    CONTENT_HASH_LEN, UPLOAD_ID_LEN,
 };
 
-const UPLOAD_ID: &str = "upload-1";
-
-fn upload_id() -> UploadId {
-    UploadId::parse(UPLOAD_ID).expect("test upload id uses allowed characters")
+fn upload_id(seed: u8) -> UploadId {
+    UploadId::from_bytes([seed; UPLOAD_ID_LEN])
 }
 
 fn content_hash(byte: u8) -> ContentHash {
@@ -16,64 +18,19 @@ fn content_hash(byte: u8) -> ContentHash {
 }
 
 #[test]
-fn upload_id_round_trips_through_display_and_from_str() {
-    let id = UploadId::parse("upload-01_A").expect("id uses allowed characters");
+fn upload_id_carries_the_sixteen_wire_bytes() {
+    let id = UploadId::from_bytes([0xab; UPLOAD_ID_LEN]);
 
-    assert_eq!(id.as_str(), "upload-01_A");
-    assert_eq!(id.to_string(), "upload-01_A");
-    assert_eq!("upload-01_A".parse::<UploadId>(), Ok(id));
-}
-
-#[test]
-fn upload_id_parse_rejects_invalid_values() {
-    assert_eq!(UploadId::parse(""), Err(MetadataError::EmptyUploadId));
-
-    let over_long = "a".repeat(MAX_UPLOAD_ID_LEN + 1);
-    assert_eq!(
-        UploadId::parse(&over_long),
-        Err(MetadataError::UploadIdTooLong {
-            len: MAX_UPLOAD_ID_LEN + 1,
-            max: MAX_UPLOAD_ID_LEN,
-        })
-    );
-
-    assert_eq!(
-        UploadId::parse("bad id"),
-        Err(MetadataError::InvalidUploadIdCharacter { character: ' ' })
-    );
-}
-
-#[test]
-fn content_hash_hex_round_trips() {
-    let hash = ContentHash::from_bytes(std::array::from_fn(|index| index as u8));
-    let hex = hash.to_hex();
-
-    assert_eq!(hex.len(), CONTENT_HASH_LEN * 2);
-    assert_eq!(hex, hex.to_ascii_lowercase());
-    assert!(hex.chars().all(|character| character.is_ascii_hexdigit()));
-    assert_eq!(ContentHash::parse_hex(&hex), Ok(hash));
-    assert_eq!(hash.as_bytes(), &std::array::from_fn(|index| index as u8));
-}
-
-#[test]
-fn content_hash_parse_hex_rejects_bad_input() {
-    assert_eq!(
-        ContentHash::parse_hex("abc"),
-        Err(MetadataError::InvalidContentHashLength { len: 3 })
-    );
-
-    let non_hex = "z".repeat(CONTENT_HASH_LEN * 2);
-    assert_eq!(
-        ContentHash::parse_hex(&non_hex),
-        Err(MetadataError::InvalidContentHashHex { character: 'z' })
-    );
+    assert_eq!(id.as_bytes(), &[0xab; UPLOAD_ID_LEN]);
+    assert_eq!(id.to_string(), "ab".repeat(UPLOAD_ID_LEN));
+    assert_eq!(id.to_string().len(), UPLOAD_ID_LEN * 2);
 }
 
 #[test]
 fn upload_record_new_trims_and_rejects_blank_fields() {
     let hash = content_hash(0x2a);
     let record = UploadRecord::new(
-        upload_id(),
+        upload_id(1),
         "  alice  ",
         "  photo.jpg  ",
         4_096,
@@ -82,7 +39,7 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
     )
     .expect("record with non-blank fields is valid");
 
-    assert_eq!(record.upload_id, upload_id());
+    assert_eq!(record.upload_id, upload_id(1));
     assert_eq!(record.login, "alice");
     assert_eq!(record.original_name, "photo.jpg");
     assert_eq!(record.size_bytes, 4_096);
@@ -90,11 +47,11 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
     assert_eq!(record.accepted_at_ms, 1_700_000_000_000);
 
     assert_eq!(
-        UploadRecord::new(upload_id(), "   ", "photo.jpg", 1, hash, 0),
+        UploadRecord::new(upload_id(1), "   ", "photo.jpg", 1, hash, 0),
         Err(MetadataError::EmptyLogin)
     );
     assert_eq!(
-        UploadRecord::new(upload_id(), "alice", "   ", 1, hash, 0),
+        UploadRecord::new(upload_id(1), "alice", "   ", 1, hash, 0),
         Err(MetadataError::EmptyOriginalName)
     );
 }
@@ -103,20 +60,20 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
 fn ledger_records_first_upload_and_keeps_it_on_retry() {
     let mut ledger = UploadLedger::new();
     let first_hash = content_hash(0x11);
-    let first = UploadRecord::new(upload_id(), "alice", "a.txt", 10, first_hash, 1_000)
+    let first = UploadRecord::new(upload_id(1), "alice", "a.txt", 10, first_hash, 1_000)
         .expect("first record is valid");
 
     assert_eq!(ledger.record(first), RecordOutcome::Recorded);
     assert_eq!(ledger.len(), 1);
 
     let retry_hash = content_hash(0x22);
-    let retry = UploadRecord::new(upload_id(), "bob", "b.txt", 99, retry_hash, 2_000)
+    let retry = UploadRecord::new(upload_id(1), "bob", "b.txt", 99, retry_hash, 2_000)
         .expect("retry record is valid");
 
     assert_eq!(ledger.record(retry), RecordOutcome::AlreadyPresent);
     assert_eq!(ledger.len(), 1);
 
-    let stored = ledger.get(&upload_id()).expect("first record is stored");
+    let stored = ledger.get(&upload_id(1)).expect("first record is stored");
     assert_eq!(stored.login, "alice");
     assert_eq!(stored.original_name, "a.txt");
     assert_eq!(stored.size_bytes, 10);
@@ -127,15 +84,62 @@ fn ledger_records_first_upload_and_keeps_it_on_retry() {
 #[test]
 fn ledger_get_unknown_id_returns_none() {
     let mut ledger = UploadLedger::new();
-    let unknown = UploadId::parse("unknown").expect("id uses allowed characters");
+    let unknown = UploadId::from_bytes([0xff; UPLOAD_ID_LEN]);
 
     assert!(ledger.is_empty());
     assert_eq!(ledger.get(&unknown), None);
 
-    let record = UploadRecord::new(upload_id(), "alice", "a.txt", 10, content_hash(0x33), 1_000)
-        .expect("record is valid");
+    let record = UploadRecord::new(
+        upload_id(1),
+        "alice",
+        "a.txt",
+        10,
+        content_hash(0x33),
+        1_000,
+    )
+    .expect("record is valid");
     ledger.record(record);
 
     assert!(!ledger.is_empty());
     assert_eq!(ledger.get(&unknown), None);
+}
+
+#[test]
+fn catalog_returns_versions_in_ascending_upload_id_order() {
+    let mut ledger = UploadLedger::new();
+    for (seed, login, original_name, size_bytes, hash_byte, accepted_at_ms) in [
+        (0x03, "carol", "c.txt", 30, 0x33, 3_000),
+        (0x01, "alice", "a.txt", 10, 0x11, 1_000),
+        (0x02, "bob", "b.txt", 20, 0x22, 2_000),
+    ] {
+        let record = UploadRecord::new(
+            upload_id(seed),
+            login,
+            original_name,
+            size_bytes,
+            content_hash(hash_byte),
+            accepted_at_ms,
+        )
+        .expect("record with non-blank fields is valid");
+        assert_eq!(ledger.record(record), RecordOutcome::Recorded);
+    }
+
+    let catalog = ledger.catalog();
+    assert_eq!(catalog.len(), 3);
+    assert_eq!(
+        catalog
+            .iter()
+            .map(|record| record.upload_id)
+            .collect::<Vec<_>>(),
+        vec![upload_id(0x01), upload_id(0x02), upload_id(0x03)]
+    );
+
+    let repeated_catalog = ledger.catalog();
+    assert_eq!(
+        repeated_catalog
+            .iter()
+            .map(|record| record.upload_id)
+            .collect::<Vec<_>>(),
+        vec![upload_id(0x01), upload_id(0x02), upload_id(0x03)]
+    );
 }

@@ -1,10 +1,13 @@
 package dev.homecloud.android.queue
 
+import dev.homecloud.android.media.MediaVersionIdentity
+
 /**
  * In-memory [UploadQueue] backed by an insertion-ordered map keyed by `uploadId`, so [enqueue] is
- * idempotent and [nextPending] is deterministic. Not thread-safe by design: access must stay on one
- * thread or be externally synchronized, since concurrency is handled by the scheduling layer. There
- * is no delete operation, by design, because a local deletion must not propagate to the server.
+ * idempotent per upload id and per version identity, and [nextPending] is deterministic. Not
+ * thread-safe by design: access must stay on one thread or be externally synchronized, since
+ * concurrency is handled by the scheduling layer. There is no delete operation, by design, because a
+ * local deletion must not propagate to the server.
  */
 internal class InMemoryUploadQueue(
     private val maxAttempts: Int,
@@ -18,19 +21,26 @@ internal class InMemoryUploadQueue(
     override fun enqueue(
         uploadId: String,
         sourceId: Long,
+        identity: MediaVersionIdentity,
         sizeBytes: Long,
-        dateModifiedEpochSeconds: Long,
-    ): UploadQueueEntry =
-        entriesById.getOrPut(uploadId) {
+    ): UploadQueueEntry {
+        entriesById[uploadId]?.let { existing -> return existing }
+        entriesById.values.firstOrNull { entry -> entry.identity == identity }?.let { existing -> return existing }
+        val entry =
             UploadQueueEntry(
                 uploadId = uploadId,
                 sourceId = sourceId,
+                identity = identity,
                 sizeBytes = sizeBytes,
-                dateModifiedEpochSeconds = dateModifiedEpochSeconds,
                 attemptCount = 0,
                 state = UploadQueueState.PENDING,
             )
-        }
+        entriesById[uploadId] = entry
+        return entry
+    }
+
+    override fun findVersion(identity: MediaVersionIdentity): UploadQueueEntry? =
+        entriesById.values.firstOrNull { entry -> entry.identity == identity }
 
     override fun restore(entries: List<UploadQueueEntry>) {
         entriesById.clear()

@@ -1,13 +1,14 @@
 //! `storage-node` binary entry point.
 //!
 //! Reads and validates the node configuration from environment variables,
-//! emits a structured startup log, binds the listen address, and serves frame
-//! connections until it receives a Ctrl-C shutdown signal. The `io_uring` disk
-//! thread is a later increment.
+//! loads the configured private key files, prepares the accounts and raft
+//! directories under the configured data root, emits a structured startup log,
+//! binds the listen address, and serves frame connections until it receives a
+//! Ctrl-C shutdown signal. The `io_uring` disk thread is a later increment.
 
 use std::process::ExitCode;
 
-use storage_node::{serve, Listener, NodeConfig, PROTOCOL_VERSION};
+use storage_node::{serve, Listener, NodeConfig, PrivateKey, StorageLayout, PROTOCOL_VERSION};
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -18,6 +19,10 @@ const ENV_NODE_ID: &str = "NODE_ID";
 const ENV_LISTEN_ADDR: &str = "LISTEN_ADDR";
 /// Environment variable carrying the data directory.
 const ENV_DATA_DIR: &str = "DATA_DIR";
+/// Environment variable carrying the encryption key file path.
+const ENV_ENCRYPTION_KEY_PATH: &str = "ENCRYPTION_KEY_PATH";
+/// Environment variable carrying the signing key file path.
+const ENV_SIGNING_KEY_PATH: &str = "SIGNING_KEY_PATH";
 /// Environment variable carrying the comma-separated peer list.
 const ENV_PEERS: &str = "PEERS";
 
@@ -27,6 +32,10 @@ const KEY_NODE_ID: &str = "node_id";
 const KEY_LISTEN_ADDR: &str = "listen_addr";
 /// `from_pairs` key for the data directory.
 const KEY_DATA_DIR: &str = "data_dir";
+/// `from_pairs` key for the encryption key file path.
+const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
+/// `from_pairs` key for the signing key file path.
+const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 
@@ -45,7 +54,8 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
-/// Loads and validates configuration, then serves until stopped.
+/// Loads and validates configuration and its keys, prepares the data layout,
+/// then serves until stopped.
 ///
 /// A missing environment variable is treated as an empty value so validation
 /// reports a missing key instead of aborting.
@@ -53,12 +63,16 @@ async fn run() -> ExitCode {
     let node_id = env_value(ENV_NODE_ID);
     let listen_addr = env_value(ENV_LISTEN_ADDR);
     let data_dir = env_value(ENV_DATA_DIR);
+    let encryption_key_path = env_value(ENV_ENCRYPTION_KEY_PATH);
+    let signing_key_path = env_value(ENV_SIGNING_KEY_PATH);
     let peers = env_value(ENV_PEERS);
 
     let pairs = [
         (KEY_NODE_ID, node_id.as_str()),
         (KEY_LISTEN_ADDR, listen_addr.as_str()),
         (KEY_DATA_DIR, data_dir.as_str()),
+        (KEY_ENCRYPTION_KEY_PATH, encryption_key_path.as_str()),
+        (KEY_SIGNING_KEY_PATH, signing_key_path.as_str()),
         (KEY_PEERS, peers.as_str()),
     ];
 
@@ -69,6 +83,21 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let _encryption_key = match PrivateKey::load(&config.encryption_key_path) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to load the encryption key");
+            return ExitCode::FAILURE;
+        }
+    };
+    let _signing_key = match PrivateKey::load(&config.signing_key_path) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to load the signing key");
+            return ExitCode::FAILURE;
+        }
+    };
+
     tracing::info!(
         crate_version = env!("CARGO_PKG_VERSION"),
         protocol_version = PROTOCOL_VERSION,
@@ -78,6 +107,13 @@ async fn run() -> ExitCode {
         peers = config.peers.len(),
         "storage node starting"
     );
+
+    let layout = StorageLayout::new(config.data_dir.clone());
+    if let Err(error) = layout.ensure_dirs() {
+        tracing::error!(error = %error, "failed to prepare the data layout");
+        return ExitCode::FAILURE;
+    }
+    tracing::debug!(root = %layout.root.display(), "data layout ready");
 
     let listener = match Listener::bind(&config.listen_addr).await {
         Ok(listener) => listener,

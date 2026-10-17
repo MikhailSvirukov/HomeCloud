@@ -8,6 +8,7 @@ mod clock;
 mod config;
 mod heartbeat;
 mod identity;
+mod logging;
 mod password;
 mod registration;
 mod report;
@@ -20,6 +21,7 @@ pub use config::{
 };
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
+pub use logging::{init, shutdown, startup, startup_failed};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
     Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,

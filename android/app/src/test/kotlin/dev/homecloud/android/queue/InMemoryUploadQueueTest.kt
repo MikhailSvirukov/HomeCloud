@@ -1,5 +1,6 @@
 package dev.homecloud.android.queue
 
+import dev.homecloud.android.media.MediaVersionIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -11,12 +12,12 @@ class InMemoryUploadQueueTest {
     fun enqueueAddsPendingEntryWithZeroAttempts() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
 
-        val entry = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, SIZE_BYTES_A, DATE_MODIFIED_A)
+        val entry = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, identityA, SIZE_BYTES_A)
 
         assertEquals(UPLOAD_ID_A, entry.uploadId)
         assertEquals(SOURCE_ID_A, entry.sourceId)
+        assertEquals(identityA, entry.identity)
         assertEquals(SIZE_BYTES_A, entry.sizeBytes)
-        assertEquals(DATE_MODIFIED_A, entry.dateModifiedEpochSeconds)
         assertEquals(0, entry.attemptCount)
         assertEquals(UploadQueueState.PENDING, entry.state)
     }
@@ -24,12 +25,37 @@ class InMemoryUploadQueueTest {
     @Test
     fun enqueueSameUploadIdTwiceYieldsSingleEntry() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
-        val first = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, SIZE_BYTES_A, DATE_MODIFIED_A)
+        val first = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, identityA, SIZE_BYTES_A)
 
-        val second = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, OTHER_SIZE_BYTES, OTHER_DATE_MODIFIED)
+        val second = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, otherIdentity, OTHER_SIZE_BYTES)
 
         assertEquals(first, second)
         assertEquals(1, queue.entries().size)
+    }
+
+    @Test
+    fun enqueueSameIdentityWithDifferentUploadIdReturnsFirstEntryAndKeepsOneEntry() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val first = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, identityA, SIZE_BYTES_A)
+
+        val second = queue.enqueue(UPLOAD_ID_B, SOURCE_ID_A, identityA, OTHER_SIZE_BYTES)
+
+        assertEquals(first, second)
+        assertEquals(listOf(first), queue.entries())
+        assertEquals(UPLOAD_ID_A, queue.findVersion(identityA)?.uploadId)
+    }
+
+    @Test
+    fun changedIdentityForSameSourceIdCreatesSecondEntry() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val unchanged = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, identityA, SIZE_BYTES_A)
+
+        val changed = queue.enqueue(UPLOAD_ID_B, SOURCE_ID_A, otherIdentity, SIZE_BYTES_A)
+
+        assertEquals(2, queue.entries().size)
+        assertEquals(unchanged, queue.findVersion(identityA))
+        assertEquals(changed, queue.findVersion(otherIdentity))
+        assertEquals(PENDING_BEFORE_COMPLETION, queue.pendingCount())
     }
 
     @Test
@@ -40,11 +66,31 @@ class InMemoryUploadQueueTest {
         queue.markFailed(UPLOAD_ID_A)
 
         queue.markCompleted(UPLOAD_ID_A)
-        val reEnqueued = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, SIZE_BYTES_A, DATE_MODIFIED_A)
+        val reEnqueued = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, identityA, SIZE_BYTES_A)
 
         assertEquals(1, queue.entries().size)
         assertEquals(UploadQueueState.COMPLETED, reEnqueued.state)
         assertEquals(ATTEMPTS_AFTER_ONE_FAILURE, reEnqueued.attemptCount)
+    }
+
+    @Test
+    fun findVersionReturnsEntryInNonPendingState() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        queue.enqueueUpload(UPLOAD_ID_A)
+        queue.markCompleted(UPLOAD_ID_A)
+
+        val tracked = queue.findVersion(identityA)
+
+        assertEquals(UploadQueueState.COMPLETED, tracked?.state)
+        assertEquals(UPLOAD_ID_A, tracked?.uploadId)
+    }
+
+    @Test
+    fun findVersionReturnsNullForUnknownIdentity() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        queue.enqueueUpload(UPLOAD_ID_A)
+
+        assertNull(queue.findVersion(otherIdentity))
     }
 
     @Test
@@ -308,10 +354,19 @@ class InMemoryUploadQueueTest {
         val restored = restoredEntry(UPLOAD_ID_A, UploadQueueState.FAILED, RESTORED_ATTEMPT_COUNT)
         queue.restore(listOf(restored))
 
-        val returned = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, OTHER_SIZE_BYTES, OTHER_DATE_MODIFIED)
+        val returned = queue.enqueue(UPLOAD_ID_A, SOURCE_ID_A, otherIdentity, OTHER_SIZE_BYTES)
 
         assertEquals(restored, returned)
         assertEquals(1, queue.entries().size)
+    }
+
+    @Test
+    fun findVersionFindsRestoredEntry() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val restored = restoredEntry(UPLOAD_ID_A, UploadQueueState.FAILED, RESTORED_ATTEMPT_COUNT)
+        queue.restore(listOf(restored))
+
+        assertEquals(restored, queue.findVersion(identityA))
     }
 
     private fun restoredEntry(
@@ -322,16 +377,24 @@ class InMemoryUploadQueueTest {
         UploadQueueEntry(
             uploadId = uploadId,
             sourceId = SOURCE_ID_A,
+            identity = identityOf(uploadId),
             sizeBytes = SIZE_BYTES_A,
-            dateModifiedEpochSeconds = DATE_MODIFIED_A,
             attemptCount = attemptCount,
             state = state,
         )
 
     private fun InMemoryUploadQueue.enqueueUpload(uploadId: String): UploadQueueEntry =
-        enqueue(uploadId, SOURCE_ID_A, SIZE_BYTES_A, DATE_MODIFIED_A)
+        enqueue(uploadId, SOURCE_ID_A, identityOf(uploadId), SIZE_BYTES_A)
 
     private fun InMemoryUploadQueue.entry(uploadId: String): UploadQueueEntry = entries().first { it.uploadId == uploadId }
+
+    private fun identityOf(uploadId: String): MediaVersionIdentity =
+        when (uploadId) {
+            UPLOAD_ID_B -> identityB
+            UPLOAD_ID_C -> identityC
+            UPLOAD_ID_D -> identityD
+            else -> identityA
+        }
 
     private companion object {
         const val UPLOAD_ID_A = "upload-a"
@@ -342,9 +405,20 @@ class InMemoryUploadQueueTest {
 
         const val SOURCE_ID_A = 1L
         const val SIZE_BYTES_A = 1024L
-        const val DATE_MODIFIED_A = 1_700_000_000L
         const val OTHER_SIZE_BYTES = 2048L
-        const val OTHER_DATE_MODIFIED = 1_700_000_100L
+
+        const val CONTENT_SHA256_A = "sha256-a"
+        const val CONTENT_SHA256_B = "sha256-b"
+        const val ORIGINAL_NAME_A = "photo-a.jpg"
+        const val ORIGINAL_NAME_B = "photo-b.jpg"
+        const val TRACKED_TIME_A = 1_700_000_000L
+        const val TRACKED_TIME_B = 1_700_000_100L
+
+        val identityA = MediaVersionIdentity(CONTENT_SHA256_A, ORIGINAL_NAME_A, TRACKED_TIME_A)
+        val identityB = MediaVersionIdentity(CONTENT_SHA256_B, ORIGINAL_NAME_A, TRACKED_TIME_A)
+        val identityC = MediaVersionIdentity(CONTENT_SHA256_A, ORIGINAL_NAME_B, TRACKED_TIME_A)
+        val identityD = MediaVersionIdentity(CONTENT_SHA256_A, ORIGINAL_NAME_A, TRACKED_TIME_B)
+        val otherIdentity = MediaVersionIdentity(CONTENT_SHA256_B, ORIGINAL_NAME_B, TRACKED_TIME_B)
 
         const val MAX_ATTEMPTS = 3
         const val MAX_ATTEMPTS_TWO = 2

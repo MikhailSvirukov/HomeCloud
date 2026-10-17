@@ -36,10 +36,11 @@ private const val PACKAGE_URI_SCHEME = "package"
 
 /**
  * Renders the media-read permission surface for the activity. It reflects whether the client may
- * read photos and videos: while access can still be asked for it requests exactly the missing
- * media-read permissions and reflects the answer, and once access was permanently refused it sends
- * the user to the app's system settings instead of asking again. Once access is granted it also
- * renders the supplied content below the message.
+ * read photos and videos: while access can still be asked for it opens one system request for the
+ * permissions the policy reports, reflects the answer, and reports when only a user-selected subset
+ * is available; once access was permanently refused it sends the user to the app's system settings
+ * instead of asking again. Once full access is granted it also renders the supplied content below
+ * the message.
  */
 @Composable
 internal fun MediaPermissionRequestContent(
@@ -81,8 +82,8 @@ internal fun MediaPermissionRequestContent(
         prompt = prompt,
         onRequestPermissions = {
             permissionsLauncher.launch(
-                MediaPermissionRequestPolicy
-                    .pendingPermissions(Build.VERSION.SDK_INT, grantedPermissions(activity))
+                MediaPermissionPolicy
+                    .requestedPermissions(Build.VERSION.SDK_INT)
                     .toTypedArray(),
             )
         },
@@ -93,8 +94,9 @@ internal fun MediaPermissionRequestContent(
 }
 
 /**
- * Shows the prompt's message and, when access was not granted, the single action it carries. Once
- * access is granted it renders the supplied content in place of an action.
+ * Shows the prompt's message and, when access was not fully granted, the single action it carries.
+ * Full access renders the supplied content in place of an action; selected access keeps offering
+ * the request action so the user can change the selection.
  */
 @Composable
 private fun MediaPermissionSurface(
@@ -128,10 +130,10 @@ private fun MediaPermissionSurface(
     }
 }
 
-/** Collects the required media-read permissions that are currently granted to the context. */
+/** Collects the media-read permissions the policy requests that are currently granted to the context. */
 private fun grantedPermissions(context: Context): Set<String> =
     MediaPermissionPolicy
-        .requiredPermissions(Build.VERSION.SDK_INT)
+        .requestedPermissions(Build.VERSION.SDK_INT)
         .filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         .toSet()
 

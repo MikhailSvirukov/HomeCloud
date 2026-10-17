@@ -28,20 +28,24 @@ for clients; it does not relay Raft or blob traffic.
   `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
   frames through the payload buffer pools), `src/config.rs` (node
-  identity/configuration), `src/response.rs` (typed upload outcomes / status
+  identity/configuration), `src/keys.rs` (private key material loaded from
+  configured owner-only files), `src/response.rs` (typed upload outcomes / status
   codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
   hash, upload record), `src/listener.rs` (binds the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
-  worker threads), and `src/node.rs` (node runtime: serves frame connections on
-  a bound listener until shutdown).
+  worker threads), `src/node.rs` (node runtime: serves frame connections on
+  a bound listener until shutdown), and `src/storage_layout.rs` (on-disk
+  layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
-  `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`,
+  `keys_public_api.rs`, `upload_ledger_public_api.rs`,
+  `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
-  `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
+  `storage_layout_public_api.rs`, `e2e_pump_over_tcp.rs`,
+  `e2e_upload_over_tcp.rs`).
 
 ## Status
 
@@ -72,10 +76,18 @@ at startup:
 - `NODE_ID` — stable node label (maps to the `node_id` key).
 - `LISTEN_ADDR` — `host:port` listen address (maps to the `listen_addr` key).
 - `DATA_DIR` — data directory (maps to the `data_dir` key).
+- `ENCRYPTION_KEY_PATH` — private encryption key file (maps to the
+  `encryption_key_path` key).
+- `SIGNING_KEY_PATH` — private signing key file (maps to the `signing_key_path` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
-`NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`, and
-`peers` keys; unknown keys are ignored.
+`NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
+`encryption_key_path`, `signing_key_path`, and `peers` keys; an absent or empty value
+for any required key is reported as missing, and unknown keys are ignored.
+
+Startup loads both private key files after the configuration is validated and before
+the listener binds, so a missing or unreadable key stops the process without opening a
+port.
 
 ## Build and test
 

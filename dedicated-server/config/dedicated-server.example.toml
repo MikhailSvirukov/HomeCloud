@@ -1,0 +1,37 @@
+# Example configuration for the dedicated-server runtime image.
+# Copy it to <DEDICATED_SERVER_CONFIG_DIR>/dedicated-server.toml and keep the
+# two key files in that external directory, never in this checkout.
+# Node identifiers and public keys below are synthetic.
+
+listen = "0.0.0.0:7000"
+max_label_bytes = 64
+
+[identity]
+label = "dedicated-1"
+encryption_private_key = "/etc/homecloud/keys/encryption.key"
+signing_private_key = "/etc/homecloud/keys/signing.key"
+
+[heartbeat]
+interval_ms = 1000
+timeout_ms = 500
+miss_threshold = 3
+
+[password]
+memory_kib = 65536
+iterations = 3
+parallelism = 4
+salt_length_bytes = 16
+
+[[cluster.nodes]]
+sender_id = "00000000000000000000000000000001"
+label = "storage-1"
+address = "10.0.0.11:7100"
+encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
+signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"
+
+[[cluster.nodes]]
+sender_id = "00000000000000000000000000000002"
+label = "storage-2"
+address = "10.0.0.12:7100"
+encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
