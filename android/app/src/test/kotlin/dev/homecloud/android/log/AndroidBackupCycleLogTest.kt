@@ -29,10 +29,10 @@ private const val SDK = 30
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class AndroidBackupCycleLogTest {
     @Test
-    fun `cyclePlanned writes one info line carrying only the two counts`() {
+    fun `cyclePlanned writes one info line carrying only the three counts`() {
         ShadowLog.clear()
 
-        AndroidBackupCycleLog().cyclePlanned(DISCOVERED_CANDIDATES, NEWLY_ENQUEUED)
+        AndroidBackupCycleLog().cyclePlanned(DISCOVERED_CANDIDATES, NEWLY_ENQUEUED, REJECTED_BY_CAPACITY)
 
         val logs = ShadowLog.getLogs()
         assertEquals(1, logs.size)
@@ -40,7 +40,8 @@ class AndroidBackupCycleLogTest {
         assertEquals(Log.INFO, entry.type)
         assertEquals(CYCLE_TAG, entry.tag)
         assertEquals(
-            "Backup cycle planned discovered=$DISCOVERED_CANDIDATES newlyEnqueued=$NEWLY_ENQUEUED",
+            "Backup cycle planned discovered=$DISCOVERED_CANDIDATES newlyEnqueued=$NEWLY_ENQUEUED " +
+                "rejectedByCapacity=$REJECTED_BY_CAPACITY",
             entry.msg,
         )
     }
@@ -62,6 +63,7 @@ class AndroidBackupCycleLogTest {
     private companion object {
         const val DISCOVERED_CANDIDATES = 5
         const val NEWLY_ENQUEUED = 2
+        const val REJECTED_BY_CAPACITY = 3
 
         /**
          * The tag is part of the log contract this test fixes, so it is pinned as a literal: a
