@@ -12,26 +12,36 @@ pub const KEY_LEN: usize = 32;
 /// Failure modes when loading private key material.
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
+    /// The key file could not be opened, inspected, or read.
     #[error(transparent)]
     Io(#[from] io::Error),
+    /// The key file is accessible by a user other than its owner.
     #[error("key file must be readable only by its owner")]
     InsecurePermissions,
+    /// The key file does not contain exactly [`KEY_LEN`] bytes.
     #[error("key file has {len} bytes, expected {expected}")]
     WrongLength { len: usize, expected: usize },
+    /// The key path refers to something other than a regular file.
+    #[error("key path is not a regular file")]
+    NotAFile,
 }
 
 type Result<T> = core::result::Result<T, KeyError>;
 
 /// A 32-byte private key loaded from a local file.
-#[derive(Clone)]
 pub struct PrivateKey([u8; KEY_LEN]);
 
 impl PrivateKey {
     /// Loads `path`, requiring owner-only permissions and exactly 32 bytes.
     pub fn load(path: &Path) -> Result<Self> {
-        let metadata = std::fs::metadata(path)?;
+        let mut file = std::fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(KeyError::NotAFile);
+        }
         check_owner_only(&metadata)?;
-        let bytes = std::fs::read(path)?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut bytes)?;
         let len = bytes.len();
         let key: [u8; KEY_LEN] = bytes.try_into().map_err(|_| KeyError::WrongLength {
             len,

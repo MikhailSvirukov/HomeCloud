@@ -53,6 +53,20 @@ fn rejects_a_missing_file() {
 }
 
 #[test]
+fn rejects_a_non_regular_file() {
+    let directory = unique_temp_dir();
+    std::fs::create_dir_all(&directory).expect("temp directory can be created");
+    #[cfg(unix)]
+    set_mode(&directory, 0o700);
+
+    let result = PrivateKey::load(&directory);
+
+    assert!(matches!(result, Err(KeyError::NotAFile)));
+
+    remove_temp_dir(&directory);
+}
+
+#[test]
 fn rejects_wrong_length() {
     let directory = unique_temp_dir();
     let path = write_owner_only_file(&directory, &[0x5a; 31]);
