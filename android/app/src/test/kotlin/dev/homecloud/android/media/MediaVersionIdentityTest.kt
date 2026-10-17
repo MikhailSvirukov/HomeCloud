@@ -2,52 +2,51 @@ package dev.homecloud.android.media
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.UUID
 
 class MediaVersionIdentityTest {
     @Test
-    fun `equal identities produce the same upload id across calls`() {
+    fun `equal field values produce equal identities`() {
         val version = identity()
 
-        assertEquals(uploadIdOf(version), uploadIdOf(version.copy()))
+        assertEquals(version, version.copy())
     }
 
     @Test
-    fun `changed content hash produces a different upload id`() {
+    fun `changed content hash produces a different identity`() {
         val changed = identity(contentSha256 = OTHER_CONTENT_HASH)
 
-        assertNotEquals(uploadIdOf(identity()), uploadIdOf(changed))
+        assertNotEquals(identity(), changed)
     }
 
     @Test
-    fun `changed original name produces a different upload id`() {
+    fun `changed original name produces a different identity`() {
         val changed = identity(originalName = OTHER_ORIGINAL_NAME)
 
-        assertNotEquals(uploadIdOf(identity()), uploadIdOf(changed))
+        assertNotEquals(identity(), changed)
     }
 
     @Test
-    fun `changed tracked time produces a different upload id`() {
+    fun `changed tracked time produces a different identity`() {
         val changed = identity(trackedTimeMillis = OTHER_TRACKED_TIME_MILLIS)
 
-        assertNotEquals(uploadIdOf(identity()), uploadIdOf(changed))
+        assertNotEquals(identity(), changed)
     }
 
     @Test
-    fun `canonical encoding separates adjacent hash and name boundaries`() {
-        val hashThenName = identity(contentSha256 = HASH_AB, originalName = NAME_C)
-        val noSeparator = identity(contentSha256 = HASH_A, originalName = NAME_BC)
-
-        assertNotEquals(uploadIdOf(hashThenName), uploadIdOf(noSeparator))
+    fun `successive upload ids differ`() {
+        assertNotEquals(newVersionUploadId(), newVersionUploadId())
     }
 
     @Test
-    fun `upload id is 64 lowercase hexadecimal characters`() {
-        val uploadId = uploadIdOf(identity())
+    fun `new upload id is a canonical UUIDv4 with the RFC 4122 variant`() {
+        val uploadId = newVersionUploadId()
+        val uuid = UUID.fromString(uploadId)
 
-        assertEquals(SHA256_HEX_LENGTH, uploadId.length)
-        assertTrue(SHA256_HEX_PATTERN.matches(uploadId))
+        assertEquals(uploadId, uuid.toString())
+        assertEquals(UUID_VERSION_4, uuid.version())
+        assertEquals(UUID_VARIANT_RFC_4122, uuid.variant())
     }
 
     private fun identity(
@@ -67,11 +66,7 @@ class MediaVersionIdentityTest {
         const val OTHER_ORIGINAL_NAME = "renamed-photo.jpg"
         const val TRACKED_TIME_MILLIS = 1_700_000_000_000L
         const val OTHER_TRACKED_TIME_MILLIS = 1_700_000_000_001L
-        const val HASH_AB = "ab"
-        const val HASH_A = "a"
-        const val NAME_C = "c"
-        const val NAME_BC = "bc"
-        const val SHA256_HEX_LENGTH = 64
-        val SHA256_HEX_PATTERN = Regex("[0-9a-f]{64}")
+        const val UUID_VERSION_4 = 4
+        const val UUID_VARIANT_RFC_4122 = 2
     }
 }
