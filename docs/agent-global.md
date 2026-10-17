@@ -1,6 +1,6 @@
 # Global agent instructions
 
-These instructions apply to all four workstreams and are copied with the public monorepo into each workstream clone. The shared project boundary consists of this file, `docs/specification-v1.md`, the assigned workstream brief and role file, explicitly published API/protocol contracts under `contracts/`, root `AGENTS.md` for Rust practices, and daily review files mounted read-only. Other workstream briefs and role files are not shared context.
+These instructions apply to all four workstreams and are copied with the public monorepo into each workstream clone. The shared project boundary consists of this file, `docs/specification-v1.md`, the shared architecture and cross-cutting SRS in `docs/specification-v1.md`, only the assigned area SRS file in `docs/specification-v1/`, the assigned workstream brief and role file, explicitly published API/protocol contracts under `contracts/`, root `AGENTS.md` for Rust practices, and daily review files mounted read-only. Other workstream briefs and role files are not shared context.
 
 ## Workstream ownership and read scope
 
@@ -8,12 +8,24 @@ Each workstream has its own clone of the same monorepo and its own checkout, bra
 
 The workstream map is:
 
-- `android/`: Android client and Android tests.
-- `distributed-server/`: distributed Rust storage nodes and their component tests.
-- `dedicated-server/`: Rust registration/bootstrap/control-plane service and its component tests.
-- `test-environment/`: Rust test harness, Docker scenarios, shared test utilities, mocks, and fakes.
+- `android/`: Android client and Android tests; SRS `docs/specification-v1/android.md`.
+- `distributed-server/`: distributed Rust storage nodes and their component tests; SRS `docs/specification-v1/storage-cluster.md`.
+- `dedicated-server/`: Rust registration/bootstrap/control-plane service and its component tests; SRS `docs/specification-v1/dedicated-server.md`.
+- `test-environment/`: Rust test harness, Docker scenarios, shared test utilities, mocks, and fakes; SRS `docs/specification-v1/test-environment.md`.
 
-The assigned orchestrator owns only its mapped area. It may delegate only tasks inside that area to its own worker subagents, and those workers may read and change only files in their assigned task paths. The reviewer receives the same scope and may inspect the complete diff for that workstream only. The orchestrator must define explicit file/path ownership before delegating and must not ask a worker or reviewer to inspect another workstream's implementation.
+The assigned orchestrator owns only its mapped area and must use its area SRS together with the shared architecture; other area SRS files are not part of its implementation context. It may delegate only tasks inside that area to its own worker subagents, and those workers may read and change only files in their assigned task paths. The reviewer receives the same scope and may inspect the complete diff for that workstream only. The orchestrator must define explicit file/path ownership before delegating and must not ask a worker or reviewer to inspect another workstream's implementation.
+
+## Normative requirements and task formation
+
+The applicable area SRS plus `docs/specification-v1.md` for shared architecture and cross-cutting requirements are the sole sources of product requirements. Schedule implementation only for requirements marked `MUST / Утверждено`; do not implement behavior dependent on an unresolved `OPEN` decision. Published API/protocol contracts may refine wire representation only where the SRS delegates those details to a contract. This file, area role briefs, GitHub issues, PR descriptions/comments, code, and daily review notes describe workflow or context; they do not add product behavior or acceptance criteria.
+
+Before delegating implementation or test work, the orchestrator must identify exact requirement IDs and revisions from the SRS. It then creates one or more bounded tasks, each naming the requirement IDs it covers, assigned paths, expected change, and relevant verification. Multiple tasks may cover one requirement when they have disjoint responsibilities; one task may cover several requirements when they form one coherent change. Every code or test change must trace back to the cited requirements, and the reviewer checks that traceability in the PR.
+
+An issue is a work request, not a normative requirement. The orchestrator may pick it up only when it maps to existing SRS requirement IDs or is an explicitly scoped repository/process-maintenance task. If the requested behavior is absent, ambiguous, incomplete, or conflicts with the SRS, do not implement or test an interpretation. Create a separate specification-change task/PR first. The proposal must state the requirement, scope, priority/status, owner, source, and objective verification criterion in the appropriate SRS; use a unique ID and revision. After that specification PR is reviewed and merged, create or resume implementation tasks against its requirement IDs. If the requirement cannot be clarified from available decisions, report the exact gap to the operator.
+
+An SRS change must explicitly name the SRS file and assign it to one workstream. An area SRS is owned by its mapped workstream. A change to shared `docs/specification-v1.md` requires a shared-file issue with one named owner; do not let multiple workstreams edit shared requirements concurrently. The specification-change task is subject to the same path, review, and PR workflow as implementation work.
+
+Daily review notes and GitHub review comments remain valuable process feedback. They may guide implementation style, task planning, and review emphasis, but a requested product behavior becomes binding only after it is recorded in the SRS and merged. A code review must flag behavior that has no SRS basis, even if an issue or note requested it.
 
 ### Empty-repository bootstrap ownership
 
