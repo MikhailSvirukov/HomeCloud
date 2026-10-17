@@ -1,8 +1,8 @@
 //! Loading and validation of the dedicated server configuration.
 //!
 //! The configuration describes how the control plane listens, its own key
-//! identity, heartbeat timing, password derivation parameters, and the fixed
-//! storage cluster it bootstraps.
+//! identity, heartbeat timing, password derivation parameters, the structured
+//! log file, and the fixed storage cluster it bootstraps.
 //! `serde` enforces the shape of every field while parsing, and the cross-field
 //! rules (non-empty and unique entries) are checked afterwards so the runtime
 //! can assume a usable [`ServerConfig`].
@@ -51,6 +51,8 @@ pub struct ServerConfig {
     pub(crate) heartbeat: HeartbeatConfig,
     /// Argon2id parameters and salt length used to derive password verifiers.
     pub(crate) password: PasswordConfig,
+    /// Structured log file configuration.
+    pub(crate) logging: LoggingConfig,
     /// Fixed storage cluster bootstrap information.
     pub(crate) cluster: ClusterConfig,
 }
@@ -91,6 +93,14 @@ pub(crate) struct PasswordConfig {
     pub(crate) parallelism: NonZeroU32,
     /// Salt length in bytes.
     pub(crate) salt_length_bytes: NonZeroUsize,
+}
+
+/// Structured log file configuration.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LoggingConfig {
+    /// Path of the structured JSON Lines log file.
+    pub(crate) path: PathBuf,
 }
 
 /// Fixed storage cluster bootstrap information.
@@ -286,6 +296,11 @@ impl ServerConfig {
         Ok(config)
     }
 
+    /// Path of the configured structured log file.
+    pub fn logging_path(&self) -> &Path {
+        &self.logging.path
+    }
+
     /// Read, parse and validate a configuration file.
     pub fn load(path: &Path) -> Result<Self> {
         std::fs::read_to_string(path)
@@ -431,6 +446,10 @@ mod tests {
         assert_eq!(config.password.iterations.get(), 1);
         assert_eq!(config.password.parallelism.get(), 1);
         assert_eq!(config.password.salt_length_bytes.get(), 16);
+        assert_eq!(
+            config.logging_path(),
+            Path::new("/var/log/homecloud/dedicated-server.log")
+        );
         assert_eq!(config.cluster.nodes.len(), 2);
         assert_eq!(
             config.cluster.nodes[0].sender_id.as_bytes(),
