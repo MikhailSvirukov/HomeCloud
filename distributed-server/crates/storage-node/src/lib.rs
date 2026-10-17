@@ -73,4 +73,4 @@ pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};
-pub use storage_layout::{LayoutError, StorageLayout, ACCOUNTS_DIR, RAFT_DIR, UPLOAD_ID_LEN};
+pub use storage_layout::{LayoutError, StorageLayout, UPLOAD_ID_LEN};

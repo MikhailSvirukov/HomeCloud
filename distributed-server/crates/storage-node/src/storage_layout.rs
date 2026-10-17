@@ -4,18 +4,19 @@
 //! `CFG-CL-036 / 1` (accounts/raft roots and the blob path).
 
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Directory holding the per-account blob directories.
-pub const ACCOUNTS_DIR: &str = "accounts";
+const ACCOUNTS_DIR: &str = "accounts";
 /// Directory holding Raft state.
-pub const RAFT_DIR: &str = "raft";
+const RAFT_DIR: &str = "raft";
 /// Length of an upload id in bytes.
 pub const UPLOAD_ID_LEN: usize = 16;
 
 /// Failure modes when building a storage path.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LayoutError {
+    /// The login was empty or contained a byte outside ASCII `[A-Za-z0-9._-]`.
     #[error("login must be non-empty ASCII [A-Za-z0-9._-]")]
     InvalidLogin,
 }
@@ -25,18 +26,14 @@ type Result<T> = core::result::Result<T, LayoutError>;
 /// Data-directory layout of a storage node.
 #[derive(Debug, Clone)]
 pub struct StorageLayout {
-    root: PathBuf,
+    /// Configured data root.
+    pub root: PathBuf,
 }
 
 impl StorageLayout {
     /// Builds the layout rooted at `root`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
-    }
-
-    /// Configured data root.
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// `root/accounts`.

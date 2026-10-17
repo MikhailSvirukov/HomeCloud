@@ -16,12 +16,18 @@ fn encoded_login_and_upload_id_make_the_blob_path() {
     let layout = StorageLayout::new("/data");
 
     let blob = layout
-        .blob_path("alice", [0u8; UPLOAD_ID_LEN])
+        .blob_path(
+            "alice",
+            [
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+                0x0e, 0x0f,
+            ],
+        )
         .expect("valid login and upload id");
 
     assert_eq!(
         blob,
-        PathBuf::from("/data/accounts/616c696365/00000000000000000000000000000000")
+        PathBuf::from("/data/accounts/616c696365/000102030405060708090a0b0c0d0e0f")
     );
 }
 
@@ -79,23 +85,21 @@ fn rejects_invalid_logins() {
 }
 
 #[test]
-fn root_contains_accounts_and_raft_directories() {
-    let layout = StorageLayout::new("/data");
-
-    assert_eq!(layout.root(), Path::new("/data"));
-    assert_eq!(layout.accounts_dir(), PathBuf::from("/data/accounts"));
-    assert_eq!(layout.raft_dir(), PathBuf::from("/data/raft"));
-}
-
-#[test]
 fn ensure_dirs_creates_both_directories() {
     let root = unique_temp_dir();
     let layout = StorageLayout::new(&root);
+
+    assert_eq!(layout.accounts_dir(), layout.root.join("accounts"));
+    assert_eq!(layout.raft_dir(), layout.root.join("raft"));
+    assert!(!layout.accounts_dir().exists());
+    assert!(!layout.raft_dir().exists());
 
     layout
         .ensure_dirs()
         .expect("temp directories can be created");
 
+    assert_eq!(layout.accounts_dir(), layout.root.join("accounts"));
+    assert_eq!(layout.raft_dir(), layout.root.join("raft"));
     assert!(layout.accounts_dir().is_dir());
     assert!(layout.raft_dir().is_dir());
 
