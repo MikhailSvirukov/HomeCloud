@@ -118,6 +118,21 @@ services:
       - android-cache-dedicated:/home/opencode/.android
       - general-cache-dedicated:/home/opencode/.cache
 
+  dedicated-server-runtime:
+    image: homecloud-dedicated-server:${DEDICATED_SERVER_VERSION:-0.1.0}
+    build:
+      context: .
+      dockerfile: dedicated-server/Dockerfile
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    volumes:
+      - ${DEDICATED_SERVER_CONFIG_DIR:-./dedicated-server/config}:/etc/homecloud:ro
+    networks: [dedicated-server-net]
+
   test-environment:
     <<: *agent
     image: homecloud-test-environment-agent:${OPENCODE_VERSION:-2.0.27}

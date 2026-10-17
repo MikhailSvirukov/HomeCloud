@@ -42,6 +42,44 @@ root. Consumers therefore use `dedicated_server::` paths (for example
 `dedicated_server::ServerConfig`) rather than module paths such as
 `dedicated_server::config::ServerConfig`.
 
+## Running the server image
+
+`Dockerfile` builds a multi-stage image with the repository root as the build
+context. The runtime stage contains only the release binary at
+`/usr/local/bin/dedicated-server` and runs it as a non-root user. The image reads
+the configuration file named by `HOMECLOUD_DEDICATED_SERVER_CONFIG`, which is set
+to `/etc/homecloud/dedicated-server.toml`; the configuration directory is
+expected to be mounted read-only at `/etc/homecloud`.
+
+The `dedicated-server-runtime` Compose service mounts
+`${DEDICATED_SERVER_CONFIG_DIR:-./dedicated-server/config}` at that path. Copy
+the example configuration and generate placeholder keys before the first run:
+
+```bash
+mkdir -p dedicated-server/config/keys
+cp dedicated-server/config/dedicated-server.example.toml \
+  dedicated-server/config/dedicated-server.toml
+openssl rand -out dedicated-server/config/keys/encryption.key 32
+openssl rand -out dedicated-server/config/keys/signing.key 32
+docker compose build dedicated-server-runtime
+docker compose up dedicated-server-runtime
+```
+
+The equivalent without Compose:
+
+```bash
+docker build -f dedicated-server/Dockerfile -t homecloud-dedicated-server:0.1.0 .
+docker run --rm --read-only \
+  -v "$PWD/dedicated-server/config:/etc/homecloud:ro" \
+  homecloud-dedicated-server:0.1.0
+```
+
+The two key files named by `[identity]` must exist under the mounted directory,
+be non-empty, contain different material, and be readable by the container user.
+The process validates its configuration, writes JSON Lines events to stderr, and
+exits; it does not listen on `listen` and publishes no ports until the network
+layer exists.
+
 ## Logging
 
 The binary writes UTF-8 JSON Lines events to stderr: each line is one JSON
