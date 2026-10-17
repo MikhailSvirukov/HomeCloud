@@ -111,21 +111,37 @@ empty. The default level is `info`; set `RUST_LOG` to override it (for example
 
 The file rotates so it does not grow without bound. A rotation starts a new
 active file when appending the next record would exceed `max_file_size_bytes`,
-or when the active file is older than `max_file_age_ms`. The previous active
-file is renamed in the same directory to `<file name>.<UTC epoch milliseconds
-of the segment start>` (for example `dedicated-server.log.1750000000000`); a
-numeric suffix such as `.1` is added when that name already exists, so rotation
-never overwrites a file.
+when the active file is older than `max_file_age_ms`, or when the writer opens
+an active file that already exceeds either limit. The previous active file is
+renamed in the same directory to `<file name>.<UTC epoch milliseconds of the
+segment start>` (for example `dedicated-server.log.1750000000000`); a numeric
+suffix such as `.1` is added when that name already exists, so rotation never
+overwrites a file. Within one process the timestamp is the maximum of the
+segment start and the previous rotation timestamp plus one, so names increase
+monotonically and a freed name is not reused. After a restart a timestamp can
+be reused; the numeric suffix then separates the generations. Cross-restart
+ordering is best effort when a reused timestamp and a previous-run file share a
+modification time, because the suffix does not record which run is newer.
 
-Rotated files are pruned oldest first, at startup, after each rotation, and
-whenever appending a record pushed the set over the size limit. A rotated file
-is deleted when its modification time is older than `retention_ms`, or when the
-total size of the active file plus all rotated files exceeds
-`max_total_size_bytes`; pruning stops once both limits are satisfied. Only
-files whose names match the rotated-name pattern of the configured path are
-removed, the active file is never removed, and unrelated files in the directory
-are left untouched. A record larger than `max_file_size_bytes` is written whole
-to an empty active file so a JSON line is never split.
+Rotated files are pruned oldest first when the writer opens, after every
+rotation, before a record that would push the total over `max_total_size_bytes`,
+and at least once every `min(retention_ms, max_file_age_ms)` of writing. A
+rotated file is deleted when its modification time is older than `retention_ms`,
+or when the total size of the active file plus all rotated files must shrink so
+the incoming record fits `max_total_size_bytes`; pruning stops once no file is
+expired and the incoming record fits. Files are ordered by modification time,
+then by the embedded timestamp, then by the numeric suffix, so equal timestamps
+still prune deterministically. Only files whose names match the rotated-name
+pattern of the configured path are removed, the active file is never removed,
+and unrelated files in the directory are left untouched.
+
+A record larger than `max_file_size_bytes` is written whole to an empty active
+file so a JSON line is never split. A record larger than `max_total_size_bytes`
+is also written whole; either case temporarily leaves the file or the whole set
+above its configured limit instead of truncating the record. Reserve free space
+beyond `max_total_size_bytes` in the log directory for the active file and for
+filesystem overhead; the example values stay well below the 1 GiB tmpfs used by
+the runtime setup.
 
 Each event carries:
 
@@ -190,14 +206,16 @@ for the whole process and flushes buffered records when dropped.
   `max_total_size_bytes` (maximum size of the active file plus every rotated
   file). It is required and has no default; the process opens it in append mode.
   `max_total_size_bytes` must be at least `max_file_size_bytes`, otherwise
-  loading fails. An unopenable path is a startup failure.
+  loading fails. A path that cannot be initialized is a startup failure. Leave
+  free space beyond `max_total_size_bytes` in the log directory for the active
+  file and filesystem overhead.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
   keys are 16- and 32-byte values written in hexadecimal.
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
 
-Example, matching `tests/fixtures/valid_server.toml`:
+Example:
 
 ```toml
 listen = "10.0.0.1:7000"
@@ -223,8 +241,8 @@ salt_length_bytes = 16
 path = "/var/log/homecloud/dedicated-server.log"
 retention_ms = 604800000
 max_file_age_ms = 86400000
-max_file_size_bytes = 104857600
-max_total_size_bytes = 1073741824
+max_file_size_bytes = 52428800
+max_total_size_bytes = 536870912
 
 [[cluster.nodes]]
 sender_id = "00000000000000000000000000000001"

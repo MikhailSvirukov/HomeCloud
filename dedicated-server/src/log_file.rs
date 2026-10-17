@@ -2,10 +2,17 @@
 //!
 //! The active file is rotated before a write that would exceed the configured
 //! single-file size or after it has lived longer than the configured maximum
-//! age. A rotated file is named `<file name>.<UTC epoch milliseconds>`, with a
+//! age, and at open when an existing active file already exceeds either limit.
+//! A rotated file is named `<file name>.<UTC epoch milliseconds>`, with a
 //! numeric suffix added when that name is taken, so rotation never overwrites
-//! an existing file. After every rotation the rotated set is pruned by age and
-//! by the total size of the active file plus all rotated files.
+//! an existing file. Rotated files are pruned at open, after every rotation,
+//! before a record that would cross the total size limit, and periodically
+//! while records are written. Within one process rotation timestamps increase
+//! monotonically, so a freed name is not reused there. A restart can reuse a
+//! timestamp; the numeric suffix then separates the generations. Cross-restart
+//! ordering is best effort when a reused timestamp and a previous-run file
+//! share a modification time, because the suffix does not record which run is
+//! newer.
 
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
@@ -53,11 +60,14 @@ pub(crate) struct RotatingFile<C = fn() -> u64> {
     size: u64,
     rotated_total: u64,
     segment_started_at: u64,
+    last_rotation_millis: Option<u64>,
+    last_prune_at: u64,
     now: C,
 }
 
 impl RotatingFile<fn() -> u64> {
-    /// Open the configured active file and prune the rotated set.
+    /// Open the configured active file, rotate it when it already exceeds a
+    /// limit, and prune the rotated set.
     pub(crate) fn new(path: &Path, limits: LogLimits) -> io::Result<Self> {
         Self::open_with_clock(path, limits, system_now_millis)
     }
@@ -85,9 +95,15 @@ impl<C: Fn() -> u64> RotatingFile<C> {
             size,
             rotated_total: 0,
             segment_started_at,
+            last_rotation_millis: None,
+            last_prune_at: current,
             now,
         };
-        writer.prune(current)?;
+        if writer.should_rotate(current, 0) {
+            writer.rotate(current)?;
+        } else {
+            writer.prune(current, 0)?;
+        }
         Ok(writer)
     }
 
@@ -107,19 +123,36 @@ impl<C: Fn() -> u64> RotatingFile<C> {
         self.flush()?;
         drop(self.file.take());
 
-        let rotated = self.rotated_path(self.segment_started_at)?;
+        let rotation_millis = self.next_rotation_millis();
+        let rotated = self.rotated_path(rotation_millis)?;
         fs::rename(&self.path, &rotated)?;
 
         self.file = Some(open_append(&self.path)?);
+        self.rotated_total = self.rotated_total.saturating_add(self.size);
         self.size = 0;
         self.segment_started_at = current;
+        self.last_rotation_millis = Some(rotation_millis);
 
-        self.prune(current)
+        self.prune(current, 0)
     }
 
-    /// Delete rotated files, oldest first, until neither the retention period
-    /// nor the total size limit is exceeded. The active file is never removed.
-    fn prune(&mut self, current: u64) -> io::Result<()> {
+    /// Next rotation timestamp: never below the segment start and strictly
+    /// above the previous rotation, so names rise monotonically within a run.
+    fn next_rotation_millis(&self) -> u64 {
+        self.last_rotation_millis
+            .map_or(self.segment_started_at, |last| {
+                self.segment_started_at.max(last.saturating_add(1))
+            })
+    }
+
+    fn prune_interval(&self) -> u64 {
+        duration_millis(self.limits.retention).min(duration_millis(self.limits.max_file_age))
+    }
+
+    /// Delete rotated files, oldest first, until no file is expired and the
+    /// retained total plus `incoming` bytes fits the total size limit. The
+    /// active file is never removed.
+    fn prune(&mut self, current: u64, incoming: usize) -> io::Result<()> {
         let parent = match self.path.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => parent,
             _ => Path::new("."),
@@ -135,7 +168,8 @@ impl<C: Fn() -> u64> RotatingFile<C> {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
             };
-            let Some(rotated_millis) = rotated_millis(&entry.file_name(), base) else {
+            let Some((rotated_millis, generation)) = rotated_name_parts(&entry.file_name(), base)
+            else {
                 continue;
             };
             let metadata = match entry.metadata() {
@@ -151,6 +185,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
                 size: metadata.len(),
                 modified: metadata.modified()?,
                 rotated_millis,
+                generation,
             });
         }
 
@@ -158,9 +193,11 @@ impl<C: Fn() -> u64> RotatingFile<C> {
             left.modified
                 .cmp(&right.modified)
                 .then(left.rotated_millis.cmp(&right.rotated_millis))
+                .then(left.generation.cmp(&right.generation))
                 .then_with(|| left.path.cmp(&right.path))
         });
 
+        let incoming = u64::try_from(incoming).unwrap_or(u64::MAX);
         let mut total_size = self.size.saturating_add(
             rotated
                 .iter()
@@ -170,7 +207,8 @@ impl<C: Fn() -> u64> RotatingFile<C> {
 
         for file in rotated {
             let expired = current.saturating_sub(millis_since_epoch(file.modified)) > retention;
-            if !expired && total_size <= self.limits.max_total_size {
+            let fits = total_size.saturating_add(incoming) <= self.limits.max_total_size;
+            if !expired && fits {
                 break;
             }
             match fs::remove_file(&file.path) {
@@ -182,23 +220,24 @@ impl<C: Fn() -> u64> RotatingFile<C> {
             }
         }
         self.rotated_total = total_size.saturating_sub(self.size);
+        self.last_prune_at = current;
 
         Ok(())
     }
 
-    fn rotated_path(&self, current: u64) -> io::Result<PathBuf> {
+    fn rotated_path(&self, rotation_millis: u64) -> io::Result<PathBuf> {
         let base = self.path.file_name().ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "log path has no file name")
         })?;
         let mut suffix = None;
         let mut candidate = self
             .path
-            .with_file_name(rotated_name(base, current, suffix));
+            .with_file_name(rotated_name(base, rotation_millis, suffix));
         while candidate.try_exists()? {
             suffix = Some(suffix.map_or(1, |value: u64| value.saturating_add(1)));
             candidate = self
                 .path
-                .with_file_name(rotated_name(base, current, suffix));
+                .with_file_name(rotated_name(base, rotation_millis, suffix));
         }
         Ok(candidate)
     }
@@ -219,16 +258,24 @@ impl<C: Fn() -> u64> Write for RotatingFile<C> {
         if self.should_rotate(current, buf.len()) {
             self.rotate(current)?;
         }
+
+        // Reserve the incoming record before appending it, so a crossing
+        // record never needs filesystem space beyond the configured total.
+        let incoming = u64::try_from(buf.len()).unwrap_or(u64::MAX);
+        let prune_due = current.saturating_sub(self.last_prune_at) >= self.prune_interval();
+        let would_exceed = self
+            .size
+            .saturating_add(self.rotated_total)
+            .saturating_add(incoming)
+            > self.limits.max_total_size;
+        if prune_due || would_exceed {
+            self.prune(current, buf.len())?;
+        }
+
         let written = self.file()?.write(buf)?;
         self.size = self
             .size
             .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
-        // The set must stay inside the configured limit once the record is
-        // appended, so a record written after a rotation can still force the
-        // oldest rotated files out.
-        if self.size.saturating_add(self.rotated_total) > self.limits.max_total_size {
-            self.prune(current)?;
-        }
         Ok(written)
     }
 
@@ -243,6 +290,7 @@ struct RotatedFile {
     size: u64,
     modified: SystemTime,
     rotated_millis: u64,
+    generation: u64,
 }
 
 fn open_append(path: &Path) -> io::Result<File> {
@@ -258,26 +306,28 @@ fn rotated_name(base: &OsStr, millis: u64, suffix: Option<u64>) -> PathBuf {
     name.into()
 }
 
-/// Parse the rotation timestamp from a file name that matches this path's
-/// rotated-name pattern; unrelated names return `None`.
-fn rotated_millis(file_name: &OsStr, base: &OsStr) -> Option<u64> {
+/// Parse the rotation timestamp and numeric generation from a file name that
+/// matches this path's rotated-name pattern; unrelated names return `None`.
+///
+/// A name without a suffix is generation zero, so it sorts before `.1`.
+fn rotated_name_parts(file_name: &OsStr, base: &OsStr) -> Option<(u64, u64)> {
     let file_name = file_name.to_str()?;
     let base = base.to_str()?;
     let remainder = file_name.strip_prefix(base)?.strip_prefix('.')?;
-    let (millis, suffix) = match remainder.split_once('.') {
-        Some((millis, suffix)) => (millis, Some(suffix)),
+    let (millis, generation) = match remainder.split_once('.') {
+        Some((millis, generation)) => (millis, Some(generation)),
         None => (remainder, None),
     };
     if !is_ascii_digits(millis) {
         return None;
     }
-    if let Some(suffix) = suffix {
-        if !is_ascii_digits(suffix) {
-            return None;
-        }
-    }
+    let generation = match generation {
+        Some(generation) if is_ascii_digits(generation) => generation.parse().ok()?,
+        Some(_) => return None,
+        None => 0,
+    };
 
-    millis.parse().ok()
+    Some((millis.parse().ok()?, generation))
 }
 
 fn is_ascii_digits(value: &str) -> bool {
@@ -386,7 +436,7 @@ mod tests {
             .map(|entry| entry.expect("the directory entry must be readable").path())
             .filter(|path| {
                 path.file_name()
-                    .is_some_and(|name| rotated_millis(name, OsStr::new(ACTIVE_NAME)).is_some())
+                    .is_some_and(|name| rotated_name_parts(name, OsStr::new(ACTIVE_NAME)).is_some())
             })
             .collect();
         files.sort();
@@ -483,12 +533,22 @@ mod tests {
         let dir = TempDir::new("total-size");
         let path = dir.file(ACTIVE_NAME);
         let clock = Arc::new(TestClock::new());
-        let mut file = writer(&path, limits(40, 130, 1_000_000, 1_000_000), &clock);
 
-        for index in 0..=4 {
-            write_record(&mut file, index, 0);
+        {
+            let mut file = writer(&path, limits(50, 1_000, 1_000_000, 1_000_000), &clock);
+            for index in 0..=4 {
+                write_record(&mut file, index, 0);
+            }
+            file.flush().expect("the active file must flush");
         }
-        file.flush().expect("the active file must flush");
+
+        let created = rotated_files(&dir.path);
+        assert_eq!(created.len(), 4, "four files must have been rotated");
+        for (offset, rotated) in created.iter().enumerate() {
+            set_modified(rotated, BASE_MILLIS + offset as u64);
+        }
+
+        let _file = writer(&path, limits(50, 130, 1_000_000, 1_000_000), &clock);
 
         let remaining = rotated_files(&dir.path);
         assert_eq!(remaining.len(), 2, "only two rotated files fit");
@@ -514,6 +574,201 @@ mod tests {
         assert!(
             active.contains("\"index\":4"),
             "the active file must keep the newest record"
+        );
+    }
+
+    #[test]
+    fn retention_expires_between_rotations() {
+        let dir = TempDir::new("retention-interval");
+        let path = dir.file(ACTIVE_NAME);
+        let expired = dir.file(&format!("{ACTIVE_NAME}.{}", BASE_MILLIS - 500));
+        fs::write(&expired, record(0, 0)).expect("the rotated file must be written");
+        set_modified(&expired, BASE_MILLIS - 500);
+
+        let clock = Arc::new(TestClock::new());
+        let mut file = writer(
+            &path,
+            limits(1_000_000, 1_000_000, 1_000, 1_000_000),
+            &clock,
+        );
+        assert!(
+            expired.exists(),
+            "the rotated file is not expired when the writer opens"
+        );
+
+        clock.advance(1_001);
+        write_record(&mut file, 1, 0);
+        file.flush().expect("the active file must flush");
+
+        assert!(
+            !expired.exists(),
+            "retention must delete the rotated file without a rotation"
+        );
+        assert_eq!(rotated_files(&dir.path).len(), 0);
+    }
+
+    #[test]
+    fn reopening_rotates_an_active_file_that_exceeds_the_size_limit() {
+        let dir = TempDir::new("open-size");
+        let path = dir.file(ACTIVE_NAME);
+        let existing = record(0, 20);
+        fs::write(&path, &existing).expect("the active file must be written");
+        let clock = Arc::new(TestClock::new());
+
+        let _file = writer(&path, limits(40, 1_000_000, 1_000_000, 1_000_000), &clock);
+
+        let rotated = rotated_files(&dir.path);
+        assert_eq!(rotated.len(), 1, "the oversized active file must rotate");
+        assert_eq!(
+            fs::read(&rotated[0]).expect("the rotated file must be readable"),
+            existing
+        );
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("the active file must have metadata")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn reopening_rotates_an_active_file_older_than_the_age_limit() {
+        let dir = TempDir::new("open-age");
+        let path = dir.file(ACTIVE_NAME);
+        let existing = record(0, 0);
+        fs::write(&path, &existing).expect("the active file must be written");
+        set_modified(&path, BASE_MILLIS - 2_000);
+        let clock = Arc::new(TestClock::new());
+
+        let _file = writer(
+            &path,
+            limits(1_000_000, 1_000_000, 1_000_000, 1_000),
+            &clock,
+        );
+
+        let rotated = rotated_files(&dir.path);
+        assert_eq!(rotated.len(), 1, "the old active file must rotate");
+        assert_eq!(
+            fs::read(&rotated[0]).expect("the rotated file must be readable"),
+            existing
+        );
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("the active file must have metadata")
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn rotation_adds_a_suffix_when_the_timestamp_name_exists() {
+        let dir = TempDir::new("name-collision");
+        let path = dir.file(ACTIVE_NAME);
+        let existing = dir.file(&format!("{ACTIVE_NAME}.{BASE_MILLIS}"));
+        fs::write(&existing, b"previous run").expect("the existing file must be written");
+        let content = record(0, 20);
+        fs::write(&path, &content).expect("the active file must be written");
+        set_modified(&path, BASE_MILLIS);
+        let clock = Arc::new(TestClock::new());
+
+        let _file = writer(&path, limits(40, 1_000_000, 1_000_000, 1_000_000), &clock);
+
+        assert_eq!(
+            fs::read_to_string(&existing).expect("the existing file must be readable"),
+            "previous run",
+            "an existing rotated file must never be overwritten"
+        );
+        let renamed = dir.file(&format!("{ACTIVE_NAME}.{BASE_MILLIS}.1"));
+        assert_eq!(
+            fs::read(&renamed).expect("the suffixed rotated file must be readable"),
+            content
+        );
+    }
+
+    #[test]
+    fn a_freed_rotation_name_is_not_reused_within_a_run() {
+        let dir = TempDir::new("name-reuse");
+        let path = dir.file(ACTIVE_NAME);
+        let clock = Arc::new(TestClock::new());
+        let mut file = writer(&path, limits(50, 1_000_000, 1, 1_000_000), &clock);
+
+        write_record(&mut file, 0, 0);
+        write_record(&mut file, 1, 0);
+        let first = rotated_files(&dir.path);
+        assert_eq!(first.len(), 1);
+        set_modified(&first[0], BASE_MILLIS - 2);
+
+        write_record(&mut file, 2, 0);
+        write_record(&mut file, 3, 0);
+        file.flush().expect("the active file must flush");
+
+        let names: Vec<String> = rotated_files(&dir.path)
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .expect("the rotated name must be UTF-8")
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                format!("{ACTIVE_NAME}.{}", BASE_MILLIS + 1),
+                format!("{ACTIVE_NAME}.{}", BASE_MILLIS + 2),
+            ],
+            "the freed base name must not be reused within a run"
+        );
+    }
+
+    #[test]
+    fn equal_modification_times_prune_by_numeric_generation() {
+        let dir = TempDir::new("generation-order");
+        let path = dir.file(ACTIVE_NAME);
+        let generation_two = dir.file(&format!("{ACTIVE_NAME}.{BASE_MILLIS}.2"));
+        let generation_ten = dir.file(&format!("{ACTIVE_NAME}.{BASE_MILLIS}.10"));
+        fs::write(&generation_two, vec![b'a'; 60]).expect("the rotated file must be written");
+        fs::write(&generation_ten, vec![b'b'; 60]).expect("the rotated file must be written");
+        set_modified(&generation_two, BASE_MILLIS);
+        set_modified(&generation_ten, BASE_MILLIS);
+        let clock = Arc::new(TestClock::new());
+
+        let _file = writer(&path, limits(64, 100, 1_000_000, 1_000_000), &clock);
+
+        assert!(
+            !generation_two.exists(),
+            "generation 2 must be removed before generation 10"
+        );
+        assert!(
+            generation_ten.exists(),
+            "generation 10 must survive the tie-break"
+        );
+    }
+
+    #[test]
+    fn an_oversized_record_is_written_whole_past_both_limits() {
+        let dir = TempDir::new("oversized-record");
+        let path = dir.file(ACTIVE_NAME);
+        let clock = Arc::new(TestClock::new());
+        let mut file = writer(&path, limits(10, 20, 1_000_000, 1_000_000), &clock);
+        let oversized = record(0, 0);
+
+        file.write_all(&oversized)
+            .expect("the oversized record must be written whole");
+        file.flush().expect("the active file must flush");
+
+        let contents = fs::read_to_string(&path).expect("the active file must be readable");
+        assert_eq!(contents.as_bytes(), oversized.as_slice());
+        let value: serde_json::Value = serde_json::from_str(contents.trim_end())
+            .expect("the oversized record must stay one complete JSON line");
+        assert_eq!(value["index"], 0);
+        assert_eq!(rotated_files(&dir.path).len(), 0);
+        assert!(
+            fs::metadata(&path)
+                .expect("the active file must have metadata")
+                .len()
+                > 20,
+            "the documented consequence is that the set exceeds the total limit"
         );
     }
 

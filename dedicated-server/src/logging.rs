@@ -302,13 +302,13 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 }
 
-/// Errors produced while opening the structured log writer.
+/// Errors produced while initializing the structured log writer.
 #[derive(Debug, Error)]
 pub enum LogError {
-    /// The configured log file could not be opened for appending.
-    #[error("failed to open log file '{path}': {source}")]
-    Open {
-        /// Configured log path that could not be opened.
+    /// The configured log file or its rotated set could not be initialized.
+    #[error("failed to initialize log file '{path}': {source}")]
+    Initialize {
+        /// Configured log path that could not be initialized.
         path: PathBuf,
         /// Underlying I/O failure.
         #[source]
@@ -349,11 +349,12 @@ pub fn init(logging: &LoggingConfig) -> Result<LogGuard, LogError> {
 }
 
 fn init_with_filter(logging: &LoggingConfig, filter: EnvFilter) -> Result<LogGuard, LogError> {
-    let file =
-        RotatingFile::new(&logging.path, log_limits(logging)).map_err(|source| LogError::Open {
+    let file = RotatingFile::new(&logging.path, log_limits(logging)).map_err(|source| {
+        LogError::Initialize {
             path: logging.path.clone(),
             source,
-        })?;
+        }
+    })?;
 
     let errors = Arc::new(AtomicU64::new(0));
     let (non_blocking, worker) = NonBlockingBuilder::default()
@@ -761,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn init_reports_an_unopenable_path_as_a_typed_error() {
+    fn init_reports_an_uninitializable_path_as_a_typed_error() {
         let dir = TempDir::new("unopenable");
         let path = dir.file("missing").join("dedicated-server.log");
 
@@ -769,7 +770,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            LogError::Open {
+            LogError::Initialize {
                 path: error_path,
                 ..
             } if error_path == path
