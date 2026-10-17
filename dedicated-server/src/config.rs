@@ -383,4 +383,21 @@ mod tests {
             Err(ConfigError::Parse { .. })
         ));
     }
+
+    #[test]
+    fn password_params_carry_each_configured_value() {
+        let document = VALID_SERVER
+            .replace("memory_kib = 8", "memory_kib = 24")
+            .replace("iterations = 1", "iterations = 3")
+            .replace("parallelism = 1", "parallelism = 2")
+            .replace("salt_length_bytes = 16", "salt_length_bytes = 20");
+        let config = ServerConfig::from_toml_str(&document).expect("valid fixture must parse");
+
+        let params = config.password.params();
+
+        assert_eq!(params.memory_kib.get(), 24);
+        assert_eq!(params.iterations.get(), 3);
+        assert_eq!(params.parallelism.get(), 2);
+        assert_eq!(params.salt_length_bytes.get(), 20);
+    }
 }

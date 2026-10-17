@@ -100,9 +100,16 @@ impl InstallationId {
         Self(*Uuid::new_v4().as_bytes())
     }
 
-    /// Wrap the wire bytes of an installation identifier.
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Self(bytes)
+    /// Wrap the wire bytes of an installation identifier, rejecting anything
+    /// that is not a UUIDv4.
+    pub fn from_bytes(bytes: [u8; 16]) -> Result<Self> {
+        let version_ok = bytes[6] >> 4 == 4;
+        let variant_ok = bytes[8] >> 6 == 0b10;
+        if version_ok && variant_ok {
+            Ok(Self(bytes))
+        } else {
+            Err(RegistrationError::InvalidInstallationId)
+        }
     }
 
     /// The identifier as wire bytes.
@@ -112,7 +119,7 @@ impl InstallationId {
 }
 
 /// Public keys of one client installation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct InstallationKeys {
     /// X25519 public key used for encrypted answers.
     pub encryption_public_key: [u8; 32],
@@ -154,7 +161,8 @@ pub struct Account {
 struct RecordedRequest {
     login: Login,
     keys: InstallationKeys,
-    outcome: RegistrationOutcome,
+    verifier: PasswordVerifier,
+    outcome: Option<RegistrationOutcome>,
 }
 
 /// In-memory account table with idempotent registration.
@@ -179,21 +187,34 @@ impl AccountRegistry {
         if let Some(recorded) = self.requests.get(&request.request_id) {
             let matches = recorded.login == request.login
                 && recorded.keys == request.keys
-                && match self.accounts.get(&recorded.login) {
-                    Some(account) => account.verifier.verify(&request.password)?,
-                    None => false,
-                };
-            return if matches {
-                Ok(recorded.outcome)
-            } else {
-                Err(RegistrationError::RequestIdConflict)
-            };
+                && recorded.verifier.verify(&request.password)?;
+            if !matches {
+                return Err(RegistrationError::RequestIdConflict);
+            }
+            if let Some(outcome) = recorded.outcome {
+                return Ok(outcome);
+            }
         }
+
+        self.register_fresh(request)
+    }
+
+    fn register_fresh(&mut self, request: RegistrationRequest) -> Result<RegistrationOutcome> {
+        let request_verifier = PasswordVerifier::derive(&request.password, self.params)?;
 
         let outcome = match self.accounts.entry(request.login.clone()) {
             Entry::Occupied(mut entry) => {
                 let account = entry.get_mut();
                 if !account.verifier.verify(&request.password)? {
+                    self.requests.insert(
+                        request.request_id,
+                        RecordedRequest {
+                            login: request.login,
+                            keys: request.keys,
+                            verifier: request_verifier,
+                            outcome: None,
+                        },
+                    );
                     return Err(RegistrationError::PasswordRejected);
                 }
                 let installation_id = InstallationId::generate();
@@ -207,7 +228,7 @@ impl AccountRegistry {
                 RegistrationOutcome::InstallationAdded { installation_id }
             }
             Entry::Vacant(entry) => {
-                let verifier = PasswordVerifier::derive(&request.password, self.params)?;
+                let verifier = PasswordVerifier::parse(request_verifier.as_str())?;
                 let installation_id = InstallationId::generate();
                 let mut installations = BTreeMap::new();
                 installations.insert(
@@ -231,7 +252,8 @@ impl AccountRegistry {
             RecordedRequest {
                 login: request.login,
                 keys: request.keys,
-                outcome,
+                verifier: request_verifier,
+                outcome: Some(outcome),
             },
         );
         Ok(outcome)
@@ -252,6 +274,9 @@ pub enum RegistrationError {
     /// The password did not match the existing account.
     #[error("the password does not match the registered account")]
     PasswordRejected,
+    /// The bytes do not encode a UUIDv4 installation identifier.
+    #[error("installation identifier is not a UUIDv4")]
+    InvalidInstallationId,
     /// Deriving or checking a password verifier failed.
     #[error(transparent)]
     Password(#[from] PasswordError),
@@ -272,6 +297,7 @@ mod tests {
     const OTHER_LOGIN: &str = "other_user";
     const PASSWORD: &str = "correct horse battery staple";
     const WRONG_PASSWORD: &str = "correct horse battery stapler";
+    const REPLACEMENT_PASSWORD: &str = "replacement account password";
     const MEMORY_KIB: u32 = 8;
     const ITERATIONS: u32 = 1;
     const PARALLELISM: u32 = 1;
@@ -306,6 +332,11 @@ mod tests {
             encryption_public_key: [seed; 32],
             signing_public_key: [seed.wrapping_add(1); 32],
         }
+    }
+
+    fn assert_keys(actual: &InstallationKeys, expected: InstallationKeys) {
+        assert_eq!(actual.encryption_public_key, expected.encryption_public_key);
+        assert_eq!(actual.signing_public_key, expected.signing_public_key);
     }
 
     fn request(
@@ -391,7 +422,7 @@ mod tests {
 
         assert_eq!(account.installations.len(), 1);
         assert_eq!(installation.id, installation_id);
-        assert_eq!(installation.keys, keys);
+        assert_keys(&installation.keys, keys);
         assert_eq!(bytes.len(), 16);
         assert_eq!(bytes[6] >> 4, 4);
         assert_eq!(bytes[8] >> 6, 0b10);
@@ -434,21 +465,21 @@ mod tests {
 
         assert_ne!(first_id, second_id);
         assert_eq!(account.installations.len(), 2);
-        assert_eq!(
-            account
+        assert_keys(
+            &account
                 .installations
                 .get(&first_id)
                 .expect("first installation must remain")
                 .keys,
-            first_keys
+            first_keys,
         );
-        assert_eq!(
-            account
+        assert_keys(
+            &account
                 .installations
                 .get(&second_id)
                 .expect("second installation must exist")
                 .keys,
-            second_keys
+            second_keys,
         );
     }
 
@@ -477,13 +508,13 @@ mod tests {
             .expect("account must remain");
         assert!(matches!(error, RegistrationError::PasswordRejected));
         assert_eq!(account.installations.len(), 1);
-        assert_eq!(
-            account
+        assert_keys(
+            &account
                 .installations
                 .get(&first_id)
                 .expect("first installation must remain")
                 .keys,
-            first_keys
+            first_keys,
         );
         assert_eq!(account.verifier.as_str(), verifier_before);
     }
@@ -590,6 +621,114 @@ mod tests {
         assert_eq!(registry.accounts.len(), 1);
         assert_eq!(account.login, login(LOGIN));
         assert_eq!(account.installations.len(), 2);
+    }
+
+    #[test]
+    fn failed_password_attempt_reserves_the_request_id() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let first_keys = keys(0xb1);
+        let first_id = created(
+            registry
+                .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))
+                .expect("first registration must succeed"),
+        );
+
+        let error = registry
+            .register(request(SECOND_REQUEST, LOGIN, WRONG_PASSWORD, keys(0xb2)))
+            .expect_err("wrong password must be rejected");
+        let conflict = registry
+            .register(request(SECOND_REQUEST, LOGIN, PASSWORD, keys(0xb3)))
+            .expect_err("a used request identifier must conflict");
+
+        let account = registry.account(&login(LOGIN)).expect("account must exist");
+        assert!(matches!(error, RegistrationError::PasswordRejected));
+        assert!(matches!(conflict, RegistrationError::RequestIdConflict));
+        assert_eq!(account.installations.len(), 1);
+        assert_keys(
+            &account
+                .installations
+                .get(&first_id)
+                .expect("first installation must remain")
+                .keys,
+            first_keys,
+        );
+    }
+
+    #[test]
+    fn replaying_a_failed_attempt_reproduces_the_password_rejection() {
+        let mut registry = AccountRegistry::new(fast_params());
+        registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0xc1)))
+            .expect("first registration must succeed");
+
+        let first = registry
+            .register(request(SECOND_REQUEST, LOGIN, WRONG_PASSWORD, keys(0xc2)))
+            .expect_err("wrong password must be rejected");
+        let repeated = registry
+            .register(request(SECOND_REQUEST, LOGIN, WRONG_PASSWORD, keys(0xc2)))
+            .expect_err("replaying the failed attempt must reject again");
+
+        assert!(matches!(first, RegistrationError::PasswordRejected));
+        assert!(matches!(repeated, RegistrationError::PasswordRejected));
+        assert_eq!(
+            registry
+                .account(&login(LOGIN))
+                .expect("account must exist")
+                .installations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn replay_uses_the_recorded_request_verifier() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let keys = keys(0xd1);
+        let first = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys))
+            .expect("first registration must succeed");
+        registry
+            .accounts
+            .get_mut(&login(LOGIN))
+            .expect("account must exist")
+            .verifier = PasswordVerifier::derive(REPLACEMENT_PASSWORD, fast_params())
+            .expect("replacement verifier must derive");
+
+        let repeated = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys))
+            .expect("replay must use the recorded request verifier");
+
+        assert_eq!(repeated, first);
+        assert_eq!(
+            registry
+                .account(&login(LOGIN))
+                .expect("account must exist")
+                .installations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn installation_id_from_bytes_accepts_only_uuid_v4_bits() {
+        let mut valid = [0_u8; 16];
+        valid[6] = 0x40;
+        valid[8] = 0x80;
+        assert!(InstallationId::from_bytes(valid).is_ok());
+
+        let mut wrong_version = valid;
+        wrong_version[6] = 0x30;
+        assert!(matches!(
+            InstallationId::from_bytes(wrong_version),
+            Err(RegistrationError::InvalidInstallationId)
+        ));
+
+        let mut wrong_variant = valid;
+        wrong_variant[8] = 0xc0;
+        assert!(matches!(
+            InstallationId::from_bytes(wrong_variant),
+            Err(RegistrationError::InvalidInstallationId)
+        ));
     }
 
     #[test]
