@@ -36,21 +36,25 @@ pub struct PlanSettings {
     pub storage_image: String,
     /// Builds the environment entries for each node container.
     pub env: EnvBuilder,
+    /// Container path of the node data volume that persists across container re-creation (TST-017); `None` adds no volume.
+    pub data_volume_path: Option<String>,
 }
 
 impl PlanSettings {
-    /// Creates settings from a network name, the two node images, and the environment builder.
+    /// Creates settings from a network name, the two node images, the environment builder, and the data volume path.
     pub fn new(
         network: impl Into<String>,
         dedicated_server_image: impl Into<String>,
         storage_image: impl Into<String>,
         env: EnvBuilder,
+        data_volume_path: Option<String>,
     ) -> Self {
         Self {
             network: network.into(),
             dedicated_server_image: dedicated_server_image.into(),
             storage_image: storage_image.into(),
             env,
+            data_volume_path,
         }
     }
     /// Image for a node role.
@@ -78,6 +82,8 @@ pub struct ContainerPlan {
     pub address: SocketAddr,
     /// Environment entries passed to the container.
     pub env: BTreeMap<String, String>,
+    /// Container path of the node data volume that persists across container re-creation (TST-017); `None` adds no volume.
+    pub data_volume_path: Option<String>,
 }
 
 /// Complete description of the cluster: one network plus one container per node.
@@ -101,6 +107,7 @@ impl ClusterPlan {
                 hostname: spec.label.clone(),
                 address: spec.address,
                 env: (settings.env)(spec),
+                data_volume_path: settings.data_volume_path.clone(),
             })
             .collect();
         Self {

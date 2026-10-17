@@ -14,7 +14,9 @@ use harness_docker::{
     container_stop, network_create, network_remove,
 };
 
-use common::{DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan};
+use common::{
+    DATA_VOLUME_PATH, DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan, plan_with_data_volume,
+};
 
 /// `docker network` subcommand.
 const NETWORK: &str = "network";
@@ -34,6 +36,8 @@ const NETWORK_FLAG: &str = "--network";
 const NETWORK_ALIAS: &str = "--network-alias";
 /// Environment variable flag.
 const ENV: &str = "-e";
+/// Volume-mount flag.
+const VOLUME: &str = "--volume";
 /// `docker stop` subcommand.
 const STOP: &str = "stop";
 /// `docker rm` subcommand.
@@ -84,6 +88,10 @@ fn expected_run_command(plan: &ClusterPlan, container: &ContainerPlan) -> Comman
         NETWORK_ALIAS,
         container.hostname.as_str(),
     ]);
+    if let Some(path) = &container.data_volume_path {
+        args.push(VOLUME.to_string());
+        args.push(format!("{name}-data:{path}"));
+    }
     args.extend(env_args(&container.env));
     args.push(container.image.clone());
     Command::new(DOCKER, args)
@@ -136,6 +144,32 @@ fn container_run_matches_the_expected_command_for_every_container() {
 
         assert_eq!(actual.program, expected.program);
         assert_eq!(actual.args, expected.args);
+    }
+}
+
+#[test]
+fn container_run_mounts_the_node_data_volume() {
+    let plan = plan_with_data_volume(DATA_VOLUME_PATH);
+
+    for container in &plan.containers {
+        let run = container_run(&plan, container);
+        let expected = expected_run_command(&plan, container);
+        assert_eq!(run.args, expected.args);
+
+        let volume = format!(
+            "{}-data:{DATA_VOLUME_PATH}",
+            container_name(&plan, container)
+        );
+        let flag = run
+            .args
+            .iter()
+            .position(|arg| arg.as_str() == VOLUME)
+            .expect("a container with a data volume renders the --volume flag");
+        assert_eq!(
+            run.args.get(flag + 1),
+            Some(&volume),
+            "--volume is followed by the node data volume specification"
+        );
     }
 }
 

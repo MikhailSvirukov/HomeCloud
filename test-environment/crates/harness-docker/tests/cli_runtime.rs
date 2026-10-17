@@ -10,10 +10,14 @@ mod common;
 use harness_core::HarnessError;
 use harness_docker::{
     CliClusterRuntime, ClusterPlan, ClusterRuntime, Command, ContainerPlan, RecordingCommandRunner,
-    container_remove, container_run, container_stop, network_create, network_remove,
+    container_name, container_remove, container_run, container_stop, network_create,
+    network_remove,
 };
 
-use common::{DOCKER, plan, plan_order};
+use common::{DATA_VOLUME_PATH, DOCKER, plan, plan_order, plan_with_data_volume};
+
+/// Volume-mount flag for `docker run`.
+const VOLUME: &str = "--volume";
 
 /// Renders the expected command for every plan container, in plan order.
 fn commands_for(
@@ -35,6 +39,17 @@ fn assert_commands(recorded: &[Command], expected: &[Command]) {
 /// Whether two commands share the same program and ordered arguments.
 fn same_command(actual: &Command, expected: &Command) -> bool {
     actual.program == expected.program && actual.args == expected.args
+}
+
+/// The `--volume` specification of every recorded `docker run` command.
+fn volume_mounts(commands: &[Command]) -> Vec<String> {
+    commands
+        .iter()
+        .filter_map(|command| {
+            let flag = command.args.iter().position(|arg| arg.as_str() == VOLUME)?;
+            command.args.get(flag + 1).cloned()
+        })
+        .collect()
 }
 
 #[test]
@@ -150,6 +165,52 @@ fn remove_removes_every_container() {
         "an idempotent remove records no further commands"
     );
     assert!(runtime.running_containers().is_empty());
+}
+
+#[test]
+fn re_created_container_reattaches_the_same_data_volume() {
+    let plan = plan_with_data_volume(DATA_VOLUME_PATH);
+    let mut runtime = CliClusterRuntime::new(RecordingCommandRunner::new());
+
+    runtime.start(&plan).expect("a recording start cannot fail");
+    let after_first_start = runtime.runner.commands.len();
+
+    runtime
+        .remove(&plan)
+        .expect("a recording remove cannot fail");
+    let after_remove = runtime.runner.commands.len();
+
+    runtime
+        .start(&plan)
+        .expect("a recording restart cannot fail");
+
+    let expected_volumes: Vec<String> = plan
+        .containers
+        .iter()
+        .map(|container| {
+            format!(
+                "{}-data:{DATA_VOLUME_PATH}",
+                container_name(&plan, container)
+            )
+        })
+        .collect();
+    assert_eq!(
+        volume_mounts(&runtime.runner.commands[1..after_first_start]),
+        expected_volumes,
+        "the first start mounts each node data volume"
+    );
+    assert_eq!(
+        volume_mounts(&runtime.runner.commands[after_remove + 1..]),
+        expected_volumes,
+        "re-created containers reattach the same node data volumes"
+    );
+
+    let mut expected_removals = commands_for(&plan, container_remove);
+    expected_removals.push(network_remove(&plan));
+    assert_commands(
+        &runtime.runner.commands[after_first_start..after_remove],
+        &expected_removals,
+    );
 }
 
 #[test]

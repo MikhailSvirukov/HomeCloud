@@ -19,6 +19,7 @@ const NAME: &str = "--name";
 const HOSTNAME: &str = "--hostname";
 const NETWORK_FLAG: &str = "--network";
 const NETWORK_ALIAS: &str = "--network-alias";
+const VOLUME: &str = "--volume";
 const ENV: &str = "-e";
 const STOP: &str = "stop";
 const REMOVE: &str = "rm";
@@ -73,11 +74,12 @@ pub fn network_remove(plan: &ClusterPlan) -> Command {
 
 /// `docker run --detach ...` for one container on the plan's network.
 pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    let name = container_name(plan, container);
     let mut args = vec![
         RUN.to_string(),
         DETACH.to_string(),
         NAME.to_string(),
-        container_name(plan, container),
+        name.clone(),
         HOSTNAME.to_string(),
         container.hostname.clone(),
         NETWORK_FLAG.to_string(),
@@ -85,6 +87,10 @@ pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
         NETWORK_ALIAS.to_string(),
         container.hostname.clone(),
     ];
+    if let Some(path) = &container.data_volume_path {
+        args.push(VOLUME.to_string());
+        args.push(format!("{name}-data:{path}"));
+    }
     for (key, value) in &container.env {
         args.push(ENV.to_string());
         args.push(format!("{key}={value}"));
