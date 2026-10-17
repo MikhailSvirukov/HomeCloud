@@ -15,7 +15,8 @@
 //! accepted connection, and the node runtime ([`serve`]) that accepts
 //! connections until shutdown and serves each frame pump on its own task, and
 //! the bounded CPU pool ([`CpuPool`]) that runs CPU-bound work off the Tokio
-//! worker threads.
+//! worker threads, and the on-disk storage layout ([`StorageLayout`]) with
+//! separate accounts and Raft roots and hex-encoded account/blob paths.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -47,6 +48,7 @@ mod node;
 mod payload;
 mod payload_stream;
 mod response;
+mod storage_layout;
 
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
@@ -71,3 +73,4 @@ pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};
+pub use storage_layout::{LayoutError, StorageLayout, UPLOAD_ID_LEN};
