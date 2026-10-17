@@ -147,9 +147,112 @@ class MediaPermissionRequestPolicyTest {
         )
     }
 
+    @Test
+    fun `status is limited at api 34 when visual user selected is granted and a full read is missing`() {
+        assertEquals(
+            MediaPermissionStatus.LIMITED,
+            MediaPermissionRequestPolicy.status(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+                emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `status is granted at api 34 when every required read is granted alongside visual user selected`() {
+        assertEquals(
+            MediaPermissionStatus.GRANTED,
+            MediaPermissionRequestPolicy.status(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VIDEO,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+                emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `status stays limited at api 34 when a denied missing read has visual user selected access`() {
+        assertEquals(
+            MediaPermissionStatus.LIMITED,
+            MediaPermissionRequestPolicy.status(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+                setOf(MediaPermissionPolicy.READ_MEDIA_VIDEO),
+            ),
+        )
+    }
+
+    @Test
+    fun `status is blocked at api 34 when a missing read is permanently denied without visual user selected access`() {
+        assertEquals(
+            MediaPermissionStatus.BLOCKED,
+            MediaPermissionRequestPolicy.status(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(MediaPermissionPolicy.READ_MEDIA_IMAGES),
+                setOf(MediaPermissionPolicy.READ_MEDIA_VIDEO),
+            ),
+        )
+    }
+
+    @Test
+    fun `status is requestable at api 34 when nothing is granted or refused`() {
+        assertEquals(
+            MediaPermissionStatus.REQUESTABLE,
+            MediaPermissionRequestPolicy.status(PARTIAL_ACCESS_SDK_INT, emptySet(), emptySet()),
+        )
+    }
+
+    @Test
+    fun `visual user selected access below api 34 leaves the missing full read requestable`() {
+        assertEquals(
+            MediaPermissionStatus.REQUESTABLE,
+            MediaPermissionRequestPolicy.status(
+                MODERN_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+                emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `pending permissions at api 34 keep the required order and omit the visual user selected permission`() {
+        assertEquals(
+            listOf(MediaPermissionPolicy.READ_MEDIA_IMAGES, MediaPermissionPolicy.READ_MEDIA_VIDEO),
+            MediaPermissionRequestPolicy.pendingPermissions(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED),
+            ),
+        )
+        assertEquals(
+            listOf(MediaPermissionPolicy.READ_MEDIA_VIDEO),
+            MediaPermissionRequestPolicy.pendingPermissions(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+            ),
+        )
+    }
+
     private companion object {
         const val LEGACY_SDK_INT = 32
         const val MODERN_SDK_INT = 33
+        const val PARTIAL_ACCESS_SDK_INT = 34
         const val UNRELATED_GRANTED_PERMISSION = "android.permission.READ_MEDIA_AUDIO"
     }
 }

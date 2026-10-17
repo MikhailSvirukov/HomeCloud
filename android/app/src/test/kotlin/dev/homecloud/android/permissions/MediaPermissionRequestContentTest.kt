@@ -19,6 +19,9 @@ import org.robolectric.annotation.ConscryptMode
 /** First API level whose media reads are the per-type image and video permissions. */
 private const val PER_TYPE_PERMISSIONS_SDK_INT = 33
 
+/** First API level that supports access to a user-selected subset of photos and videos. */
+private const val VISUAL_USER_SELECTED_SDK_INT = 34
+
 /**
  * Renders [MediaPermissionRequestContent] on the JVM and asserts the message and the single action
  * the user actually sees for the platform permission state. The granted state is produced through
@@ -63,6 +66,18 @@ class MediaPermissionRequestContentTest {
         composeRule.onAllNodes(hasClickAction()).assertCountEquals(1)
     }
 
+    @Test
+    @Config(sdk = [VISUAL_USER_SELECTED_SDK_INT])
+    fun `partial access on api 34 shows the limited coverage message and offers the request action`() {
+        deny(MediaPermissionPolicy.READ_MEDIA_IMAGES, MediaPermissionPolicy.READ_MEDIA_VIDEO)
+        grant(MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED)
+
+        render()
+
+        composeRule.onNodeWithText(limitedMessage()).assertIsDisplayed()
+        composeRule.onNodeWithText(requestAction()).assertIsDisplayed()
+    }
+
     private fun render() {
         composeRule.setContent {
             MediaPermissionRequestContent(activity = composeRule.activity)
@@ -80,6 +95,8 @@ class MediaPermissionRequestContentTest {
     private fun grantedMessage(): String = composeRule.activity.getString(R.string.media_permission_granted_message)
 
     private fun requestMessage(): String = composeRule.activity.getString(R.string.media_permission_request_message)
+
+    private fun limitedMessage(): String = composeRule.activity.getString(R.string.media_permission_limited_message)
 
     private fun requestAction(): String = composeRule.activity.getString(R.string.media_permission_request_action)
 }

@@ -7,6 +7,12 @@ internal enum class MediaPermissionStatus {
     /** Every required media-read permission is granted, so the caller has nothing left to ask for. */
     GRANTED,
 
+    /**
+     * The user allowed access only to selected photos and videos. This is usable access rather than
+     * a refusal, and the caller may ask again so the user can change the selection.
+     */
+    LIMITED,
+
     /** Some required permissions are still missing but may be asked for once. */
     REQUESTABLE,
 
@@ -35,8 +41,8 @@ internal object MediaPermissionRequestPolicy {
 
     /**
      * Reports the permission status for the given API level, granted set and permanently refused
-     * set, in that precedence order: nothing pending wins, then a refused pending permission, then
-     * the ordinary request case.
+     * set, in that precedence order: nothing pending wins, then selected access on API 34 and above,
+     * then a refused pending permission, then the ordinary request case.
      */
     fun status(
         sdkInt: Int,
@@ -46,6 +52,9 @@ internal object MediaPermissionRequestPolicy {
         val pending = pendingPermissions(sdkInt, granted)
         return when {
             pending.isEmpty() -> MediaPermissionStatus.GRANTED
+            sdkInt >= MediaPermissionPolicy.VISUAL_USER_SELECTED_SDK_INT &&
+                granted.contains(MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED) ->
+                MediaPermissionStatus.LIMITED
             pending.any(permanentlyDenied::contains) -> MediaPermissionStatus.BLOCKED
             else -> MediaPermissionStatus.REQUESTABLE
         }
