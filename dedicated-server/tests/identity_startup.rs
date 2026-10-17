@@ -111,12 +111,16 @@ fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// Parse every non-empty stderr line as one JSON event.
+/// Parse every non-empty stderr line and reject blank lines between records.
 fn stderr_events(output: &Output) -> Vec<Value> {
     let stderr = stderr_of(output);
-    stderr
-        .lines()
-        .filter(|line| !line.is_empty())
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert!(
+        lines.iter().all(|line| !line.is_empty()),
+        "stderr must not contain blank lines: {stderr}"
+    );
+    lines
+        .into_iter()
         .map(|line| serde_json::from_str(line).expect("stderr line must be a JSON object"))
         .collect()
 }
@@ -220,7 +224,7 @@ fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths()
         stdout_of(&output)
     );
     let events = stderr_events(&output);
-    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    assert_eq!(events.len(), 1, "stderr: {}", stderr_of(&output));
     let event = &events[0];
     assert_eq!(event["event"], "startup");
     assert_eq!(event["outcome"], "failure");
@@ -228,7 +232,6 @@ fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths()
     assert_eq!(event["error_code"], IDENTITY_ERROR_CODE);
     assert_eq!(event["component"], "dedicated-server");
     assert_utc_timestamp(event);
-    assert_shutdown_event(&events[1]);
     let message = event["message"]
         .as_str()
         .expect("startup failure event must carry a message");

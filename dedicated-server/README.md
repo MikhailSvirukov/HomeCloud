@@ -58,13 +58,13 @@ Each event carries:
 - `operation`, `peer_id`, `outcome`, `error_code`, `duration_ms`, `message`:
   present when the event carries them.
 
-A successful startup is one `startup` event with `outcome` set to `success`. A
-failed startup is one `startup` event with `outcome` set to `failure`, an
-`error_code` of `configuration_error` or `identity_error`, and a fixed
-stage-specific `message`. Every run ends with one `shutdown` event with
-`outcome` set to `success` and the message `server stopped`. Records never
-contain file paths or names, logins, cryptographic keys, verifiers, payloads or
-other user metadata.
+A successful startup is one `startup` event with `outcome` set to `success`,
+followed by one `shutdown` event with `outcome` set to `success` and the message
+`server stopped`. A failed startup is one `startup` event with `outcome` set to
+`failure`, an `error_code` of `configuration_error` or `identity_error`, and a
+fixed stage-specific `message`; the failure event is the last record. Records
+never contain file paths or names, logins, cryptographic keys, verifiers,
+payloads or other user metadata.
 
 ## Configuration schema
 

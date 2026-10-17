@@ -1,7 +1,13 @@
 //! Structured JSON Lines logging for the dedicated server.
 //!
-//! Every event is one UTF-8 JSON object per line on stderr. The startup
-//! vocabulary lives here so call sites do not spell event or field names.
+//! Every record is one UTF-8 JSON object per line on stderr and always carries
+//! the fixed component name and an event type. Events without an `event` field
+//! are ignored, and a record is written only when it serializes completely.
+//!
+//! Call sites may pass only values permitted by `NFR-OBS-003` into the known
+//! field names; the formatter cannot tell a safe value from an unsafe one. In
+//! particular, do not pass paths, file names, logins, keys, verifiers, payloads
+//! or other user metadata.
 
 use std::fmt;
 
@@ -70,7 +76,6 @@ const TIMESTAMP_FORMAT: &[FormatItem<'static>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z");
 
 /// One structured log event as written to the log stream.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEvent {
     /// UTC time in RFC 3339 format with milliseconds.
     pub timestamp: String,
@@ -96,7 +101,7 @@ pub struct LogEvent {
 
 impl LogEvent {
     /// Render the event as one JSON line, omitting absent optional fields.
-    pub fn to_json_line(&self) -> String {
+    pub fn to_json_line(&self) -> Result<String, serde_json::Error> {
         let encoded = EncodedEvent {
             timestamp: &self.timestamp,
             component: &self.component,
@@ -110,7 +115,7 @@ impl LogEvent {
             message: self.message.as_deref(),
         };
 
-        serde_json::to_string(&encoded).unwrap_or_default()
+        serde_json::to_string(&encoded)
     }
 }
 
@@ -159,21 +164,24 @@ where
         mut writer: Writer<'_>,
         event: &Event<'_>,
     ) -> fmt::Result {
+        let mut visitor = FieldVisitor::default();
+        event.record(&mut visitor);
+
+        let Some(event_type) = visitor.event else {
+            return Ok(());
+        };
+
         let mut timestamp = String::new();
         {
             let mut timestamp_writer = Writer::new(&mut timestamp);
             self.timer.format_time(&mut timestamp_writer)?;
         }
 
-        let mut visitor = FieldVisitor::default();
-        event.record(&mut visitor);
-
-        let metadata = event.metadata();
         let record = LogEvent {
             timestamp,
-            component: metadata.target().to_owned(),
-            level: metadata.level().as_str().to_owned(),
-            event: visitor.event.unwrap_or_default(),
+            component: COMPONENT.to_owned(),
+            level: event.metadata().level().as_str().to_owned(),
+            event: event_type,
             operation: visitor.operation,
             peer_id: visitor.peer_id,
             outcome: visitor.outcome,
@@ -182,7 +190,8 @@ where
             message: visitor.message,
         };
 
-        writer.write_str(&record.to_json_line())?;
+        let line = record.to_json_line().map_err(|_| fmt::Error)?;
+        writer.write_str(&line)?;
         writer.write_char('\n')
     }
 }
@@ -372,7 +381,7 @@ mod tests {
             message: Some("startup failed".to_owned()),
         };
 
-        let line = event.to_json_line();
+        let line = event.to_json_line().expect("event must serialize");
 
         assert_eq!(line.lines().count(), 1);
         let value = parse(&line);
@@ -403,7 +412,7 @@ mod tests {
             message: None,
         };
 
-        let line = event.to_json_line();
+        let line = event.to_json_line().expect("event must serialize");
 
         assert_eq!(line.lines().count(), 1);
         let value = parse(&line);
@@ -436,7 +445,7 @@ mod tests {
             message: Some("first line\n  caused by: second line".to_owned()),
         };
 
-        let line = event.to_json_line();
+        let line = event.to_json_line().expect("event must serialize");
 
         assert_eq!(line.lines().count(), 1);
         assert_eq!(

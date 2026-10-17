@@ -25,16 +25,14 @@ fn main() -> ExitCode {
 
     let path = config_path();
 
-    let exit_code = match Startup::load(&path) {
+    match Startup::load(&path) {
         Ok(startup) => {
             log_startup(&startup.summary());
+            log_shutdown();
             ExitCode::SUCCESS
         }
         Err(error) => report_failure(&error),
-    };
-
-    log_shutdown();
-    exit_code
+    }
 }
 
 /// Resolve the configuration path from [`CONFIG_PATH_ENV`] or the default file name.
