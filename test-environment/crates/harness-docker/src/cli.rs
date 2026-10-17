@@ -8,7 +8,8 @@
 use harness_core::{HarnessError, NodeId};
 
 use crate::command::{
-    Command, container_remove, container_run, container_stop, network_create, network_remove,
+    Command, container_kill, container_remove, container_run, container_start, container_stop,
+    network_create, network_remove,
 };
 use crate::plan::ClusterPlan;
 use crate::runtime::ClusterRuntime;
@@ -91,12 +92,18 @@ impl<R: CommandRunner> ClusterRuntime for CliClusterRuntime<R> {
             self.network_created = true;
         }
         for container in &plan.containers {
-            if !self.created.contains(&container.node) {
-                self.runner.run(container_run(plan, container))?;
-                self.created.push(container.node);
-            }
-            if !self.running.contains(&container.node) {
-                self.running.push(container.node);
+            let node = container.node;
+            match self.created.contains(&node) {
+                false => {
+                    self.runner.run(container_run(plan, container))?;
+                    self.created.push(node);
+                    self.running.push(node);
+                }
+                true if !self.running.contains(&node) => {
+                    self.runner.run(container_start(plan, container))?;
+                    self.running.push(node);
+                }
+                true => {}
             }
         }
         Ok(())
@@ -110,6 +117,17 @@ impl<R: CommandRunner> ClusterRuntime for CliClusterRuntime<R> {
         }
         self.running.clear();
         Ok(())
+    }
+
+    fn kill(&mut self, plan: &ClusterPlan, node: NodeId) -> Result<()> {
+        match plan.container(node) {
+            Some(container) if self.running.contains(&node) => {
+                self.runner.run(container_kill(plan, container))?;
+                self.running.retain(|running| *running != node);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 
     fn remove(&mut self, plan: &ClusterPlan) -> Result<()> {

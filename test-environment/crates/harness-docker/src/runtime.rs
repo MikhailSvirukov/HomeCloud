@@ -16,6 +16,8 @@ pub trait ClusterRuntime {
     fn start(&mut self, plan: &ClusterPlan) -> Result<()>;
     /// Stops every container in the plan; idempotent.
     fn stop(&mut self, plan: &ClusterPlan) -> Result<()>;
+    /// Forcibly stops one node's container without a graceful shutdown; idempotent.
+    fn kill(&mut self, plan: &ClusterPlan, node: NodeId) -> Result<()>;
     /// Removes every container in the plan; idempotent.
     fn remove(&mut self, plan: &ClusterPlan) -> Result<()>;
     /// Node ids whose containers are currently running, in start order.
@@ -46,6 +48,10 @@ impl ClusterRuntime for FakeClusterRuntime {
     }
     fn stop(&mut self, plan: &ClusterPlan) -> Result<()> {
         self.running.retain(|node| plan.container(*node).is_none());
+        Ok(())
+    }
+    fn kill(&mut self, _plan: &ClusterPlan, node: NodeId) -> Result<()> {
+        self.running.retain(|running| *running != node);
         Ok(())
     }
     fn remove(&mut self, plan: &ClusterPlan) -> Result<()> {

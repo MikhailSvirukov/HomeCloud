@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use harness_core::NodeId;
 use harness_docker::{
-    ClusterPlan, Command, ContainerPlan, container_name, container_remove, container_run,
-    container_stop, network_create, network_remove,
+    ClusterPlan, Command, ContainerPlan, container_kill, container_name, container_remove,
+    container_run, container_start, container_stop, network_create, network_remove,
 };
 
 use common::{
@@ -40,6 +40,10 @@ const ENV: &str = "-e";
 const VOLUME: &str = "--volume";
 /// `docker stop` subcommand.
 const STOP: &str = "stop";
+/// `docker kill` subcommand.
+const KILL: &str = "kill";
+/// `docker start` subcommand.
+const START: &str = "start";
 /// `docker rm` subcommand.
 const REMOVE: &str = "rm";
 /// Force flag for `docker rm`.
@@ -102,6 +106,22 @@ fn expected_stop_command(plan: &ClusterPlan, container: &ContainerPlan) -> Comma
     Command::new(
         DOCKER,
         strings(&[STOP, container_name(plan, container).as_str()]),
+    )
+}
+
+/// The `docker kill` command these tests expect for one container.
+fn expected_kill_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[KILL, container_name(plan, container).as_str()]),
+    )
+}
+
+/// The `docker start` command these tests expect for one container.
+fn expected_start_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[START, container_name(plan, container).as_str()]),
     )
 }
 
@@ -180,6 +200,30 @@ fn container_run_leads_with_run_and_detach() {
 
     assert_eq!(run.args.first().map(String::as_str), Some(RUN));
     assert_eq!(run.args.get(1).map(String::as_str), Some(DETACH));
+}
+
+#[test]
+fn container_kill_commands_the_container() {
+    let plan = plan();
+    let container = storage(&plan);
+
+    let kill = container_kill(&plan, container);
+    let expected = expected_kill_command(&plan, container);
+
+    assert_eq!(kill.program, expected.program);
+    assert_eq!(kill.args, expected.args);
+}
+
+#[test]
+fn container_start_starts_the_container() {
+    let plan = plan();
+    let container = storage(&plan);
+
+    let start = container_start(&plan, container);
+    let expected = expected_start_command(&plan, container);
+
+    assert_eq!(start.program, expected.program);
+    assert_eq!(start.args, expected.args);
 }
 
 #[test]
