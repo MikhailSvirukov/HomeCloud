@@ -22,6 +22,7 @@ protocol/API interfaces required to build mocks and fakes.
   not run tests locally because the test agent has no local Docker daemon.
 - Prefer the two base fault classes from the brief — node shutdown and selective
   network degradation — and keep the scenario API extensible for recovery checks.
+- Infrastructure tests (Docker control, network, lifecycle, volumes) may use fixture images; fixture images do not replace real component images in scenarios that verify component behaviour.
 - Follow the root Rust practices: typed errors with `thiserror`, no `unwrap`/
   `expect` outside tests, one behaviour per test with a descriptive name.
 
