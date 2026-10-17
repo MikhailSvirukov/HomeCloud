@@ -11,7 +11,7 @@ addresses, labels, and public keys here, then send files straight to storage.
 Configuration loading and validation, key-identity loading for the server's own
 key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
 account registration model are implemented. The binary loads the configuration
-and the key identity, logs a one-line startup summary to stderr, and exits.
+and the key identity, logs a structured startup event to stderr, and exits.
 Network I/O, the wire protocol, registration over the network, cluster
 replication, and topology responses are not implemented yet.
 
@@ -34,15 +34,37 @@ HOMECLOUD_DEDICATED_SERVER_CONFIG=/path/to/config.toml cargo run --locked
 Without that variable the binary reads `dedicated-server.toml` from the current
 directory.
 
-The binary logs to stderr, so stdout stays empty for normal operation. The
-default level is `info`; set `RUST_LOG` to override it (for example
-`RUST_LOG=debug`). Log lines are emitted without ANSI colours. The binary
-installs `mimalloc` as its process allocator instead of the system default.
+The binary installs `mimalloc` as its process allocator instead of the system
+default.
 
 The crate's modules are private; its public items are re-exported from the crate
 root. Consumers therefore use `dedicated_server::` paths (for example
 `dedicated_server::ServerConfig`) rather than module paths such as
 `dedicated_server::config::ServerConfig`.
+
+## Logging
+
+The binary writes UTF-8 JSON Lines events to stderr: each line is one JSON
+object and one event. stdout stays empty. The default level is `info`; set
+`RUST_LOG` to override it (for example `RUST_LOG=debug`). Lines are emitted
+without ANSI colours.
+
+Each event carries:
+
+- `timestamp`: UTC time in RFC 3339 format with milliseconds.
+- `component`: `dedicated-server`.
+- `level`: importance level such as `INFO` or `ERROR`.
+- `event`: event type. Startup uses `startup`; stopping uses `shutdown`.
+- `operation`, `peer_id`, `outcome`, `error_code`, `duration_ms`, `message`:
+  present when the event carries them.
+
+A successful startup is one `startup` event with `outcome` set to `success`,
+followed by one `shutdown` event with `outcome` set to `success` and the message
+`server stopped`. A failed startup is one `startup` event with `outcome` set to
+`failure`, an `error_code` of `configuration_error` or `identity_error`, and a
+fixed stage-specific `message`; the failure event is the last record. Records
+never contain file paths or names, logins, cryptographic keys, verifiers,
+payloads or other user metadata.
 
 ## Configuration schema
 
@@ -110,8 +132,9 @@ and algorithms are still open parameters in `docs/specification-v1.md`. Loading
 fails when either file cannot be read, is empty, is larger than the 64 KiB
 limit, or when the same material would serve both the decryption and the
 signing role. At most 64 KiB plus one byte of each file is read, so an
-oversized file is rejected without being loaded in full, and an identity failure
-names both the configuration file and the offending key file. The configured
+oversized file is rejected without being loaded in full, and the returned
+identity error names both the configuration file and the offending key file;
+log records omit both. The configured
 `identity.label` is bound to the loaded identity and is used as the node's
 sender label. `ServerIdentity`'s `Debug` output deliberately reports only the
 label and key lengths, never the key bytes.
