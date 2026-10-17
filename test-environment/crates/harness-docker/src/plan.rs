@@ -14,6 +14,7 @@ use harness_core::{ClusterTopology, NodeId, NodeRole, NodeSpec};
 pub type EnvBuilder = fn(&NodeSpec) -> BTreeMap<String, String>;
 
 /// Name of the isolated Docker network the test cluster runs in.
+#[derive(Clone)]
 pub struct NetworkPlan {
     /// The network name.
     pub name: String,
@@ -38,6 +39,10 @@ pub struct PlanSettings {
     pub env: EnvBuilder,
     /// Container path of the node data volume that persists across container re-creation (TST-017); `None` adds no volume.
     pub data_volume_path: Option<String>,
+    /// Command run after the image, overriding its default command when non-empty.
+    pub command: Vec<String>,
+    /// Linux capabilities granted to each container for packet filtering (TST-006).
+    pub cap_add: Vec<String>,
 }
 
 impl PlanSettings {
@@ -55,7 +60,19 @@ impl PlanSettings {
             storage_image: storage_image.into(),
             env,
             data_volume_path,
+            command: Vec::new(),
+            cap_add: Vec::new(),
         }
+    }
+    /// Sets the command run after each container's image.
+    pub fn with_command(mut self, command: Vec<String>) -> Self {
+        self.command = command;
+        self
+    }
+    /// Sets the capabilities granted to each container.
+    pub fn with_cap_add(mut self, cap_add: Vec<String>) -> Self {
+        self.cap_add = cap_add;
+        self
     }
     /// Image for a node role.
     fn image_for(&self, role: NodeRole) -> &str {
@@ -67,6 +84,7 @@ impl PlanSettings {
 }
 
 /// One node container in the isolated network.
+#[derive(Clone)]
 pub struct ContainerPlan {
     /// Identifier of the node this container runs.
     pub node: NodeId,
@@ -84,9 +102,14 @@ pub struct ContainerPlan {
     pub env: BTreeMap<String, String>,
     /// Container path of the node data volume that persists across container re-creation (TST-017); `None` adds no volume.
     pub data_volume_path: Option<String>,
+    /// Command run after the image, overriding its default command when non-empty.
+    pub command: Vec<String>,
+    /// Linux capabilities granted to the container for packet filtering (TST-006).
+    pub cap_add: Vec<String>,
 }
 
 /// Complete description of the cluster: one network plus one container per node.
+#[derive(Clone)]
 pub struct ClusterPlan {
     /// The shared isolated network.
     pub network: NetworkPlan,
@@ -108,6 +131,8 @@ impl ClusterPlan {
                 address: spec.address,
                 env: (settings.env)(spec),
                 data_volume_path: settings.data_volume_path.clone(),
+                command: settings.command.clone(),
+                cap_add: settings.cap_add.clone(),
             })
             .collect();
         Self {

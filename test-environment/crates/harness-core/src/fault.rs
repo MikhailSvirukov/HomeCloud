@@ -20,6 +20,11 @@ impl LossPercent {
         }
     }
 }
+impl From<LossPercent> for u8 {
+    fn from(percent: LossPercent) -> Self {
+        percent.0
+    }
+}
 
 /// An undirected peer link; `new(a, b)` equals `new(b, a)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
