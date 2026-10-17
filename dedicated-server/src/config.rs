@@ -14,7 +14,7 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use crate::password::Argon2Params;
@@ -25,6 +25,15 @@ pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
 /// Configuration file name used when [`CONFIG_PATH_ENV`] is not set.
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "dedicated-server.toml";
 
+/// Number of bytes in a storage node identifier.
+const NODE_ID_BYTES: usize = 16;
+
+/// Number of bytes in a public key.
+const PUBLIC_KEY_BYTES: usize = 32;
+
+/// Number of hexadecimal characters used to encode one byte.
+const HEX_CHARS_PER_BYTE: usize = 2;
+
 /// Result of loading or validating a [`ServerConfig`].
 type Result<T> = core::result::Result<T, ConfigError>;
 
@@ -34,6 +43,8 @@ type Result<T> = core::result::Result<T, ConfigError>;
 pub struct ServerConfig {
     /// Address the control plane listens on.
     pub(crate) listen: SocketAddr,
+    /// Maximum length of any node or identity label in UTF-8 bytes.
+    pub(crate) max_label_bytes: NonZeroUsize,
     /// Key identity of this dedicated server.
     pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
@@ -91,39 +102,117 @@ pub(crate) struct ClusterConfig {
 }
 
 /// A single storage node known at bootstrap.
+// The identifier and key fields are consumed by the topology response.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ClusterNode {
+    /// Identifier of the node in the static manifest.
+    pub(crate) sender_id: NodeId,
     /// Human-readable label identifying the node.
     pub(crate) label: String,
     /// Address of the node.
     pub(crate) address: SocketAddr,
     /// Public key used to encrypt messages for the node.
-    pub(crate) encryption_public_key: String,
+    pub(crate) encryption_public_key: PublicKey,
     /// Public key used to verify messages signed by the node.
-    pub(crate) signing_public_key: String,
+    pub(crate) signing_public_key: PublicKey,
+}
+
+/// Identifier of a storage node in the static manifest (16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId([u8; NODE_ID_BYTES]);
+
+/// A 32-byte public key from the static manifest (X25519 or Ed25519).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct PublicKey([u8; PUBLIC_KEY_BYTES]);
+
+impl NodeId {
+    /// Raw identifier bytes.
+    pub fn as_bytes(&self) -> &[u8; NODE_ID_BYTES] {
+        &self.0
+    }
+}
+
+impl PublicKey {
+    /// Raw public key bytes.
+    pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_BYTES] {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeId {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_hex(deserializer).map(Self)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_hex(deserializer).map(Self)
+    }
+}
+
+fn deserialize_hex<'de, D, const N: usize>(
+    deserializer: D,
+) -> core::result::Result<[u8; N], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = <&str>::deserialize(deserializer)?;
+    decode_hex(text).ok_or_else(|| {
+        <D::Error as serde::de::Error>::custom(format!(
+            "expected {} hexadecimal characters",
+            N * HEX_CHARS_PER_BYTE
+        ))
+    })
+}
+
+fn decode_hex<const N: usize>(input: &str) -> Option<[u8; N]> {
+    let bytes = input.as_bytes();
+    if bytes.len() != N * HEX_CHARS_PER_BYTE {
+        return None;
+    }
+
+    let mut decoded = [0_u8; N];
+    let (pairs, _) = bytes.as_chunks::<HEX_CHARS_PER_BYTE>();
+    for (byte, [high, low]) in decoded.iter_mut().zip(pairs) {
+        *byte = (hex_nibble(*high)? << 4) | hex_nibble(*low)?;
+    }
+    Some(decoded)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Field of a [`ClusterNode`] that a configuration rule rejected.
 #[derive(Debug)]
 pub enum NodeField {
+    /// The node's identifier.
+    SenderId,
     /// The node's human-readable label.
     Label,
     /// The node's address.
     Address,
-    /// The node's encryption public key.
-    EncryptionPublicKey,
-    /// The node's signing public key.
-    SigningPublicKey,
 }
 
 impl fmt::Display for NodeField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
+            Self::SenderId => "sender_id",
             Self::Label => "label",
             Self::Address => "address",
-            Self::EncryptionPublicKey => "encryption_public_key",
-            Self::SigningPublicKey => "signing_public_key",
         };
         formatter.write_str(name)
     }
@@ -148,12 +237,18 @@ pub enum ConfigError {
     /// [`IdentityConfig::label`] is empty.
     #[error("identity.label must not be empty")]
     EmptyIdentityLabel,
+    /// A label exceeds [`ServerConfig::max_label_bytes`] in UTF-8 bytes.
+    #[error("label must not exceed {max_bytes} UTF-8 bytes")]
+    LabelTooLong { max_bytes: usize },
     /// [`ClusterConfig::nodes`] is empty.
     #[error("cluster.nodes must not be empty")]
     EmptyCluster,
     /// A required [`ClusterNode`] field is empty.
     #[error("cluster.nodes[{index}].{field} must not be empty")]
     EmptyNodeField { index: usize, field: NodeField },
+    /// A [`ClusterNode::address`] uses port zero.
+    #[error("cluster.nodes[{index}].address port must be in 1..=65535")]
+    ZeroNodePort { index: usize },
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
     DuplicateNodeField { field: NodeField },
@@ -203,27 +298,39 @@ impl ServerConfig {
 
     /// Apply every structural validation rule to the parsed configuration.
     fn validate(&self) -> Result<()> {
-        validate_identity(&self.identity).and_then(|()| validate_cluster(&self.cluster))
+        validate_identity(&self.identity, self.max_label_bytes)
+            .and_then(|()| validate_cluster(&self.cluster, self.max_label_bytes))
     }
 }
 
-fn validate_identity(identity: &IdentityConfig) -> Result<()> {
+fn validate_identity(identity: &IdentityConfig, max_label_bytes: NonZeroUsize) -> Result<()> {
     if identity.label.is_empty() {
         return Err(ConfigError::EmptyIdentityLabel);
     }
-    Ok(())
+    validate_label_length(&identity.label, max_label_bytes)
 }
 
-fn validate_cluster(cluster: &ClusterConfig) -> Result<()> {
+fn validate_label_length(label: &str, max_label_bytes: NonZeroUsize) -> Result<()> {
+    if label.len() > max_label_bytes.get() {
+        Err(ConfigError::LabelTooLong {
+            max_bytes: max_label_bytes.get(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_cluster(cluster: &ClusterConfig, max_label_bytes: NonZeroUsize) -> Result<()> {
     (!cluster.nodes.is_empty())
         .then_some(())
         .ok_or(ConfigError::EmptyCluster)
-        .and_then(|()| validate_node_fields(&cluster.nodes))
+        .and_then(|()| validate_node_fields(&cluster.nodes, max_label_bytes))
         .and_then(|()| validate_unique_node_labels(&cluster.nodes))
         .and_then(|()| validate_unique_node_addresses(&cluster.nodes))
+        .and_then(|()| validate_unique_node_sender_ids(&cluster.nodes))
 }
 
-fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
+fn validate_node_fields(nodes: &[ClusterNode], max_label_bytes: NonZeroUsize) -> Result<()> {
     for (index, node) in nodes.iter().enumerate() {
         if node.label.is_empty() {
             return Err(ConfigError::EmptyNodeField {
@@ -231,17 +338,9 @@ fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
                 field: NodeField::Label,
             });
         }
-        if node.encryption_public_key.is_empty() {
-            return Err(ConfigError::EmptyNodeField {
-                index,
-                field: NodeField::EncryptionPublicKey,
-            });
-        }
-        if node.signing_public_key.is_empty() {
-            return Err(ConfigError::EmptyNodeField {
-                index,
-                field: NodeField::SigningPublicKey,
-            });
+        validate_label_length(&node.label, max_label_bytes)?;
+        if node.address.port() == 0 {
+            return Err(ConfigError::ZeroNodePort { index });
         }
     }
     Ok(())
@@ -269,6 +368,17 @@ fn validate_unique_node_addresses(nodes: &[ClusterNode]) -> Result<()> {
     }
 }
 
+fn validate_unique_node_sender_ids(nodes: &[ClusterNode]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    if nodes.iter().all(|node| seen.insert(node.sender_id)) {
+        Ok(())
+    } else {
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::SenderId,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,17 +388,31 @@ mod tests {
         include_str!("../tests/fixtures/invalid/empty_identity_label.toml");
     const EMPTY_CLUSTER: &str = include_str!("../tests/fixtures/invalid/empty_cluster.toml");
     const EMPTY_NODE_LABEL: &str = include_str!("../tests/fixtures/invalid/empty_node_label.toml");
-    const EMPTY_NODE_ENCRYPTION_KEY: &str =
-        include_str!("../tests/fixtures/invalid/empty_node_encryption_key.toml");
-    const EMPTY_NODE_SIGNING_KEY: &str =
-        include_str!("../tests/fixtures/invalid/empty_node_signing_key.toml");
     const DUPLICATE_NODE_LABEL: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_label.toml");
     const DUPLICATE_NODE_ADDRESS: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
+    const INVALID_NODE_KEY_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_key_hex.toml");
+    const INVALID_NODE_KEY_NON_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_key_non_hex.toml");
+    const INVALID_NODE_ID_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_id_hex.toml");
+    const LABEL_TOO_LONG: &str = include_str!("../tests/fixtures/invalid/label_too_long.toml");
+    const DUPLICATE_NODE_SENDER_ID: &str =
+        include_str!("../tests/fixtures/invalid/duplicate_node_sender_id.toml");
+    const ZERO_NODE_PORT: &str = include_str!("../tests/fixtures/invalid/zero_node_port.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
     const ZERO_PASSWORD_MEMORY: &str =
         include_str!("../tests/fixtures/invalid/zero_password_memory.toml");
+
+    fn parse_error(input: &str) -> toml::de::Error {
+        match ServerConfig::from_toml_str(input) {
+            Err(ConfigError::Parse { source }) => source,
+            Err(error) => panic!("expected a parse error, got {error}"),
+            Ok(_) => panic!("configuration must be rejected"),
+        }
+    }
 
     #[test]
     fn parses_valid_fixture_with_expected_meaningful_values() {
@@ -298,6 +422,7 @@ mod tests {
             config.listen,
             "10.0.0.1:7000".parse().expect("valid listen address")
         );
+        assert_eq!(config.max_label_bytes.get(), 64);
         assert_eq!(config.identity.label, "dedicated-1");
         assert_eq!(config.heartbeat.interval().as_millis(), 1000);
         assert_eq!(config.heartbeat.timeout().as_millis(), 500);
@@ -307,8 +432,32 @@ mod tests {
         assert_eq!(config.password.parallelism.get(), 1);
         assert_eq!(config.password.salt_length_bytes.get(), 16);
         assert_eq!(config.cluster.nodes.len(), 2);
+        assert_eq!(
+            config.cluster.nodes[0].sender_id.as_bytes(),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
         assert_eq!(config.cluster.nodes[0].label, "storage-1");
+        assert_eq!(
+            config.cluster.nodes[0].encryption_public_key.as_bytes(),
+            &[0x11; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[0].signing_public_key.as_bytes(),
+            &[0x22; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[1].sender_id.as_bytes(),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
+        );
         assert_eq!(config.cluster.nodes[1].label, "storage-2");
+        assert_eq!(
+            config.cluster.nodes[1].encryption_public_key.as_bytes(),
+            &[0xAA; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[1].signing_public_key.as_bytes(),
+            &[0xBB; PUBLIC_KEY_BYTES]
+        );
     }
 
     #[test]
@@ -328,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_node_field() {
+    fn rejects_empty_node_label() {
         assert!(matches!(
             ServerConfig::from_toml_str(EMPTY_NODE_LABEL),
             Err(ConfigError::EmptyNodeField {
@@ -336,19 +485,34 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn rejects_malformed_node_key_hex_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_KEY_HEX)
+            .to_string()
+            .contains("expected 64 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_non_hexadecimal_node_key_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_KEY_NON_HEX)
+            .to_string()
+            .contains("expected 64 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_wrong_length_node_id_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_ID_HEX)
+            .to_string()
+            .contains("expected 32 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_label_longer_than_maximum() {
         assert!(matches!(
-            ServerConfig::from_toml_str(EMPTY_NODE_ENCRYPTION_KEY),
-            Err(ConfigError::EmptyNodeField {
-                field: NodeField::EncryptionPublicKey,
-                ..
-            })
-        ));
-        assert!(matches!(
-            ServerConfig::from_toml_str(EMPTY_NODE_SIGNING_KEY),
-            Err(ConfigError::EmptyNodeField {
-                field: NodeField::SigningPublicKey,
-                ..
-            })
+            ServerConfig::from_toml_str(LABEL_TOO_LONG),
+            Err(ConfigError::LabelTooLong { max_bytes: 8 })
         ));
     }
 
@@ -365,6 +529,24 @@ mod tests {
             Err(ConfigError::DuplicateNodeField {
                 field: NodeField::Address
             })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_node_sender_id() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(DUPLICATE_NODE_SENDER_ID),
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::SenderId
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_node_port() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(ZERO_NODE_PORT),
+            Err(ConfigError::ZeroNodePort { index: 0 })
         ));
     }
 

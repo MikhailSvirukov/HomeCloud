@@ -13,6 +13,7 @@ use crate::identity::{IdentityError, ServerIdentity};
 use crate::registration::{
     AccountRegistry, RegistrationError, RegistrationOutcome, RegistrationRequest,
 };
+use crate::topology::Topology;
 
 /// Result of loading a [`Startup`].
 type Result<T> = core::result::Result<T, StartupError>;
@@ -57,6 +58,11 @@ impl Startup {
         request: RegistrationRequest,
     ) -> core::result::Result<RegistrationOutcome, RegistrationError> {
         self.accounts.register(request)
+    }
+
+    /// The topology to hand to a new client connection.
+    pub fn topology(&self) -> Topology {
+        Topology::from_manifest(&self.config.cluster)
     }
 
     /// One-line summary of the configuration and identity the server started with.
