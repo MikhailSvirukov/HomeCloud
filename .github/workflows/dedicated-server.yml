@@ -6,10 +6,26 @@ on:
     paths:
       - dedicated-server/**
       - .github/workflows/dedicated-server.yml
+      - AGENTS.md
+      - README.md
+      - docs/**
+      - contracts/**
+      - .opencode/**
+      - compose.yaml
+      - compose.test-engine.yaml
+      - Dockerfile.agent
   pull_request:
     paths:
       - dedicated-server/**
       - .github/workflows/dedicated-server.yml
+      - AGENTS.md
+      - README.md
+      - docs/**
+      - contracts/**
+      - .opencode/**
+      - compose.yaml
+      - compose.test-engine.yaml
+      - Dockerfile.agent
 
 permissions:
   contents: read
