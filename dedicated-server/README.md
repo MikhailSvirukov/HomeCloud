@@ -54,8 +54,10 @@ root. Consumers therefore use `dedicated_server::` paths (for example
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
   (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
-- `cluster.nodes[]`: `label` (non-empty, unique), `address` (unique socket
-  address), `encryption_public_key`, `signing_public_key` (non-empty strings).
+- `cluster.nodes[]`: `sender_id` (16-byte node identifier), `label` (non-empty,
+  unique), `address` (unique socket address), `encryption_public_key`,
+  `signing_public_key`. Node identifiers and public keys are 16- and 32-byte
+  values written in hexadecimal.
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
 
 Example, matching `tests/fixtures/valid_server.toml`:
@@ -80,16 +82,18 @@ parallelism = 1
 salt_length_bytes = 16
 
 [[cluster.nodes]]
+sender_id = "00000000000000000000000000000001"
 label = "storage-1"
 address = "10.0.0.11:7100"
-encryption_public_key = "storage-1-encryption-public-key"
-signing_public_key = "storage-1-signing-public-key"
+encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
+signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"
 
 [[cluster.nodes]]
+sender_id = "00000000000000000000000000000002"
 label = "storage-2"
 address = "10.0.0.12:7100"
-encryption_public_key = "storage-2-encryption-public-key"
-signing_public_key = "storage-2-signing-public-key"
+encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
 
 ## Key identity

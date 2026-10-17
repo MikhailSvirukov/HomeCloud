@@ -17,7 +17,8 @@ parallelism = 1
 salt_length_bytes = 16
 
 [[cluster.nodes]]
+sender_id = "00000000000000000000000000000001"
 label = ""
 address = "10.0.0.11:7100"
-encryption_public_key = "storage-1-encryption-public-key"
-signing_public_key = "storage-1-signing-public-key"
+encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
+signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"

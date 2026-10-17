@@ -11,9 +11,12 @@ mod identity;
 mod password;
 mod registration;
 mod report;
+mod topology;
 
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
-pub use config::{ConfigError, ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME};
+pub use config::{
+    ConfigError, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
@@ -22,3 +25,4 @@ pub use registration::{
     RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
 };
 pub use report::{Startup, StartupError};
+pub use topology::{Topology, TopologyNode};

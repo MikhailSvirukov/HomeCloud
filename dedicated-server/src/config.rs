@@ -14,7 +14,7 @@ use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use crate::password::Argon2Params;
@@ -24,6 +24,15 @@ pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
 
 /// Configuration file name used when [`CONFIG_PATH_ENV`] is not set.
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "dedicated-server.toml";
+
+/// Number of bytes in a storage node identifier.
+const NODE_ID_BYTES: usize = 16;
+
+/// Number of bytes in a public key.
+const PUBLIC_KEY_BYTES: usize = 32;
+
+/// Number of hexadecimal characters used to encode one byte.
+const HEX_CHARS_PER_BYTE: usize = 2;
 
 /// Result of loading or validating a [`ServerConfig`].
 type Result<T> = core::result::Result<T, ConfigError>;
@@ -91,17 +100,98 @@ pub(crate) struct ClusterConfig {
 }
 
 /// A single storage node known at bootstrap.
+// The identifier and key fields are consumed by the topology response.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ClusterNode {
+    /// Identifier of the node in the static manifest.
+    pub(crate) sender_id: NodeId,
     /// Human-readable label identifying the node.
     pub(crate) label: String,
     /// Address of the node.
     pub(crate) address: SocketAddr,
     /// Public key used to encrypt messages for the node.
-    pub(crate) encryption_public_key: String,
+    pub(crate) encryption_public_key: PublicKey,
     /// Public key used to verify messages signed by the node.
-    pub(crate) signing_public_key: String,
+    pub(crate) signing_public_key: PublicKey,
+}
+
+/// Identifier of a storage node in the static manifest (16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeId([u8; NODE_ID_BYTES]);
+
+/// A 32-byte public key from the static manifest (X25519 or Ed25519).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicKey([u8; PUBLIC_KEY_BYTES]);
+
+impl NodeId {
+    /// Raw identifier bytes.
+    pub fn as_bytes(&self) -> &[u8; NODE_ID_BYTES] {
+        &self.0
+    }
+}
+
+impl PublicKey {
+    /// Raw public key bytes.
+    pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_BYTES] {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for NodeId {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_hex(deserializer).map(Self)
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserialize_hex(deserializer).map(Self)
+    }
+}
+
+fn deserialize_hex<'de, D, const N: usize>(
+    deserializer: D,
+) -> core::result::Result<[u8; N], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let text = <&str>::deserialize(deserializer)?;
+    decode_hex(text).ok_or_else(|| {
+        <D::Error as serde::de::Error>::custom(format!(
+            "expected {} hexadecimal characters",
+            N * HEX_CHARS_PER_BYTE
+        ))
+    })
+}
+
+fn decode_hex<const N: usize>(input: &str) -> Option<[u8; N]> {
+    let bytes = input.as_bytes();
+    if bytes.len() != N * HEX_CHARS_PER_BYTE {
+        return None;
+    }
+
+    let mut decoded = [0_u8; N];
+    let (pairs, _) = bytes.as_chunks::<HEX_CHARS_PER_BYTE>();
+    for (byte, [high, low]) in decoded.iter_mut().zip(pairs) {
+        *byte = (hex_nibble(*high)? << 4) | hex_nibble(*low)?;
+    }
+    Some(decoded)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Field of a [`ClusterNode`] that a configuration rule rejected.
@@ -111,10 +201,6 @@ pub enum NodeField {
     Label,
     /// The node's address.
     Address,
-    /// The node's encryption public key.
-    EncryptionPublicKey,
-    /// The node's signing public key.
-    SigningPublicKey,
 }
 
 impl fmt::Display for NodeField {
@@ -122,8 +208,6 @@ impl fmt::Display for NodeField {
         let name = match self {
             Self::Label => "label",
             Self::Address => "address",
-            Self::EncryptionPublicKey => "encryption_public_key",
-            Self::SigningPublicKey => "signing_public_key",
         };
         formatter.write_str(name)
     }
@@ -231,18 +315,6 @@ fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
                 field: NodeField::Label,
             });
         }
-        if node.encryption_public_key.is_empty() {
-            return Err(ConfigError::EmptyNodeField {
-                index,
-                field: NodeField::EncryptionPublicKey,
-            });
-        }
-        if node.signing_public_key.is_empty() {
-            return Err(ConfigError::EmptyNodeField {
-                index,
-                field: NodeField::SigningPublicKey,
-            });
-        }
     }
     Ok(())
 }
@@ -278,14 +350,12 @@ mod tests {
         include_str!("../tests/fixtures/invalid/empty_identity_label.toml");
     const EMPTY_CLUSTER: &str = include_str!("../tests/fixtures/invalid/empty_cluster.toml");
     const EMPTY_NODE_LABEL: &str = include_str!("../tests/fixtures/invalid/empty_node_label.toml");
-    const EMPTY_NODE_ENCRYPTION_KEY: &str =
-        include_str!("../tests/fixtures/invalid/empty_node_encryption_key.toml");
-    const EMPTY_NODE_SIGNING_KEY: &str =
-        include_str!("../tests/fixtures/invalid/empty_node_signing_key.toml");
     const DUPLICATE_NODE_LABEL: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_label.toml");
     const DUPLICATE_NODE_ADDRESS: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
+    const INVALID_NODE_KEY_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_key_hex.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
     const ZERO_PASSWORD_MEMORY: &str =
         include_str!("../tests/fixtures/invalid/zero_password_memory.toml");
@@ -307,8 +377,32 @@ mod tests {
         assert_eq!(config.password.parallelism.get(), 1);
         assert_eq!(config.password.salt_length_bytes.get(), 16);
         assert_eq!(config.cluster.nodes.len(), 2);
+        assert_eq!(
+            config.cluster.nodes[0].sender_id.as_bytes(),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        );
         assert_eq!(config.cluster.nodes[0].label, "storage-1");
+        assert_eq!(
+            config.cluster.nodes[0].encryption_public_key.as_bytes(),
+            &[0x11; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[0].signing_public_key.as_bytes(),
+            &[0x22; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[1].sender_id.as_bytes(),
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]
+        );
         assert_eq!(config.cluster.nodes[1].label, "storage-2");
+        assert_eq!(
+            config.cluster.nodes[1].encryption_public_key.as_bytes(),
+            &[0xAA; PUBLIC_KEY_BYTES]
+        );
+        assert_eq!(
+            config.cluster.nodes[1].signing_public_key.as_bytes(),
+            &[0xBB; PUBLIC_KEY_BYTES]
+        );
     }
 
     #[test]
@@ -328,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_node_field() {
+    fn rejects_empty_node_label() {
         assert!(matches!(
             ServerConfig::from_toml_str(EMPTY_NODE_LABEL),
             Err(ConfigError::EmptyNodeField {
@@ -336,19 +430,13 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn rejects_malformed_node_key_hex_as_parse_error() {
         assert!(matches!(
-            ServerConfig::from_toml_str(EMPTY_NODE_ENCRYPTION_KEY),
-            Err(ConfigError::EmptyNodeField {
-                field: NodeField::EncryptionPublicKey,
-                ..
-            })
-        ));
-        assert!(matches!(
-            ServerConfig::from_toml_str(EMPTY_NODE_SIGNING_KEY),
-            Err(ConfigError::EmptyNodeField {
-                field: NodeField::SigningPublicKey,
-                ..
-            })
+            ServerConfig::from_toml_str(INVALID_NODE_KEY_HEX),
+            Err(ConfigError::Parse { .. })
         ));
     }
 
