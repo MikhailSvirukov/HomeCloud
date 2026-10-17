@@ -1,17 +1,22 @@
 package dev.homecloud.android
 
 import android.content.Intent
+import android.provider.MediaStore
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
+import dev.homecloud.android.media.RecordingMediaContentProvider
 import dev.homecloud.android.permissions.MediaPermissionPolicy
+import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -20,7 +25,8 @@ import org.robolectric.annotation.ConscryptMode
 
 /**
  * Launches the activity the manifest declares and asserts the permission surface a first launch
- * shows, together with the launcher entry point the package manager resolves.
+ * shows, the media library count once access is granted, together with the launcher entry point the
+ * package manager resolves.
  *
  * The Compose rule launches the activity before the test body runs, so the granted state is produced
  * through Robolectric's shadow application permissions and the lifecycle is driven back to resume,
@@ -54,6 +60,22 @@ class MainActivityTest {
     }
 
     @Test
+    fun `launch with every media permission granted shows the media library count`() {
+        installMediaProvider(
+            listOf(
+                mediaRow(id = IMAGE_ID, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                mediaRow(id = VIDEO_ID, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+            ),
+        )
+        grantRequiredPermissions()
+        resumeAgain()
+
+        waitForLibrarySummary()
+
+        composeRule.onNodeWithText(foundMessage(EXPECTED_MEDIA_COUNT)).assertIsDisplayed()
+    }
+
+    @Test
     fun `the manifest launcher entry point resolves to MainActivity`() {
         val application = RuntimeEnvironment.getApplication()
         val launcherIntent =
@@ -75,6 +97,43 @@ class MainActivityTest {
         composeRule.waitForIdle()
     }
 
+    private fun installMediaProvider(rows: List<Array<Any?>>) {
+        val authority =
+            requireNotNull(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL).authority) {
+                "media collection uri must carry an authority"
+            }
+        val provider =
+            Robolectric
+                .buildContentProvider(RecordingMediaContentProvider::class.java)
+                .create(authority)
+                .get()
+        provider.rows = rows
+    }
+
+    private fun mediaRow(
+        id: Long,
+        mimeType: String,
+    ): Array<Any?> =
+        arrayOf(
+            id,
+            DISPLAY_NAME_PREFIX + id,
+            MediaTestData.SIZE_BYTES,
+            MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+            mimeType,
+        )
+
+    private fun waitForLibrarySummary() {
+        composeRule.waitUntil(timeoutMillis = SUMMARY_TIMEOUT_MILLIS) {
+            composeRule
+                .onAllNodesWithText(foundMessage(EXPECTED_MEDIA_COUNT))
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+    }
+
+    private fun foundMessage(count: Int): String =
+        composeRule.activity.resources.getQuantityString(R.plurals.media_library_found, count, count)
+
     private fun grantRequiredPermissions() {
         val permissions = MediaPermissionPolicy.requiredPermissions(PER_TYPE_PERMISSIONS_SDK_INT)
         shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(*permissions.toTypedArray())
@@ -93,5 +152,10 @@ class MainActivityTest {
 
     private companion object {
         const val PER_TYPE_PERMISSIONS_SDK_INT = 33
+        const val IMAGE_ID = 7L
+        const val VIDEO_ID = 8L
+        const val DISPLAY_NAME_PREFIX = "item-"
+        const val EXPECTED_MEDIA_COUNT = 2
+        const val SUMMARY_TIMEOUT_MILLIS = 5_000L
     }
 }
