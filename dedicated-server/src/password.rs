@@ -1,22 +1,30 @@
 //! Argon2id password verifiers stored as PHC records.
 //!
-//! Deriving a verifier uses Argon2id version `0x13` with a fresh salt from the
-//! operating system CSPRNG. Checking a password reads the salt, parameters and
-//! algorithm version back from the stored record, so a later configuration
-//! change cannot invalidate existing verifiers. This module performs no I/O.
+//! Deriving a verifier uses Argon2id version `0x13` with a fresh salt of the
+//! configured length from the operating system CSPRNG. Checking a password reads
+//! the salt, parameters and algorithm version back from the stored record, so a
+//! later configuration change cannot invalidate existing verifiers. This module
+//! performs no I/O.
 
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 
-use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier as _, SaltString};
 use argon2::{Algorithm, Argon2, Params, Version};
 use thiserror::Error;
+
+/// Bounds on a raw salt that a PHC record can carry, in bytes.
+///
+/// A PHC salt is 4 to 64 base64 characters, which unpadded encoding maps to
+/// 3 to 48 raw bytes.
+const MIN_SALT_BYTES: usize = 3;
+const MAX_SALT_BYTES: usize = 48;
 
 /// Result of deriving, parsing or checking a [`PasswordVerifier`].
 type Result<T, E = PasswordError> = core::result::Result<T, E>;
 
 /// Argon2id parameters used when deriving a new password verifier.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Argon2Params {
     /// Memory cost in kibibytes.
     pub memory_kib: NonZeroU32,
@@ -24,6 +32,8 @@ pub struct Argon2Params {
     pub iterations: NonZeroU32,
     /// Degree of parallelism.
     pub parallelism: NonZeroU32,
+    /// Salt length in bytes.
+    pub salt_length_bytes: NonZeroUsize,
 }
 
 /// A password verifier stored as a PHC record.
@@ -38,10 +48,18 @@ impl PasswordVerifier {
             memory_kib,
             iterations,
             parallelism,
+            salt_length_bytes,
         } = params;
         let params = Params::new(memory_kib.get(), iterations.get(), parallelism.get(), None)
             .map_err(PasswordError::Parameters)?;
-        let salt = SaltString::generate(&mut OsRng);
+        let salt_length = salt_length_bytes.get();
+        if !(MIN_SALT_BYTES..=MAX_SALT_BYTES).contains(&salt_length) {
+            return Err(PasswordError::SaltLength(salt_length));
+        }
+        let mut salt_bytes = vec![0_u8; salt_length];
+        OsRng.fill_bytes(&mut salt_bytes);
+        let salt = SaltString::encode_b64(&salt_bytes)
+            .map_err(|_| PasswordError::SaltLength(salt_length))?;
         let hash = Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password(password.as_bytes(), &salt)
             .map_err(PasswordError::Hash)?;
@@ -53,11 +71,7 @@ impl PasswordVerifier {
     /// Adopt a stored PHC record.
     pub fn parse(phc: &str) -> Result<Self> {
         let hash = PasswordHash::new(phc).map_err(PasswordError::MalformedRecord)?;
-        if hash.salt.is_none() || hash.hash.is_none() {
-            return Err(PasswordError::MalformedRecord(
-                argon2::password_hash::Error::PhcStringField,
-            ));
-        }
+        validated_params(&hash)?;
         Ok(Self {
             phc: phc.to_owned(),
         })
@@ -66,16 +80,8 @@ impl PasswordVerifier {
     /// Check `password` against this record using its stored salt and parameters.
     pub fn verify(&self, password: &str) -> Result<bool> {
         let hash = PasswordHash::new(&self.phc).map_err(PasswordError::MalformedRecord)?;
-        let algorithm = match Algorithm::try_from(hash.algorithm) {
-            Ok(Algorithm::Argon2id) => Algorithm::Argon2id,
-            _ => return Err(PasswordError::UnsupportedAlgorithm),
-        };
-        let version = match hash.version {
-            Some(version) if version == u32::from(Version::V0x13) => Version::V0x13,
-            _ => return Err(PasswordError::UnsupportedVersion),
-        };
-        let params = Params::try_from(&hash).map_err(PasswordError::MalformedRecord)?;
-        let argon2 = Argon2::new(algorithm, version, params);
+        let params = validated_params(&hash)?;
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         match argon2.verify_password(password.as_bytes(), &hash) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::Password) => Ok(false),
@@ -89,13 +95,46 @@ impl PasswordVerifier {
     }
 }
 
+/// Validate a record for Argon2id version `0x13` and return its stored parameters.
+fn validated_params(hash: &PasswordHash<'_>) -> Result<Params> {
+    match Algorithm::try_from(hash.algorithm) {
+        Ok(Algorithm::Argon2id) => {}
+        _ => return Err(PasswordError::UnsupportedAlgorithm),
+    }
+    match hash.version {
+        Some(version) if version == u32::from(Version::V0x13) => {}
+        _ => return Err(PasswordError::UnsupportedVersion),
+    }
+    if hash.salt.is_none() || hash.hash.is_none() {
+        return Err(malformed_record());
+    }
+    for name in ["m", "t", "p"] {
+        if hash.params.get(name).is_none() {
+            return Err(malformed_record());
+        }
+    }
+    Params::try_from(hash).map_err(PasswordError::MalformedRecord)
+}
+
+/// The record is structurally valid PHC text but is not a usable verifier.
+fn malformed_record() -> PasswordError {
+    PasswordError::MalformedRecord(argon2::password_hash::Error::PhcStringField)
+}
+
 /// Errors produced while deriving or checking a verifier.
 #[derive(Debug, Error)]
 pub enum PasswordError {
     /// The algorithm rejected the requested parameters.
     #[error("invalid Argon2 parameters: {0}")]
     Parameters(#[source] argon2::Error),
-    /// Deriving the verifier failed.
+    /// The configured salt length cannot be carried by a PHC record.
+    #[error("salt length of {0} bytes is not usable in a PHC record")]
+    SaltLength(usize),
+    /// Hashing the password failed inside the hashing API.
+    ///
+    /// Derivation validates the parameters and salt first, so this is a
+    /// defensive mapping of the fallible hashing API rather than an expected
+    /// failure.
     #[error("failed to derive password verifier: {0}")]
     Hash(#[source] argon2::password_hash::Error),
     /// The text is not a usable PHC password record.
@@ -121,6 +160,7 @@ mod tests {
     const MEMORY_KIB: u32 = 8;
     const ITERATIONS: u32 = 1;
     const PARALLELISM: u32 = 1;
+    const SALT_LENGTH_BYTES: usize = 16;
 
     // Argon2id v=19 with m=16, t=2, p=1 and salt "b3RoZXJwYXJhbXM" ("otherparams").
     const PINNED_OTHER_PARAMS_RECORD: &str =
@@ -130,7 +170,11 @@ mod tests {
     const OTHER_ITERATIONS: u32 = 2;
     const OTHER_PARALLELISM: u32 = 1;
 
-    // Argon2id v=19 with m=8, t=1, p=1 and salt "a25vd25hbnN3ZXI" ("knownanswer").
+    // Local regression pin only: the shared INT-NET-046 vector is not published
+    // yet, so this is not the cross-component vector. Produced with argon2 0.5.3
+    // (Argon2id, version 0x13, m=8 KiB, t=1, p=1), 11-byte salt "knownanswer"
+    // encoded as "a25vd25hbnN3ZXI", and password "known answer password";
+    // replace it with the published cross-component vector once one exists.
     const KNOWN_ANSWER_RECORD: &str =
         "$argon2id$v=19$m=8,t=1,p=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
     const KNOWN_ANSWER_PASSWORD: &str = "known answer password";
@@ -140,9 +184,18 @@ mod tests {
         "$argon2i$v=19$m=8,t=1,p=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
     const OTHER_VERSION_RECORD: &str =
         "$argon2id$v=16$m=8,t=1,p=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
+    const MISSING_PARAMETER_RECORD: &str =
+        "$argon2id$v=19$m=8,t=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
+    const MISSING_HASH_RECORD: &str = "$argon2id$v=19$m=8,t=1,p=1$a25vd25hbnN3ZXI";
+    const BELOW_MINIMUM_MEMORY_RECORD: &str =
+        "$argon2id$v=19$m=4,t=1,p=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
 
     fn non_zero(value: u32) -> NonZeroU32 {
         NonZeroU32::new(value).expect("test values must be non-zero")
+    }
+
+    fn non_zero_usize(value: usize) -> NonZeroUsize {
+        NonZeroUsize::new(value).expect("test values must be non-zero")
     }
 
     fn params(memory_kib: u32, iterations: u32, parallelism: u32) -> Argon2Params {
@@ -150,6 +203,14 @@ mod tests {
             memory_kib: non_zero(memory_kib),
             iterations: non_zero(iterations),
             parallelism: non_zero(parallelism),
+            salt_length_bytes: non_zero_usize(SALT_LENGTH_BYTES),
+        }
+    }
+
+    fn params_with_salt(salt_length_bytes: usize) -> Argon2Params {
+        Argon2Params {
+            salt_length_bytes: non_zero_usize(salt_length_bytes),
+            ..fast_params()
         }
     }
 
@@ -159,6 +220,13 @@ mod tests {
 
     fn record(phc: &str) -> PasswordVerifier {
         PasswordVerifier::parse(phc).expect("test record must parse")
+    }
+
+    /// Bypass adoption to exercise verification's own validation of stored text.
+    fn unvalidated(phc: &str) -> PasswordVerifier {
+        PasswordVerifier {
+            phc: phc.to_owned(),
+        }
     }
 
     fn decimal_parameter(hash: &PasswordHash<'_>, name: &str) -> u32 {
@@ -180,6 +248,22 @@ mod tests {
         assert_eq!(decimal_parameter(&hash, "m"), MEMORY_KIB);
         assert_eq!(decimal_parameter(&hash, "t"), ITERATIONS);
         assert_eq!(decimal_parameter(&hash, "p"), PARALLELISM);
+    }
+
+    #[test]
+    fn derive_generates_the_configured_salt_length() {
+        let configured = 24;
+        let verifier = PasswordVerifier::derive(PASSWORD, params_with_salt(configured))
+            .expect("derivation must succeed");
+        let hash = PasswordHash::new(verifier.as_str()).expect("derived record must parse");
+        let salt = hash.salt.expect("derived record must carry a salt");
+        let mut decoded = [0_u8; 64];
+
+        let decoded = salt
+            .decode_b64(&mut decoded)
+            .expect("derived salt must decode");
+
+        assert_eq!(decoded.len(), configured);
     }
 
     #[test]
@@ -244,26 +328,84 @@ mod tests {
     }
 
     #[test]
-    fn invalid_records_and_parameters_are_rejected() {
+    fn parse_and_verify_reject_a_malformed_record() {
         assert!(matches!(
-            PasswordVerifier::parse("argon2id"),
+            PasswordVerifier::parse("not a PHC record"),
             Err(PasswordError::MalformedRecord(_))
         ));
         assert!(matches!(
-            PasswordVerifier::parse("$argon2id$v=19$m=8,t=1,p=1$a25vd25hbnN3ZXI"),
+            unvalidated("not a PHC record").verify(PASSWORD),
             Err(PasswordError::MalformedRecord(_))
         ));
         assert!(matches!(
-            record(OTHER_ALGORITHM_RECORD).verify(PASSWORD),
+            PasswordVerifier::parse(MISSING_HASH_RECORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+        assert!(matches!(
+            unvalidated(MISSING_HASH_RECORD).verify(PASSWORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+    }
+
+    #[test]
+    fn parse_and_verify_reject_a_non_argon2id_record() {
+        assert!(matches!(
+            PasswordVerifier::parse(OTHER_ALGORITHM_RECORD),
             Err(PasswordError::UnsupportedAlgorithm)
         ));
         assert!(matches!(
-            record(OTHER_VERSION_RECORD).verify(PASSWORD),
+            unvalidated(OTHER_ALGORITHM_RECORD).verify(PASSWORD),
+            Err(PasswordError::UnsupportedAlgorithm)
+        ));
+    }
+
+    #[test]
+    fn parse_and_verify_reject_a_non_v0x13_record() {
+        assert!(matches!(
+            PasswordVerifier::parse(OTHER_VERSION_RECORD),
             Err(PasswordError::UnsupportedVersion)
         ));
+        assert!(matches!(
+            unvalidated(OTHER_VERSION_RECORD).verify(PASSWORD),
+            Err(PasswordError::UnsupportedVersion)
+        ));
+    }
+
+    #[test]
+    fn parse_and_verify_reject_a_record_missing_a_parameter() {
+        assert!(matches!(
+            PasswordVerifier::parse(MISSING_PARAMETER_RECORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+        assert!(matches!(
+            unvalidated(MISSING_PARAMETER_RECORD).verify(PASSWORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+    }
+
+    #[test]
+    fn verify_rejects_a_record_with_memory_below_the_minimum() {
+        assert!(matches!(
+            unvalidated(BELOW_MINIMUM_MEMORY_RECORD).verify(PASSWORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+    }
+
+    #[test]
+    fn derive_rejects_parameters_outside_the_algorithm_limits() {
         assert!(matches!(
             PasswordVerifier::derive(PASSWORD, params(1, 1, 1)),
             Err(PasswordError::Parameters(_))
         ));
+    }
+
+    #[test]
+    fn derive_rejects_an_unusable_salt_length() {
+        for length in [1, 49] {
+            assert!(matches!(
+                PasswordVerifier::derive(PASSWORD, params_with_salt(length)),
+                Err(PasswordError::SaltLength(rejected)) if rejected == length
+            ));
+        }
     }
 }
