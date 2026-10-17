@@ -33,7 +33,11 @@ class BackupCycleRunnerTest {
         val result = runner.runOnce()
 
         assertEquals(
-            PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = CANDIDATE_COUNT),
+            PlanResult(
+                discoveredCandidates = CANDIDATE_COUNT,
+                newlyEnqueued = CANDIDATE_COUNT,
+                rejectedByCapacity = NO_CAPACITY_REJECTIONS,
+            ),
             result,
         )
         assertEquals(
@@ -82,7 +86,14 @@ class BackupCycleRunnerTest {
 
         val result = runner.runOnce()
 
-        assertEquals(PlanResult(discoveredCandidates = SINGLE_CANDIDATE_COUNT, newlyEnqueued = 0), result)
+        assertEquals(
+            PlanResult(
+                discoveredCandidates = SINGLE_CANDIDATE_COUNT,
+                newlyEnqueued = NO_NEW_ENQUEUES,
+                rejectedByCapacity = NO_CAPACITY_REJECTIONS,
+            ),
+            result,
+        )
         val queued = queue.entries().single()
         assertEquals(UploadQueueState.FAILED, queued.state)
         assertEquals(STORED_ATTEMPT_COUNT, queued.attemptCount)
@@ -98,8 +109,11 @@ class BackupCycleRunnerTest {
         val firstResult = runnerFor(store = store, queue = firstQueue).runOnce()
         val secondResult = runnerFor(store = store, queue = secondQueue).runOnce()
 
-        assertEquals(PlanResult(CANDIDATE_COUNT, CANDIDATE_COUNT), firstResult)
-        assertEquals(0, secondResult.newlyEnqueued)
+        assertEquals(
+            PlanResult(CANDIDATE_COUNT, CANDIDATE_COUNT, NO_CAPACITY_REJECTIONS),
+            firstResult,
+        )
+        assertEquals(NO_NEW_ENQUEUES, secondResult.newlyEnqueued)
         assertEquals(CANDIDATE_COUNT, secondResult.discoveredCandidates)
         assertEquals(firstQueue.entries(), secondQueue.entries())
         assertEquals(CANDIDATE_COUNT, store.read().size)
@@ -113,7 +127,14 @@ class BackupCycleRunnerTest {
 
         val result = runner.runOnce()
 
-        assertEquals(PlanResult(discoveredCandidates = 0, newlyEnqueued = 0), result)
+        assertEquals(
+            PlanResult(
+                discoveredCandidates = 0,
+                newlyEnqueued = 0,
+                rejectedByCapacity = NO_CAPACITY_REJECTIONS,
+            ),
+            result,
+        )
         assertTrue(store.read().isEmpty())
     }
 
@@ -129,7 +150,7 @@ class BackupCycleRunnerTest {
         assertSame(failure, thrown)
         assertEquals(0, store.writeCount)
         assertEquals(SINGLE_FAILURE_EVENT, log.failureCount)
-        assertTrue(log.plannedCounts.isEmpty())
+        assertTrue(log.plannedResults.isEmpty())
     }
 
     @Test
@@ -156,11 +177,38 @@ class BackupCycleRunnerTest {
         val result = runner.runOnce()
 
         assertEquals(
-            PlanResult(discoveredCandidates = CANDIDATE_COUNT, newlyEnqueued = CANDIDATE_COUNT),
+            PlanResult(
+                discoveredCandidates = CANDIDATE_COUNT,
+                newlyEnqueued = CANDIDATE_COUNT,
+                rejectedByCapacity = NO_CAPACITY_REJECTIONS,
+            ),
             result,
         )
-        assertEquals(listOf(result.discoveredCandidates to result.newlyEnqueued), log.plannedCounts)
+        assertEquals(listOf(result), log.plannedResults)
         assertEquals(NO_FAILURE_EVENTS, log.failureCount)
+    }
+
+    @Test
+    fun `runOnce reports a capacity rejection to the log unchanged`() {
+        val log = RecordingBackupCycleLog()
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                log = log,
+                maxQueueSize = CAPACITY,
+            )
+
+        val result = runner.runOnce()
+
+        val expected =
+            PlanResult(
+                discoveredCandidates = CANDIDATE_COUNT,
+                newlyEnqueued = CAPACITY,
+                rejectedByCapacity = SINGLE_REJECTION,
+            )
+        assertEquals(expected, result)
+        assertEquals(listOf(expected), log.plannedResults)
     }
 
     @Test
@@ -173,12 +221,12 @@ class BackupCycleRunnerTest {
         runnerFor(store = store, queue = InMemoryUploadQueue(MAX_ATTEMPTS), log = secondLog).runOnce()
 
         assertEquals(
-            listOf(CANDIDATE_COUNT to CANDIDATE_COUNT),
-            firstLog.plannedCounts,
+            listOf(PlanResult(CANDIDATE_COUNT, CANDIDATE_COUNT, NO_CAPACITY_REJECTIONS)),
+            firstLog.plannedResults,
         )
         assertEquals(
-            listOf(CANDIDATE_COUNT to NO_NEW_ENQUEUES),
-            secondLog.plannedCounts,
+            listOf(PlanResult(CANDIDATE_COUNT, NO_NEW_ENQUEUES, NO_CAPACITY_REJECTIONS)),
+            secondLog.plannedResults,
         )
     }
 
@@ -187,8 +235,9 @@ class BackupCycleRunnerTest {
         queue: InMemoryUploadQueue,
         candidates: List<MediaVersionCandidate> = imageAndVideoCandidates(),
         log: BackupCycleLog = NoOpBackupCycleLog,
+        maxQueueSize: Int = NON_BINDING_CAPACITY,
     ): BackupCycleRunner {
-        val planner = MediaBackupPlanner(FakeMediaVersionScanner(candidates), queue)
+        val planner = MediaBackupPlanner(FakeMediaVersionScanner(candidates), queue, maxQueueSize)
         return BackupCycleRunner(planner = planner, store = store, log = log)
     }
 
@@ -230,10 +279,10 @@ class BackupCycleRunnerTest {
     }
 
     private class RecordingBackupCycleLog : BackupCycleLog {
-        private val recordedPlannedCounts = mutableListOf<Pair<Int, Int>>()
+        private val recordedPlannedResults = mutableListOf<PlanResult>()
 
-        val plannedCounts: List<Pair<Int, Int>>
-            get() = recordedPlannedCounts
+        val plannedResults: List<PlanResult>
+            get() = recordedPlannedResults
 
         var failureCount: Int = 0
             private set
@@ -241,8 +290,14 @@ class BackupCycleRunnerTest {
         override fun cyclePlanned(
             discoveredCandidates: Int,
             newlyEnqueued: Int,
+            rejectedByCapacity: Int,
         ) {
-            recordedPlannedCounts += discoveredCandidates to newlyEnqueued
+            recordedPlannedResults +=
+                PlanResult(
+                    discoveredCandidates = discoveredCandidates,
+                    newlyEnqueued = newlyEnqueued,
+                    rejectedByCapacity = rejectedByCapacity,
+                )
         }
 
         override fun cycleFailed() {
@@ -265,7 +320,12 @@ class BackupCycleRunnerTest {
         const val READ_FAILURE_MESSAGE = "store read failed"
         const val WRITE_FAILURE_MESSAGE = "store write failed"
 
+        const val NON_BINDING_CAPACITY = 100
+        const val CAPACITY = 1
+        const val SINGLE_REJECTION = 1
+
         const val NO_NEW_ENQUEUES = 0
+        const val NO_CAPACITY_REJECTIONS = 0
         const val NO_FAILURE_EVENTS = 0
         const val SINGLE_FAILURE_EVENT = 1
     }
