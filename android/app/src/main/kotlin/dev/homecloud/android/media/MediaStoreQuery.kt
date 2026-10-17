@@ -14,15 +14,15 @@ import android.provider.MediaStore
  * levels that define them, because a query naming an unknown column fails.
  */
 internal object MediaStoreQuery {
-
     /** Columns read for every candidate row. */
-    val projection: Array<String> = arrayOf(
-        MediaStore.MediaColumns._ID,
-        MediaStore.MediaColumns.DISPLAY_NAME,
-        MediaStore.MediaColumns.SIZE,
-        MediaStore.MediaColumns.DATE_MODIFIED,
-        MediaStore.MediaColumns.MIME_TYPE,
-    )
+    val projection: Array<String> =
+        arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED,
+            MediaStore.MediaColumns.MIME_TYPE,
+        )
 
     /** Mime type prefix identifying photos. */
     private const val IMAGE_MIME_PREFIX = "image/"
@@ -31,10 +31,11 @@ internal object MediaStoreQuery {
     private const val VIDEO_MIME_PREFIX = "video/"
 
     /** Selection arguments restricting the query to photos and videos only. */
-    val selectionArgs: Array<String> = arrayOf(
-        "$IMAGE_MIME_PREFIX%",
-        "$VIDEO_MIME_PREFIX%",
-    )
+    val selectionArgs: Array<String> =
+        arrayOf(
+            "$IMAGE_MIME_PREFIX%",
+            "$VIDEO_MIME_PREFIX%",
+        )
 
     /**
      * Restricts the query to photos and videos and, where the platform supports
@@ -42,15 +43,16 @@ internal object MediaStoreQuery {
      */
     fun selection(sdkInt: Int): String {
         val mimeColumn = MediaStore.MediaColumns.MIME_TYPE
-        val clauses = buildList {
-            add("($mimeColumn LIKE ? OR $mimeColumn LIKE ?)")
-            if (sdkInt >= Build.VERSION_CODES.Q) {
-                add("${MediaStore.MediaColumns.IS_PENDING} = $CLEARED_STATE")
+        val clauses =
+            buildList {
+                add("($mimeColumn LIKE ? OR $mimeColumn LIKE ?)")
+                if (sdkInt >= Build.VERSION_CODES.Q) {
+                    add("${MediaStore.MediaColumns.IS_PENDING} = $CLEARED_STATE")
+                }
+                if (sdkInt >= Build.VERSION_CODES.R) {
+                    add("${MediaStore.MediaColumns.IS_TRASHED} = $CLEARED_STATE")
+                }
             }
-            if (sdkInt >= Build.VERSION_CODES.R) {
-                add("${MediaStore.MediaColumns.IS_TRASHED} = $CLEARED_STATE")
-            }
-        }
         return clauses.joinToString(" AND ")
     }
 

@@ -6,7 +6,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaDiscoveryTest {
-
     @Test
     fun `discoverBackupCandidates of an empty source returns an empty list`() {
         val source = FakeMediaRowSource(emptyList())
@@ -18,12 +17,13 @@ class MediaDiscoveryTest {
 
     @Test
     fun `discoverBackupCandidates reads the row source exactly once`() {
-        val source = FakeMediaRowSource(
-            listOf(
-                MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-                MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
-            ),
-        )
+        val source =
+            FakeMediaRowSource(
+                listOf(
+                    MediaTestData.row(id = 1L, mimeType = MediaTestData.IMAGE_MIME_TYPE),
+                    MediaTestData.row(id = 2L, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+                ),
+            )
 
         MediaDiscovery(source).discoverBackupCandidates()
 

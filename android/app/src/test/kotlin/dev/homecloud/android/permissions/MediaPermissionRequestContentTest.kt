@@ -31,7 +31,6 @@ private const val PER_TYPE_PERMISSIONS_SDK_INT = 33
 @Config(sdk = [PER_TYPE_PERMISSIONS_SDK_INT])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class MediaPermissionRequestContentTest {
-
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
@@ -78,12 +77,9 @@ class MediaPermissionRequestContentTest {
         shadowOf(RuntimeEnvironment.getApplication()).denyPermissions(*permissions)
     }
 
-    private fun grantedMessage(): String =
-        composeRule.activity.getString(R.string.media_permission_granted_message)
+    private fun grantedMessage(): String = composeRule.activity.getString(R.string.media_permission_granted_message)
 
-    private fun requestMessage(): String =
-        composeRule.activity.getString(R.string.media_permission_request_message)
+    private fun requestMessage(): String = composeRule.activity.getString(R.string.media_permission_request_message)
 
-    private fun requestAction(): String =
-        composeRule.activity.getString(R.string.media_permission_request_action)
+    private fun requestAction(): String = composeRule.activity.getString(R.string.media_permission_request_action)
 }

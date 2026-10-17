@@ -10,11 +10,13 @@ use std::collections::BTreeMap;
 
 use harness_core::NodeId;
 use harness_docker::{
-    ClusterPlan, Command, ContainerPlan, container_name, container_remove, container_run,
-    container_stop, network_create, network_remove,
+    ClusterPlan, Command, ContainerPlan, container_kill, container_name, container_remove,
+    container_run, container_start, container_stop, network_create, network_remove,
 };
 
-use common::{DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan};
+use common::{
+    DATA_VOLUME_PATH, DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan, plan_with_data_volume,
+};
 
 /// `docker network` subcommand.
 const NETWORK: &str = "network";
@@ -34,8 +36,14 @@ const NETWORK_FLAG: &str = "--network";
 const NETWORK_ALIAS: &str = "--network-alias";
 /// Environment variable flag.
 const ENV: &str = "-e";
+/// Volume-mount flag.
+const VOLUME: &str = "--volume";
 /// `docker stop` subcommand.
 const STOP: &str = "stop";
+/// `docker kill` subcommand.
+const KILL: &str = "kill";
+/// `docker start` subcommand.
+const START: &str = "start";
 /// `docker rm` subcommand.
 const REMOVE: &str = "rm";
 /// Force flag for `docker rm`.
@@ -84,6 +92,10 @@ fn expected_run_command(plan: &ClusterPlan, container: &ContainerPlan) -> Comman
         NETWORK_ALIAS,
         container.hostname.as_str(),
     ]);
+    if let Some(path) = &container.data_volume_path {
+        args.push(VOLUME.to_string());
+        args.push(format!("{name}-data:{path}"));
+    }
     args.extend(env_args(&container.env));
     args.push(container.image.clone());
     Command::new(DOCKER, args)
@@ -94,6 +106,22 @@ fn expected_stop_command(plan: &ClusterPlan, container: &ContainerPlan) -> Comma
     Command::new(
         DOCKER,
         strings(&[STOP, container_name(plan, container).as_str()]),
+    )
+}
+
+/// The `docker kill` command these tests expect for one container.
+fn expected_kill_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[KILL, container_name(plan, container).as_str()]),
+    )
+}
+
+/// The `docker start` command these tests expect for one container.
+fn expected_start_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[START, container_name(plan, container).as_str()]),
     )
 }
 
@@ -140,12 +168,62 @@ fn container_run_matches_the_expected_command_for_every_container() {
 }
 
 #[test]
+fn container_run_mounts_the_node_data_volume() {
+    let plan = plan_with_data_volume(DATA_VOLUME_PATH);
+
+    for container in &plan.containers {
+        let run = container_run(&plan, container);
+        let expected = expected_run_command(&plan, container);
+        assert_eq!(run.args, expected.args);
+
+        let volume = format!(
+            "{}-data:{DATA_VOLUME_PATH}",
+            container_name(&plan, container)
+        );
+        let flag = run
+            .args
+            .iter()
+            .position(|arg| arg.as_str() == VOLUME)
+            .expect("a container with a data volume renders the --volume flag");
+        assert_eq!(
+            run.args.get(flag + 1),
+            Some(&volume),
+            "--volume is followed by the node data volume specification"
+        );
+    }
+}
+
+#[test]
 fn container_run_leads_with_run_and_detach() {
     let plan = plan();
     let run = container_run(&plan, storage(&plan));
 
     assert_eq!(run.args.first().map(String::as_str), Some(RUN));
     assert_eq!(run.args.get(1).map(String::as_str), Some(DETACH));
+}
+
+#[test]
+fn container_kill_commands_the_container() {
+    let plan = plan();
+    let container = storage(&plan);
+
+    let kill = container_kill(&plan, container);
+    let expected = expected_kill_command(&plan, container);
+
+    assert_eq!(kill.program, expected.program);
+    assert_eq!(kill.args, expected.args);
+}
+
+#[test]
+fn container_start_starts_the_container() {
+    let plan = plan();
+    let container = storage(&plan);
+
+    let start = container_start(&plan, container);
+    let expected = expected_start_command(&plan, container);
+
+    assert_eq!(start.program, expected.program);
+    assert_eq!(start.args, expected.args);
 }
 
 #[test]

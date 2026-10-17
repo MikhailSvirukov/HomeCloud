@@ -4,8 +4,10 @@ import android.util.Log
 
 /** [BackupCycleLog] that reports each cycle as one line in the Android log. */
 internal class AndroidBackupCycleLog : BackupCycleLog {
-
-    override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
+    override fun cyclePlanned(
+        discoveredCandidates: Int,
+        newlyEnqueued: Int,
+    ) {
         Log.i(
             TAG,
             "$PLANNED_MESSAGE $DISCOVERED_FIELD=$discoveredCandidates " +

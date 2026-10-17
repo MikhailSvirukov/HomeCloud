@@ -13,9 +13,9 @@ use harness_docker::{ClusterPlan, ClusterRuntime, FakeClusterRuntime, PlanSettin
 use harness_test_support::addr;
 
 use common::{
-    DEDICATED_ID, FIRST_STORAGE_ID, LISTEN_ADDRESS_KEY, NETWORK_NAME, NODE_ID_KEY, NODE_LABEL_KEY,
-    NODE_ROLE_KEY, SERVER_IMAGE, STORAGE_IMAGE, STORAGE_NODES, plan_order, plan_with_storage,
-    role_value, settings, topology,
+    DATA_VOLUME_PATH, DEDICATED_ID, FIRST_STORAGE_ID, LISTEN_ADDRESS_KEY, NETWORK_NAME,
+    NODE_ID_KEY, NODE_LABEL_KEY, NODE_ROLE_KEY, SERVER_IMAGE, STORAGE_IMAGE, STORAGE_NODES,
+    plan_order, plan_with_data_volume, plan_with_storage, role_value, settings, topology,
 };
 
 /// Environment key holding the node id in the distinct caller mapping.
@@ -107,8 +107,34 @@ fn plan_renders_the_settings_env_builder_for_every_container() {
 }
 
 #[test]
+fn plan_carries_the_data_volume_path_for_every_container() {
+    let with_volume = plan_with_data_volume(DATA_VOLUME_PATH);
+    for container in &with_volume.containers {
+        assert_eq!(
+            container.data_volume_path.as_deref(),
+            Some(DATA_VOLUME_PATH),
+            "the settings data volume path is copied onto every container"
+        );
+    }
+
+    let without_volume = plan_with_storage(STORAGE_NODES);
+    for container in &without_volume.containers {
+        assert_eq!(
+            container.data_volume_path, None,
+            "settings without a data volume leave every container without one"
+        );
+    }
+}
+
+#[test]
 fn plan_forwards_a_distinct_caller_env_mapping_for_every_node() {
-    let custom = PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, custom_node_env);
+    let custom = PlanSettings::new(
+        NETWORK_NAME,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        custom_node_env,
+        None,
+    );
     let plan = ClusterPlan::from_topology(&topology(STORAGE_NODES), &custom);
 
     let dedicated = plan

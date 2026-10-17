@@ -5,17 +5,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class MediaRowMappingTest {
-
     @Test
     fun `toRawMediaEntry maps every column of a fully populated row`() {
-        val entry = MediaRowMapping.toRawMediaEntry(
-            id = ID,
-            uri = URI,
-            displayName = DISPLAY_NAME,
-            sizeBytes = MediaTestData.SIZE_BYTES,
-            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = MediaTestData.IMAGE_MIME_TYPE,
-        )
+        val entry =
+            MediaRowMapping.toRawMediaEntry(
+                id = ID,
+                uri = URI,
+                displayName = DISPLAY_NAME,
+                sizeBytes = MediaTestData.SIZE_BYTES,
+                dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+                mimeType = MediaTestData.IMAGE_MIME_TYPE,
+            )
 
         assertEquals(ID, entry.id)
         assertEquals(URI, entry.uri)
@@ -27,14 +27,15 @@ class MediaRowMappingTest {
 
     @Test
     fun `toRawMediaEntry normalizes null text columns to an empty string`() {
-        val entry = MediaRowMapping.toRawMediaEntry(
-            id = ID,
-            uri = URI,
-            displayName = null,
-            sizeBytes = MediaTestData.SIZE_BYTES,
-            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = null,
-        )
+        val entry =
+            MediaRowMapping.toRawMediaEntry(
+                id = ID,
+                uri = URI,
+                displayName = null,
+                sizeBytes = MediaTestData.SIZE_BYTES,
+                dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+                mimeType = null,
+            )
 
         assertEquals(EMPTY_TEXT, entry.displayName)
         assertEquals(EMPTY_TEXT, entry.mimeType)
@@ -42,14 +43,15 @@ class MediaRowMappingTest {
 
     @Test
     fun `toRawMediaEntry preserves a blank but non-null mimeType as given`() {
-        val entry = MediaRowMapping.toRawMediaEntry(
-            id = ID,
-            uri = URI,
-            displayName = DISPLAY_NAME,
-            sizeBytes = MediaTestData.SIZE_BYTES,
-            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
-            mimeType = BLANK_MIME_TYPE,
-        )
+        val entry =
+            MediaRowMapping.toRawMediaEntry(
+                id = ID,
+                uri = URI,
+                displayName = DISPLAY_NAME,
+                sizeBytes = MediaTestData.SIZE_BYTES,
+                dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
+                mimeType = BLANK_MIME_TYPE,
+            )
 
         assertEquals(BLANK_MIME_TYPE, entry.mimeType)
     }

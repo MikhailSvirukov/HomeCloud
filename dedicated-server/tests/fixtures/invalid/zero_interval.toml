@@ -1,4 +1,5 @@
 listen = "10.0.0.1:7000"
+max_label_bytes = 64
 
 [identity]
 label = "dedicated-1"
@@ -10,8 +11,15 @@ interval_ms = 0
 timeout_ms = 500
 miss_threshold = 3
 
+[password]
+memory_kib = 8
+iterations = 1
+parallelism = 1
+salt_length_bytes = 16
+
 [[cluster.nodes]]
+sender_id = "00000000000000000000000000000001"
 label = "storage-1"
 address = "10.0.0.11:7100"
-encryption_public_key = "storage-1-encryption-public-key"
-signing_public_key = "storage-1-signing-public-key"
+encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
+signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"

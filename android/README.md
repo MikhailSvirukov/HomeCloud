@@ -22,6 +22,8 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
 - The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
 - A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, which also declares the no-op default, and `log/AndroidBackupCycleLog`).
+- The launched activity's media-read permission surface, which shows the current permission status, requests exactly the permissions the policy reports as missing, and opens the application's settings page when access was permanently refused (`permissions/MediaPermissionRequestContent`, `permissions/MediaPermissionPrompt`).
+- The media-library summary shown once access is granted, reporting the combined number of photos and videos available to back up, with a loading line while the library is read and a failure line when it cannot be read (`media/MediaLibrarySummaryContent`, `media/MediaLibrarySummary`).
 
 Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
 
@@ -46,6 +48,7 @@ The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDI
 | activity-compose | 1.13.0 |
 | lifecycle-runtime-ktx | 2.10.0 |
 | JUnit | 4.13.2 |
+| ktlint Gradle plugin | 14.2.0 |
 
 - Root project name is `HomeCloud`; the application module is `:app`.
 - Namespace and applicationId are `dev.homecloud.android`.
@@ -61,7 +64,7 @@ android/
 ├── AGENTS.md              area-local agent instructions
 ├── README.md              this file
 ├── ci/
-│   └── check.sh           area-local CI: bootstrap Gradle and run build + unit tests + lint
+│   └── check.sh           area-local CI: bootstrap Gradle and run debug + release builds, unit tests, lint and style
 ├── settings.gradle.kts    Gradle settings and module includes
 ├── build.gradle.kts       root build configuration
 ├── gradle.properties      shared Gradle properties
@@ -78,12 +81,16 @@ android/
         │   │   ├── BackupCycleLog.kt         structured cycle log and its no-op default
         │   │   └── AndroidBackupCycleLog.kt  reports each cycle through android.util.Log
         │   ├── media/            reading and classifying MediaStore rows
-        │   │   ├── MediaStoreMediaRowSource.kt   queries the device MediaStore
-        │   │   ├── MediaDiscovery.kt             reads all backup candidates
-        │   │   └── MediaCatalog.kt               classifies rows into candidates
+        │   │   ├── MediaStoreMediaRowSource.kt    queries the device MediaStore
+        │   │   ├── MediaDiscovery.kt              reads all backup candidates
+        │   │   ├── MediaCatalog.kt                classifies rows into candidates
+        │   │   ├── MediaLibrarySummary.kt         counts discovered photos and videos
+        │   │   └── MediaLibrarySummaryContent.kt  shows the summary, loading and failure lines
         │   ├── permissions/      which media read permissions to request
-        │   │   ├── MediaPermissionPolicy.kt          required permissions per API level
-        │   │   └── MediaPermissionRequestPolicy.kt   missing permissions and whether to ask
+        │   │   ├── MediaPermissionPolicy.kt            required permissions per API level
+        │   │   ├── MediaPermissionRequestPolicy.kt     missing permissions and whether to ask
+        │   │   ├── MediaPermissionPrompt.kt            message and action for a permission state
+        │   │   └── MediaPermissionRequestContent.kt    permission surface that requests or opens settings
         │   └── queue/            upload queue and its persisted snapshot
         │       ├── UploadQueue.kt           queue model and retry bookkeeping
         │       ├── InMemoryUploadQueue.kt   in-memory implementation
@@ -114,7 +121,7 @@ bash android/ci/check.sh
 The script resolves the `android/` directory from its own location and executes:
 
 ```sh
-"$GRADLE_BIN" --no-daemon --stacktrace -p "$ANDROID_DIR" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+"$GRADLE_BIN" --no-daemon --stacktrace -p "$ANDROID_DIR" :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:ktlintCheck
 ```
 
 Before invoking Gradle it exports `GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"` and `ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"`. The JVM's `user.home` can resolve to a read-only path in agent containers (for example `/home/node`) while `$HOME` is writable, so Gradle's native services and the Android tools need writable home directories. Both variables honor caller-provided overrides.

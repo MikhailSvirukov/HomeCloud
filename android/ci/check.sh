@@ -43,7 +43,7 @@ fi
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
 
-echo "[check] Running :app:assembleDebug, :app:testDebugUnitTest and :app:lintDebug"
-"${GRADLE_BIN}" --no-daemon --stacktrace -p "${ANDROID_DIR}" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+echo "[check] Running :app:assembleDebug, :app:assembleRelease, :app:testDebugUnitTest, :app:lintDebug and :app:ktlintCheck"
+"${GRADLE_BIN}" --no-daemon --stacktrace -p "${ANDROID_DIR}" :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:ktlintCheck
 
-echo "[check] Android build, unit tests and lint completed"
+echo "[check] Android debug and release builds, unit tests, lint and Kotlin style check completed"

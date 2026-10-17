@@ -7,7 +7,6 @@ package dev.homecloud.android.queue
  * queue domain model stays free of I/O and callers persist the whole queue instead of deltas.
  */
 internal interface UploadQueueStore {
-
     /** Loads the stored snapshot in its persisted order. */
     fun read(): List<UploadQueueEntry>
 
@@ -16,4 +15,7 @@ internal interface UploadQueueStore {
 }
 
 /** Signals that the persisted upload queue could not be read or written. */
-internal class UploadQueueStoreException(message: String, cause: Throwable? = null) : Exception(message, cause)
+internal class UploadQueueStoreException(
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)

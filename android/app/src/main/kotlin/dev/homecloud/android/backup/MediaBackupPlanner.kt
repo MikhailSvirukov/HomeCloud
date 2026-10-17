@@ -24,7 +24,6 @@ internal class MediaBackupPlanner(
     private val uploadIdFactory: UploadIdFactory,
     val queue: UploadQueue,
 ) {
-
     /**
      * Enqueues each discovered candidate whose upload id is not already tracked. Discovery is
      * queried once and the tracked ids are snapshotted before enqueuing, so two candidates mapping to

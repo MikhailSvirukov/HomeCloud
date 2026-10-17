@@ -7,16 +7,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaStoreQueryTest {
-
     @Test
     fun `projection holds exactly the five expected media columns`() {
-        val expectedColumns = setOf(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.DATE_MODIFIED,
-            MediaStore.MediaColumns.MIME_TYPE,
-        )
+        val expectedColumns =
+            setOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.MIME_TYPE,
+            )
 
         assertEquals(expectedColumns, MediaStoreQuery.projection.toSet())
         assertEquals(expectedColumns.size, MediaStoreQuery.projection.size)
@@ -69,9 +69,10 @@ class MediaStoreQueryTest {
 
     @Test
     fun `selection from the trashed API appends both state clauses to the parenthesised mime clause`() {
-        val expected = "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR ${MediaStore.MediaColumns.MIME_TYPE} LIKE ?)" +
-            " AND ${MediaStore.MediaColumns.IS_PENDING} = 0" +
-            " AND ${MediaStore.MediaColumns.IS_TRASHED} = 0"
+        val expected =
+            "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR ${MediaStore.MediaColumns.MIME_TYPE} LIKE ?)" +
+                " AND ${MediaStore.MediaColumns.IS_PENDING} = 0" +
+                " AND ${MediaStore.MediaColumns.IS_TRASHED} = 0"
 
         assertEquals(expected, MediaStoreQuery.selection(TRASHED_API))
         assertEquals(expected, MediaStoreQuery.selection(ABOVE_TRASHED_API))
@@ -90,12 +91,13 @@ class MediaStoreQueryTest {
         /** A platform level above every state-column boundary. */
         const val ABOVE_TRASHED_API = 33
 
-        val TESTED_API_LEVELS = listOf(
-            BELOW_PENDING_API,
-            PENDING_API,
-            TRASHED_API,
-            ABOVE_TRASHED_API,
-        )
+        val TESTED_API_LEVELS =
+            listOf(
+                BELOW_PENDING_API,
+                PENDING_API,
+                TRASHED_API,
+                ABOVE_TRASHED_API,
+            )
 
         const val PLACEHOLDER = '?'
         const val PHOTO_VIDEO_PLACEHOLDER_COUNT = 2

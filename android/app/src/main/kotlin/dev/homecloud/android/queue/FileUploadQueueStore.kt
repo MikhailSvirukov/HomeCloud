@@ -19,8 +19,9 @@ import java.nio.file.StandardCopyOption
  * of dropping queued work silently. Not thread-safe; access must stay on one thread or be externally
  * synchronized.
  */
-internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
-
+internal class FileUploadQueueStore(
+    private val file: File,
+) : UploadQueueStore {
     override fun read(): List<UploadQueueEntry> {
         if (!file.exists()) {
             return emptyList()
@@ -77,7 +78,10 @@ internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
             }
         }
 
-    private fun parseLine(line: String, lineNumber: Int): UploadQueueEntry {
+    private fun parseLine(
+        line: String,
+        lineNumber: Int,
+    ): UploadQueueEntry {
         val fields = line.split(FIELD_SEPARATOR)
         if (fields.size != Column.entries.size) {
             throw UploadQueueStoreException(
@@ -96,18 +100,25 @@ internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
         )
     }
 
-    private fun parseLong(field: String, lineNumber: Int): Long =
-        field.toLongOrNull() ?: throw malformedNumber(lineNumber)
+    private fun parseLong(
+        field: String,
+        lineNumber: Int,
+    ): Long = field.toLongOrNull() ?: throw malformedNumber(lineNumber)
 
-    private fun parseInt(field: String, lineNumber: Int): Int =
-        field.toIntOrNull() ?: throw malformedNumber(lineNumber)
+    private fun parseInt(
+        field: String,
+        lineNumber: Int,
+    ): Int = field.toIntOrNull() ?: throw malformedNumber(lineNumber)
 
     private fun malformedNumber(lineNumber: Int): UploadQueueStoreException =
         UploadQueueStoreException(
             "Malformed upload queue entry on line $lineNumber: a numeric field is not a number",
         )
 
-    private fun parseState(field: String, lineNumber: Int): UploadQueueState =
+    private fun parseState(
+        field: String,
+        lineNumber: Int,
+    ): UploadQueueState =
         UploadQueueState.entries.firstOrNull { state -> state.name == field }
             ?: throw UploadQueueStoreException(
                 "Malformed upload queue entry on line $lineNumber: unknown state \"$field\"",
@@ -126,7 +137,10 @@ internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
             }
         }
 
-    private fun unescape(field: String, lineNumber: Int): String {
+    private fun unescape(
+        field: String,
+        lineNumber: Int,
+    ): String {
         val result = StringBuilder(field.length)
         var index = 0
         while (index < field.length) {
@@ -156,7 +170,10 @@ internal class FileUploadQueueStore(private val file: File) : UploadQueueStore {
         return result.toString()
     }
 
-    private fun moveOver(source: File, target: File) {
+    private fun moveOver(
+        source: File,
+        target: File,
+    ) {
         try {
             Files.move(
                 source.toPath(),

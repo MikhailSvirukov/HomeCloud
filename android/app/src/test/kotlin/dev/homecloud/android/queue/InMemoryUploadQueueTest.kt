@@ -7,7 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InMemoryUploadQueueTest {
-
     @Test
     fun enqueueAddsPendingEntryWithZeroAttempts() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
@@ -332,8 +331,7 @@ class InMemoryUploadQueueTest {
     private fun InMemoryUploadQueue.enqueueUpload(uploadId: String): UploadQueueEntry =
         enqueue(uploadId, SOURCE_ID_A, SIZE_BYTES_A, DATE_MODIFIED_A)
 
-    private fun InMemoryUploadQueue.entry(uploadId: String): UploadQueueEntry =
-        entries().first { it.uploadId == uploadId }
+    private fun InMemoryUploadQueue.entry(uploadId: String): UploadQueueEntry = entries().first { it.uploadId == uploadId }
 
     private companion object {
         const val UPLOAD_ID_A = "upload-a"

@@ -1,15 +1,13 @@
 package dev.homecloud.android.media
 
-import android.content.ContentProvider
 import android.content.ContentResolver
-import android.content.ContentValues
-import android.database.Cursor
-import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.MediaStore
 import dev.homecloud.android.testsupport.MediaTestData
+import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,7 +38,6 @@ private const val BELOW_PENDING_API = 28
 @Config(sdk = [TRASHED_API])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class MediaStoreMediaRowSourceTest {
-
     @Test
     fun `readAll queries with the projection selection and arguments of the media store query`() {
         val provider = installProvider(emptyList())
@@ -100,6 +97,15 @@ class MediaStoreMediaRowSourceTest {
     }
 
     @Test
+    fun `readAll throws when the provider returns no cursor`() {
+        installProvider(emptyList()).queryReturnsNull = true
+
+        assertThrows(MediaLibraryUnreadableException::class.java) {
+            MediaStoreMediaRowSource(resolver()).readAll()
+        }
+    }
+
+    @Test
     fun `readAll closes the cursor when the provider has no rows`() {
         val provider = installProvider(emptyList())
 
@@ -120,12 +126,15 @@ class MediaStoreMediaRowSourceTest {
     }
 
     private fun installProvider(rows: List<Array<Any?>>): RecordingMediaContentProvider {
-        val authority = requireNotNull(collectionUri().authority) {
-            "media collection uri must carry an authority"
-        }
-        val installed = Robolectric.buildContentProvider(RecordingMediaContentProvider::class.java)
-            .create(authority)
-            .get()
+        val authority =
+            requireNotNull(collectionUri().authority) {
+                "media collection uri must carry an authority"
+            }
+        val installed =
+            Robolectric
+                .buildContentProvider(RecordingMediaContentProvider::class.java)
+                .create(authority)
+                .get()
         installed.rows = rows
         return installed
     }
@@ -145,74 +154,5 @@ class MediaStoreMediaRowSourceTest {
         const val NULL_TEXT_SIZE_BYTES = 5_120L
         const val NULL_TEXT_DATE_MODIFIED = 1_700_000_500L
         const val EMPTY_TEXT = ""
-    }
-}
-
-/**
- * A [ContentProvider] that records the arguments of the query it receives and serves a
- * fixed set of rows through a [RecordingMatrixCursor].
- */
-internal class RecordingMediaContentProvider : ContentProvider() {
-
-    /** Rows served to the next query, each in projection order. */
-    var rows: List<Array<Any?>> = emptyList()
-
-    var lastUri: Uri? = null
-        private set
-
-    var lastProjection: Array<String>? = null
-        private set
-
-    var lastSelection: String? = null
-        private set
-
-    var lastSelectionArgs: Array<String>? = null
-        private set
-
-    var lastCursor: RecordingMatrixCursor? = null
-        private set
-
-    override fun onCreate(): Boolean = true
-
-    override fun query(
-        uri: Uri,
-        projection: Array<String>?,
-        selection: String?,
-        selectionArgs: Array<String>?,
-        sortOrder: String?,
-    ): Cursor {
-        lastUri = uri
-        lastProjection = projection
-        lastSelection = selection
-        lastSelectionArgs = selectionArgs
-        val cursor = RecordingMatrixCursor(projection ?: emptyArray())
-        rows.forEach { cursor.addRow(it) }
-        lastCursor = cursor
-        return cursor
-    }
-
-    override fun getType(uri: Uri): String? = null
-
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
-
-    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<String>?): Int = 0
-
-    override fun update(
-        uri: Uri,
-        values: ContentValues?,
-        selection: String?,
-        selectionArgs: Array<String>?,
-    ): Int = 0
-}
-
-/** A [MatrixCursor] that records whether it was closed, so a leaked cursor fails the test. */
-internal class RecordingMatrixCursor(columns: Array<String>) : MatrixCursor(columns) {
-
-    var closed: Boolean = false
-        private set
-
-    override fun close() {
-        closed = true
-        super.close()
     }
 }

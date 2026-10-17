@@ -42,6 +42,8 @@ pub const LISTEN_ADDRESS_KEY: &str = "LISTEN_ADDRESS";
 pub const DEDICATED_SERVER_ROLE: &str = "dedicated-server";
 /// Role value rendered for storage nodes.
 pub const STORAGE_ROLE: &str = "storage";
+/// Container path of the persistent node data volume used by volume tests.
+pub const DATA_VOLUME_PATH: &str = "/data";
 
 /// Role value the shared settings builder renders for a role.
 pub fn role_value(role: NodeRole) -> &'static str {
@@ -61,10 +63,22 @@ pub fn node_env(spec: &NodeSpec) -> BTreeMap<String, String> {
     ])
 }
 
-/// Builds the plan settings used across these tests.
+/// Builds the plan settings used across these tests, without a data volume.
 pub fn settings() -> PlanSettings {
     let env: EnvBuilder = node_env;
-    PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, env)
+    PlanSettings::new(NETWORK_NAME, SERVER_IMAGE, STORAGE_IMAGE, env, None)
+}
+
+/// Builds the plan settings with a persistent node data volume at `path`.
+pub fn settings_with_data_volume(path: &str) -> PlanSettings {
+    let env: EnvBuilder = node_env;
+    PlanSettings::new(
+        NETWORK_NAME,
+        SERVER_IMAGE,
+        STORAGE_IMAGE,
+        env,
+        Some(path.to_string()),
+    )
 }
 
 /// Derives a plan for one dedicated server and the default storage count.
@@ -75,6 +89,11 @@ pub fn plan() -> ClusterPlan {
 /// Derives a plan for one dedicated server and `storage` storage nodes.
 pub fn plan_with_storage(storage: u16) -> ClusterPlan {
     ClusterPlan::from_topology(&topology(storage), &settings())
+}
+
+/// Derives the default plan with a persistent node data volume at `path`.
+pub fn plan_with_data_volume(path: &str) -> ClusterPlan {
+    ClusterPlan::from_topology(&topology(STORAGE_NODES), &settings_with_data_volume(path))
 }
 
 /// The node ids in plan (topology) order.

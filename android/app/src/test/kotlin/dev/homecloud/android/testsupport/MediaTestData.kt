@@ -10,7 +10,6 @@ import dev.homecloud.android.media.RawMediaEntry
  * instead of copying literals from each other.
  */
 internal object MediaTestData {
-
     /** The mime type of a supported still image. */
     const val IMAGE_MIME_TYPE: String = "image/jpeg"
 
@@ -53,8 +52,9 @@ internal object MediaTestData {
 /**
  * A [MediaRowSource] that serves a fixed list and records how often it was read.
  */
-internal class FakeMediaRowSource(private val rows: List<RawMediaEntry>) : MediaRowSource {
-
+internal class FakeMediaRowSource(
+    private val rows: List<RawMediaEntry>,
+) : MediaRowSource {
     /** Number of times [readAll] has been called. */
     var readCount: Int = 0
         private set
@@ -72,8 +72,6 @@ internal class FakeMediaRowSource(private val rows: List<RawMediaEntry>) : Media
 internal class FakeUploadIdFactory(
     private val uploadIdsBySourceId: Map<Long, String> = emptyMap(),
 ) : UploadIdFactory {
-
     /** Maps a registered item id to its configured upload id, falling back to a deterministic id. */
-    override fun uploadIdFor(item: MediaItem): String =
-        uploadIdsBySourceId[item.id] ?: ("upload-" + item.id)
+    override fun uploadIdFor(item: MediaItem): String = uploadIdsBySourceId[item.id] ?: ("upload-" + item.id)
 }

@@ -13,7 +13,6 @@ import dev.homecloud.android.queue.UploadQueueStoreException
 import dev.homecloud.android.testsupport.FakeMediaRowSource
 import dev.homecloud.android.testsupport.FakeUploadIdFactory
 import dev.homecloud.android.testsupport.MediaTestData
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -21,9 +20,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 class BackupCycleRunnerTest {
-
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
@@ -213,12 +212,10 @@ class BackupCycleRunnerTest {
         private val readFailure: UploadQueueStoreException? = null,
         private val writeFailure: UploadQueueStoreException? = null,
     ) : UploadQueueStore {
-
         var writeCount: Int = 0
             private set
 
-        override fun read(): List<UploadQueueEntry> =
-            readFailure?.let { failure -> throw failure } ?: emptyList()
+        override fun read(): List<UploadQueueEntry> = readFailure?.let { failure -> throw failure } ?: emptyList()
 
         override fun write(entries: List<UploadQueueEntry>) {
             writeCount += 1
@@ -227,7 +224,6 @@ class BackupCycleRunnerTest {
     }
 
     private class RecordingBackupCycleLog : BackupCycleLog {
-
         private val recordedPlannedCounts = mutableListOf<Pair<Int, Int>>()
 
         val plannedCounts: List<Pair<Int, Int>>
@@ -236,7 +232,10 @@ class BackupCycleRunnerTest {
         var failureCount: Int = 0
             private set
 
-        override fun cyclePlanned(discoveredCandidates: Int, newlyEnqueued: Int) {
+        override fun cyclePlanned(
+            discoveredCandidates: Int,
+            newlyEnqueued: Int,
+        ) {
             recordedPlannedCounts += discoveredCandidates to newlyEnqueued
         }
 

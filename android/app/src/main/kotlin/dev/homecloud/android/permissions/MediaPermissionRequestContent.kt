@@ -38,36 +38,41 @@ private const val PACKAGE_URI_SCHEME = "package"
  * Renders the media-read permission surface for the activity. It reflects whether the client may
  * read photos and videos: while access can still be asked for it requests exactly the missing
  * media-read permissions and reflects the answer, and once access was permanently refused it sends
- * the user to the app's system settings instead of asking again.
+ * the user to the app's system settings instead of asking again. Once access is granted it also
+ * renders the supplied content below the message.
  */
 @Composable
 internal fun MediaPermissionRequestContent(
     activity: ComponentActivity,
     modifier: Modifier = Modifier,
+    content: @Composable () -> Unit = {},
 ) {
     var hasRequested by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
 
-    val prompt = remember(revision, hasRequested) {
-        mediaPermissionPrompt(
-            sdkInt = Build.VERSION.SDK_INT,
-            granted = grantedPermissions(activity),
-            permanentlyDenied = permanentlyDeniedPermissions(activity),
-            hasRequested = hasRequested,
-        )
-    }
+    val prompt =
+        remember(revision, hasRequested) {
+            mediaPermissionPrompt(
+                sdkInt = Build.VERSION.SDK_INT,
+                granted = grantedPermissions(activity),
+                permanentlyDenied = permanentlyDeniedPermissions(activity),
+                hasRequested = hasRequested,
+            )
+        }
 
-    val permissionsLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { _ ->
-        hasRequested = true
-        revision += 1
-    }
+    val permissionsLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestMultiplePermissions(),
+        ) { _ ->
+            hasRequested = true
+            revision += 1
+        }
 
     DisposableEffect(activity) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) revision += 1
-        }
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) revision += 1
+            }
         activity.lifecycle.addObserver(observer)
         onDispose { activity.lifecycle.removeObserver(observer) }
     }
@@ -83,11 +88,13 @@ internal fun MediaPermissionRequestContent(
         },
         onOpenSettings = { openAppSettings(activity) },
         modifier = modifier,
+        content = content,
     )
 }
 
 /**
- * Shows the prompt's message and, when access was not granted, the single action it carries.
+ * Shows the prompt's message and, when access was not granted, the single action it carries. Once
+ * access is granted it renders the supplied content in place of an action.
  */
 @Composable
 private fun MediaPermissionSurface(
@@ -95,31 +102,36 @@ private fun MediaPermissionSurface(
     onRequestPermissions: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    content: @Composable () -> Unit = {},
 ) {
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier =
+            modifier
+                .fillMaxSize()
+                .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
     ) {
         Text(text = stringResource(prompt.messageResId), style = MaterialTheme.typography.bodyLarge)
         when (prompt.action) {
-            MediaPermissionAction.REQUEST -> Button(onClick = onRequestPermissions) {
-                Text(text = stringResource(R.string.media_permission_request_action))
-            }
+            MediaPermissionAction.REQUEST ->
+                Button(onClick = onRequestPermissions) {
+                    Text(text = stringResource(R.string.media_permission_request_action))
+                }
 
-            MediaPermissionAction.OPEN_SETTINGS -> Button(onClick = onOpenSettings) {
-                Text(text = stringResource(R.string.media_permission_settings_action))
-            }
+            MediaPermissionAction.OPEN_SETTINGS ->
+                Button(onClick = onOpenSettings) {
+                    Text(text = stringResource(R.string.media_permission_settings_action))
+                }
 
-            MediaPermissionAction.NONE -> Unit
+            MediaPermissionAction.NONE -> content()
         }
     }
 }
 
 /** Collects the required media-read permissions that are currently granted to the context. */
 private fun grantedPermissions(context: Context): Set<String> =
-    MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+    MediaPermissionPolicy
+        .requiredPermissions(Build.VERSION.SDK_INT)
         .filter { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         .toSet()
 
@@ -129,15 +141,17 @@ private fun grantedPermissions(context: Context): Set<String> =
  * as refusals once a request has been answered.
  */
 private fun permanentlyDeniedPermissions(activity: ComponentActivity): Set<String> =
-    MediaPermissionPolicy.requiredPermissions(Build.VERSION.SDK_INT)
+    MediaPermissionPolicy
+        .requiredPermissions(Build.VERSION.SDK_INT)
         .filterNot { activity.shouldShowRequestPermissionRationale(it) }
         .toSet()
 
 /** Opens the app's system details settings page so the user can change the refused permission. */
 private fun openAppSettings(context: Context) {
-    val intent = Intent(
-        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-        Uri.fromParts(PACKAGE_URI_SCHEME, context.packageName, null),
-    )
+    val intent =
+        Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts(PACKAGE_URI_SCHEME, context.packageName, null),
+        )
     context.startActivity(intent)
 }

@@ -9,7 +9,6 @@ import dev.homecloud.android.media.MediaItem
  * belongs to the protocol contract; this seam neither generates nor parses it.
  */
 internal fun interface UploadIdFactory {
-
     /** Returns the opaque upload id for a discovered candidate. */
     fun uploadIdFor(item: MediaItem): String
 }

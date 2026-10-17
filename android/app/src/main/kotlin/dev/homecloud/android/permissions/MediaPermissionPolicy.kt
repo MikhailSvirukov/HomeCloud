@@ -6,7 +6,6 @@ package dev.homecloud.android.permissions
  * storage-write permissions.
  */
 internal object MediaPermissionPolicy {
-
     /** Per-type photo read permission on API 33 and above. */
     const val READ_MEDIA_IMAGES = "android.permission.READ_MEDIA_IMAGES"
 

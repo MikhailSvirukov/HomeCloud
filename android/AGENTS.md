@@ -49,8 +49,8 @@ verify the required Actions result before merge. The CI check is:
 bash android/ci/check.sh
 ```
 
-It bootstraps the pinned Gradle distribution and runs `:app:assembleDebug`, `:app:testDebugUnitTest` and `:app:lintDebug`.
+It bootstraps the pinned Gradle distribution and runs `:app:assembleDebug`, `:app:assembleRelease`, `:app:testDebugUnitTest`, `:app:lintDebug` and `:app:ktlintCheck`.
 
 ## Pinned tool versions
 
-compileSdk 36, targetSdk 36, minSdk 26, build-tools 36.0.0, Java/JVM 17, AGP 8.13.2, Gradle 8.14.3, Kotlin 2.4.21, Compose BOM 2026.06.01 (compose-ui 1.11.4 / material3 1.4.0), core-ktx 1.18.0, activity-compose 1.13.0, lifecycle-runtime-ktx 2.10.0, JUnit 4.13.2.
+compileSdk 36, targetSdk 36, minSdk 26, build-tools 36.0.0, Java/JVM 17, AGP 8.13.2, Gradle 8.14.3, Kotlin 2.4.21, Compose BOM 2026.06.01 (compose-ui 1.11.4 / material3 1.4.0), core-ktx 1.18.0, activity-compose 1.13.0, lifecycle-runtime-ktx 2.10.0, JUnit 4.13.2, ktlint Gradle plugin 14.2.0.
