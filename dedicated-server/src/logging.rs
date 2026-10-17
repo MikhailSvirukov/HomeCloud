@@ -339,6 +339,13 @@ impl LogGuard {
 /// does not perform a file operation on the calling thread. Dropping the
 /// returned guard flushes buffered records.
 pub fn init(path: &Path) -> Result<LogGuard, LogError> {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
+
+    init_with_filter(path, filter)
+}
+
+fn init_with_filter(path: &Path, filter: EnvFilter) -> Result<LogGuard, LogError> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -354,9 +361,6 @@ pub fn init(path: &Path) -> Result<LogGuard, LogError> {
         .buffered_lines_limit(BUFFERED_RECORDS)
         .finish(CountingWriter::new(file, Arc::clone(&errors)));
     let dropped = non_blocking.error_counter();
-
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
 
     tracing_subscriber::fmt()
         .with_ansi(false)
@@ -505,6 +509,7 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
     use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, Instant};
 
     use tracing_subscriber::fmt::MakeWriter;
 
@@ -704,10 +709,12 @@ mod tests {
         let dir = TempDir::new("file");
         let path = dir.file("dedicated-server.log");
 
-        let guard = init(&path).expect("the log file must open");
+        let filter = EnvFilter::new(DEFAULT_LOG_FILTER);
+        let guard = init_with_filter(&path, filter.clone()).expect("the log file must open");
         startup("dedicated-server listening on 10.0.0.1:7000");
         shutdown();
-        let second = init(&dir.file("second.log")).expect_err("a second subscriber must fail");
+        let second = init_with_filter(&dir.file("second.log"), filter)
+            .expect_err("a second subscriber must fail");
         assert!(matches!(second, LogError::SubscriberAlreadyInstalled));
         drop(guard);
 
@@ -762,25 +769,63 @@ mod tests {
 
     #[test]
     fn a_writer_error_increments_the_dropped_record_counter() {
-        let (subscriber, guard) = subscriber_with_capacity(FailingWriter, 1);
-        let errors = Arc::clone(&guard.errors);
+        let writer = FailingWriter::new();
+        let (subscriber, guard) = subscriber_with_capacity(writer.clone(), 1);
 
         tracing::subscriber::with_default(subscriber, || {
             startup("record for a failing writer");
         });
-        drop(guard);
+        writer.wait_until_attempted();
 
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while guard.dropped_records() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         assert!(
-            errors.load(Ordering::Relaxed) > 0,
+            guard.dropped_records() > 0,
             "the writer failure must increment the diagnostic counter"
         );
+        drop(guard);
     }
 
-    /// Writer that rejects every record.
-    struct FailingWriter;
+    /// Writer that signals and then rejects every record.
+    #[derive(Clone)]
+    struct FailingWriter {
+        attempted: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl FailingWriter {
+        fn new() -> Self {
+            Self {
+                attempted: Arc::new((Mutex::new(false), Condvar::new())),
+            }
+        }
+
+        fn wait_until_attempted(&self) {
+            let (attempted, changed) = &*self.attempted;
+            let mut attempted = attempted
+                .lock()
+                .expect("failure state must not be poisoned");
+            while !*attempted {
+                attempted = changed
+                    .wait(attempted)
+                    .expect("failure state must not be poisoned");
+            }
+        }
+
+        fn record_attempt(&self) {
+            let (attempted, changed) = &*self.attempted;
+            let mut attempted = attempted
+                .lock()
+                .expect("failure state must not be poisoned");
+            *attempted = true;
+            changed.notify_all();
+        }
+    }
 
     impl io::Write for FailingWriter {
         fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            self.record_attempt();
             Err(io::Error::other("writer failed"))
         }
 

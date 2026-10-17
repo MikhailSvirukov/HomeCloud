@@ -79,8 +79,10 @@ docker compose up dedicated-server-runtime
 
 The `dedicated-server-runtime` service requires `DEDICATED_SERVER_CONFIG_DIR`
 and mounts it at `/etc/homecloud`. If you cannot change ownership, skip the
-`sudo chown`, keep the keys owned by your host user with the same modes, and add
-`--user "$(id -u):$(id -g)"` to the `docker run` command below.
+`sudo chown`, keep the keys owned by your host user with the same modes, add
+`--user "$(id -u):$(id -g)"` to the `docker run` command below, and replace the
+log tmpfs `uid=10001,gid=10001` values with `uid=$(id -u),gid=$(id -g)` so
+`/var/log/homecloud` stays writable for the overridden user.
 
 The equivalent without Compose:
 
@@ -89,6 +91,7 @@ docker build -f dedicated-server/Dockerfile -t homecloud-dedicated-server:0.1.0 
 docker run --rm --read-only \
   --cap-drop ALL \
   --security-opt no-new-privileges \
+  --tmpfs /var/log/homecloud:rw,nosuid,nodev,size=1g,mode=0750,uid=10001,gid=10001 \
   -v "$DEDICATED_SERVER_CONFIG_DIR:/etc/homecloud:ro" \
   homecloud-dedicated-server:0.1.0
 ```

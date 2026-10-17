@@ -420,6 +420,9 @@ mod tests {
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
     const ZERO_PASSWORD_MEMORY: &str =
         include_str!("../tests/fixtures/invalid/zero_password_memory.toml");
+    const MISSING_LOGGING: &str = include_str!("../tests/fixtures/invalid/missing_logging.toml");
+    const UNKNOWN_LOGGING_KEY: &str =
+        include_str!("../tests/fixtures/invalid/unknown_logging_key.toml");
 
     fn parse_error(input: &str) -> toml::de::Error {
         match ServerConfig::from_toml_str(input) {
@@ -567,6 +570,20 @@ mod tests {
             ServerConfig::from_toml_str(ZERO_NODE_PORT),
             Err(ConfigError::ZeroNodePort { index: 0 })
         ));
+    }
+
+    #[test]
+    fn rejects_configuration_without_logging_section() {
+        assert!(parse_error(MISSING_LOGGING)
+            .to_string()
+            .contains("missing field `logging`"));
+    }
+
+    #[test]
+    fn rejects_unknown_key_inside_logging_section() {
+        assert!(parse_error(UNKNOWN_LOGGING_KEY)
+            .to_string()
+            .contains("unknown field `unexpected`"));
     }
 
     #[test]
