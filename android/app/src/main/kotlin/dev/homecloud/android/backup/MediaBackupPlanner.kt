@@ -37,8 +37,8 @@ internal class MediaBackupPlanner(
     private val maxQueueSize: Int,
 ) {
     init {
-        require(maxQueueSize >= MIN_QUEUE_SIZE) {
-            "maxQueueSize must be at least $MIN_QUEUE_SIZE, but was $maxQueueSize"
+        require(maxQueueSize in MIN_QUEUE_SIZE..MAX_QUEUE_SIZE) {
+            "maxQueueSize must be within $MIN_QUEUE_SIZE..$MAX_QUEUE_SIZE, but was $maxQueueSize"
         }
     }
 
@@ -84,5 +84,6 @@ internal class MediaBackupPlanner(
 
     private companion object {
         const val MIN_QUEUE_SIZE = 1
+        const val MAX_QUEUE_SIZE = 1_000_000
     }
 }

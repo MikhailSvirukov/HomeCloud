@@ -169,6 +169,24 @@ class MediaBackupPlannerTest {
     }
 
     @Test
+    fun `plan accepts the maximum configured queue size`() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+
+        MediaBackupPlanner(FakeMediaVersionScanner(emptyList()), queue, MAXIMUM_QUEUE_SIZE).plan()
+
+        assertEquals(0, queue.entries().size)
+    }
+
+    @Test
+    fun `plan rejects a configured queue size above the maximum`() {
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            MediaBackupPlanner(FakeMediaVersionScanner(emptyList()), queue, ABOVE_MAXIMUM_QUEUE_SIZE)
+        }
+    }
+
+    @Test
     fun `plan enqueues exactly the configured capacity and rejects the candidate beyond it`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
 
@@ -302,6 +320,8 @@ class MediaBackupPlannerTest {
 
         const val CAPACITY = 2
         const val INVALID_CAPACITY = 0
+        private const val MAXIMUM_QUEUE_SIZE = 1_000_000
+        private const val ABOVE_MAXIMUM_QUEUE_SIZE = 1_000_001
         const val NON_BINDING_CAPACITY = 100
         const val INCOMING_CANDIDATE_COUNT = 2
         const val ALREADY_TRACKED_COUNT = 1
