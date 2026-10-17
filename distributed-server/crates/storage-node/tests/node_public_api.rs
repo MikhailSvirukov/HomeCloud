@@ -2,7 +2,7 @@
 //! loopback sockets, so accepting connections and reacting to shutdown are
 //! driven end to end rather than through in-memory helpers.
 
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 
 use storage_node::{serve, split_frames, Listener};
 use tokio::net::TcpStream;
@@ -10,6 +10,10 @@ use tokio::sync::oneshot;
 
 fn max_frame_len() -> NonZeroU32 {
     NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
+}
+
+fn queue_capacity() -> NonZeroUsize {
+    NonZeroUsize::new(16).expect("test capacity is non-zero")
 }
 
 #[tokio::test]
@@ -25,6 +29,7 @@ async fn serve_stops_when_shutdown_resolves() {
             let _ = shutdown_rx.await;
         },
         max_frame_len(),
+        queue_capacity(),
     ));
 
     shutdown_tx
@@ -54,6 +59,7 @@ async fn serve_accepts_and_closes_a_client_connection_on_shutdown() {
             let _ = shutdown_rx.await;
         },
         max_frame_len(),
+        queue_capacity(),
     ));
 
     let client = TcpStream::connect(address)

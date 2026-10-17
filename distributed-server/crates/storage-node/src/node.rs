@@ -1,6 +1,6 @@
 //! Node runtime: serves frame connections on a bound listener.
 
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 use std::future::Future;
 use std::net::SocketAddr;
 
@@ -15,12 +15,14 @@ use crate::listener::{Listener, ListenerError};
 
 type Result<T> = core::result::Result<T, ListenerError>;
 
-/// Frames buffered per direction for one connection.
-const CONNECTION_CHANNEL_CAPACITY: usize = 16;
-
 /// Accepts connections until `shutdown` resolves, serving each on its own task
-/// with frames bounded by `max_frame_len`.
-pub async fn serve<F>(listener: Listener, shutdown: F, max_frame_len: NonZeroU32) -> Result<()>
+/// with frames bounded by `max_frame_len` and channels bounded by `queue_capacity`.
+pub async fn serve<F>(
+    listener: Listener,
+    shutdown: F,
+    max_frame_len: NonZeroU32,
+    queue_capacity: NonZeroUsize,
+) -> Result<()>
 where
     F: Future<Output = ()>,
 {
@@ -31,7 +33,7 @@ where
             accepted = listener.accept(max_frame_len) => {
                 let (reader, writer, peer) = accepted?;
                 info!(%peer, "connection accepted");
-                connections.spawn(handle_connection(reader, writer, peer));
+                connections.spawn(handle_connection(reader, writer, peer, queue_capacity));
                 while connections.try_join_next().is_some() {}
             }
             () = &mut shutdown => {
@@ -51,9 +53,10 @@ async fn handle_connection(
     reader: FrameReader<ReadHalf<TcpStream>>,
     writer: FrameWriter<WriteHalf<TcpStream>>,
     peer: SocketAddr,
+    queue_capacity: NonZeroUsize,
 ) {
-    let (inbound_tx, mut inbound_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
-    let (outbound_tx, outbound_rx) = mpsc::channel(CONNECTION_CHANNEL_CAPACITY);
+    let (inbound_tx, mut inbound_rx) = mpsc::channel(queue_capacity.get());
+    let (outbound_tx, outbound_rx) = mpsc::channel(queue_capacity.get());
 
     let _outbound = outbound_tx;
 
