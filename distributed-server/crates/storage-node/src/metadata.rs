@@ -256,6 +256,25 @@ mod tests {
     }
 
     #[test]
+    fn content_hash_parse_hex_rejects_wrong_length() {
+        assert_eq!(
+            ContentHash::parse_hex("abc"),
+            Err(MetadataError::InvalidContentHashLength { len: 3 })
+        );
+    }
+
+    #[test]
+    fn content_hash_hex_round_trips() {
+        let hash = content_hash();
+        let hex = hash.to_hex();
+
+        assert_eq!(hex, "ab".repeat(CONTENT_HASH_LEN));
+        assert_eq!(hash.to_string(), hex);
+        assert_eq!(ContentHash::parse_hex(&hex), Ok(hash));
+        assert_eq!(hash.as_bytes(), &[0xab; CONTENT_HASH_LEN]);
+    }
+
+    #[test]
     fn ledger_debug_reports_only_entry_count() {
         let mut ledger = UploadLedger::new();
         ledger.record(record(1, "secret-login", "secret-name.txt"));
