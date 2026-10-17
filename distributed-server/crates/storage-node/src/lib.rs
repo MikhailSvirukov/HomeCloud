@@ -67,10 +67,10 @@ pub use framing::{
 pub use listener::{Listener, ListenerError};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
-    CONTENT_HASH_LEN, MAX_UPLOAD_ID_LEN,
+    CONTENT_HASH_LEN, UPLOAD_ID_LEN,
 };
 pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};
-pub use storage_layout::{LayoutError, StorageLayout, UPLOAD_ID_LEN};
+pub use storage_layout::{LayoutError, StorageLayout};

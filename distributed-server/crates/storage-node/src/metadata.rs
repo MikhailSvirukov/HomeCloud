@@ -9,59 +9,41 @@
 //! This module deliberately implements no cryptography. [`ContentHash`] only
 //! wraps 32 bytes produced elsewhere.
 
-use core::fmt::Write as _;
-
 use std::collections::HashMap;
 use std::fmt;
-use std::str::FromStr;
 
-/// Maximum accepted length of an upload identifier in bytes.
-pub const MAX_UPLOAD_ID_LEN: usize = 64;
+use core::fmt::Write as _;
+
+/// Length of an upload identifier in bytes (`INT-NET-011 / 1`).
+pub const UPLOAD_ID_LEN: usize = 16;
 /// Length of a SHA-256 content digest in bytes.
 pub const CONTENT_HASH_LEN: usize = 32;
 
 /// Result alias for metadata validation.
 type Result<T> = core::result::Result<T, MetadataError>;
 
-/// Stable per-version upload identifier enabling idempotent retries.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct UploadId(String);
+/// Stable per-version upload identifier transmitted as 16 raw bytes (`INT-NET-011 / 1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UploadId([u8; UPLOAD_ID_LEN]);
 
 impl UploadId {
-    /// Validates `value` and builds an [`UploadId`].
-    pub fn parse(value: &str) -> Result<Self> {
-        if value.is_empty() {
-            return Err(MetadataError::EmptyUploadId);
-        }
-        if value.len() > MAX_UPLOAD_ID_LEN {
-            return Err(MetadataError::UploadIdTooLong {
-                len: value.len(),
-                max: MAX_UPLOAD_ID_LEN,
-            });
-        }
-        if let Some(character) = value.chars().find(|c| !is_valid_upload_id_char(*c)) {
-            return Err(MetadataError::InvalidUploadIdCharacter { character });
-        }
-        Ok(Self(value.to_owned()))
+    /// Wraps the 16 identifier bytes.
+    pub const fn from_bytes(bytes: [u8; UPLOAD_ID_LEN]) -> Self {
+        Self(bytes)
     }
 
-    /// Returns the identifier.
-    pub fn as_str(&self) -> &str {
+    /// Returns the raw identifier bytes.
+    pub const fn as_bytes(&self) -> &[u8; UPLOAD_ID_LEN] {
         &self.0
     }
 }
 
 impl fmt::Display for UploadId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl FromStr for UploadId {
-    type Err = MetadataError;
-
-    fn from_str(value: &str) -> Result<Self> {
-        Self::parse(value)
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -195,7 +177,7 @@ impl UploadLedger {
     /// otherwise keeps the already-stored record unchanged and returns
     /// [`RecordOutcome::AlreadyPresent`].
     pub fn record(&mut self, record: UploadRecord) -> RecordOutcome {
-        let upload_id = record.upload_id.clone();
+        let upload_id = record.upload_id;
         if let std::collections::hash_map::Entry::Vacant(entry) = self.records.entry(upload_id) {
             entry.insert(record);
             RecordOutcome::Recorded
@@ -223,15 +205,6 @@ impl UploadLedger {
 /// Failure modes when validating upload metadata.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MetadataError {
-    /// The upload identifier was empty.
-    #[error("upload id must not be empty")]
-    EmptyUploadId,
-    /// The upload identifier exceeded [`MAX_UPLOAD_ID_LEN`] bytes.
-    #[error("upload id length {len} exceeds maximum {max}")]
-    UploadIdTooLong { len: usize, max: usize },
-    /// The upload identifier contained a character outside `[A-Za-z0-9_-]`.
-    #[error("upload id contains invalid character {character:?}")]
-    InvalidUploadIdCharacter { character: char },
     /// The login was empty after trimming.
     #[error("login must not be empty")]
     EmptyLogin,
@@ -246,33 +219,24 @@ pub enum MetadataError {
     InvalidContentHashHex { character: char },
 }
 
-fn is_valid_upload_id_char(character: char) -> bool {
-    character.is_ascii_alphanumeric() || character == '-' || character == '_'
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         ContentHash, MetadataError, UploadId, UploadLedger, UploadRecord, CONTENT_HASH_LEN,
-        MAX_UPLOAD_ID_LEN,
+        UPLOAD_ID_LEN,
     };
 
-    fn upload_id(value: &str) -> UploadId {
-        UploadId::parse(value).expect("test upload id is valid")
+    fn upload_id(seed: u8) -> UploadId {
+        UploadId::from_bytes([seed; UPLOAD_ID_LEN])
     }
 
     fn content_hash() -> ContentHash {
         ContentHash::from_bytes([0xab; CONTENT_HASH_LEN])
     }
 
-    fn record(id: &str, login: &str, name: &str) -> UploadRecord {
+    fn record(id: u8, login: &str, name: &str) -> UploadRecord {
         UploadRecord::new(upload_id(id), login, name, 10, content_hash(), 1_000)
             .expect("test record is valid")
-    }
-
-    #[test]
-    fn upload_id_parse_accepts_maximum_length() {
-        assert!(UploadId::parse(&"a".repeat(MAX_UPLOAD_ID_LEN)).is_ok());
     }
 
     #[test]
@@ -294,7 +258,7 @@ mod tests {
     #[test]
     fn ledger_debug_reports_only_entry_count() {
         let mut ledger = UploadLedger::new();
-        ledger.record(record("upload-1", "secret-login", "secret-name.txt"));
+        ledger.record(record(1, "secret-login", "secret-name.txt"));
 
         assert_eq!(format!("{ledger:?}"), "UploadLedger { len: 1 }");
     }
