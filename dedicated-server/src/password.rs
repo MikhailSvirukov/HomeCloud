@@ -10,15 +10,19 @@ use std::num::{NonZeroU32, NonZeroUsize};
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier as _, SaltString};
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Params, Version, MIN_SALT_LEN};
 use thiserror::Error;
 
-/// Bounds on a raw salt that a PHC record can carry, in bytes.
+/// Maximum raw salt length that a PHC record can carry, in bytes.
 ///
-/// A PHC salt is 4 to 64 base64 characters, which unpadded encoding maps to
-/// 3 to 48 raw bytes.
-const MIN_SALT_BYTES: usize = 3;
+/// A PHC salt is at most 64 base64 characters, which unpadded encoding maps to
+/// 48 raw bytes.
 const MAX_SALT_BYTES: usize = 48;
+
+/// PHC parameter names for memory cost, iteration count and parallelism.
+const MEMORY_PARAM: &str = "m";
+const ITERATIONS_PARAM: &str = "t";
+const PARALLELISM_PARAM: &str = "p";
 
 /// Result of deriving, parsing or checking a [`PasswordVerifier`].
 type Result<T, E = PasswordError> = core::result::Result<T, E>;
@@ -53,7 +57,7 @@ impl PasswordVerifier {
         let params = Params::new(memory_kib.get(), iterations.get(), parallelism.get(), None)
             .map_err(PasswordError::Parameters)?;
         let salt_length = salt_length_bytes.get();
-        if !(MIN_SALT_BYTES..=MAX_SALT_BYTES).contains(&salt_length) {
+        if !(MIN_SALT_LEN..=MAX_SALT_BYTES).contains(&salt_length) {
             return Err(PasswordError::SaltLength(salt_length));
         }
         let mut salt_bytes = vec![0_u8; salt_length];
@@ -105,10 +109,20 @@ fn validated_params(hash: &PasswordHash<'_>) -> Result<Params> {
         Some(version) if version == u32::from(Version::V0x13) => {}
         _ => return Err(PasswordError::UnsupportedVersion),
     }
-    if hash.salt.is_none() || hash.hash.is_none() {
+    if hash.hash.is_none() {
         return Err(malformed_record());
     }
-    for name in ["m", "t", "p"] {
+    let Some(salt) = hash.salt.as_ref() else {
+        return Err(malformed_record());
+    };
+    let mut salt_bytes = [0_u8; MAX_SALT_BYTES];
+    let salt_bytes = salt
+        .decode_b64(&mut salt_bytes)
+        .map_err(PasswordError::MalformedRecord)?;
+    if !(MIN_SALT_LEN..=MAX_SALT_BYTES).contains(&salt_bytes.len()) {
+        return Err(malformed_record());
+    }
+    for name in [MEMORY_PARAM, ITERATIONS_PARAM, PARALLELISM_PARAM] {
         if hash.params.get(name).is_none() {
             return Err(malformed_record());
         }
@@ -127,8 +141,12 @@ pub enum PasswordError {
     /// The algorithm rejected the requested parameters.
     #[error("invalid Argon2 parameters: {0}")]
     Parameters(#[source] argon2::Error),
-    /// The configured salt length cannot be carried by a PHC record.
-    #[error("salt length of {0} bytes is not usable in a PHC record")]
+    /// The configured salt length is outside Argon2's accepted range.
+    #[error(
+        "salt length of {0} bytes is outside the accepted range of {min} to {max} bytes",
+        min = MIN_SALT_LEN,
+        max = MAX_SALT_BYTES
+    )]
     SaltLength(usize),
     /// Hashing the password failed inside the hashing API.
     ///
@@ -187,6 +205,8 @@ mod tests {
     const MISSING_PARAMETER_RECORD: &str =
         "$argon2id$v=19$m=8,t=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
     const MISSING_HASH_RECORD: &str = "$argon2id$v=19$m=8,t=1,p=1$a25vd25hbnN3ZXI";
+    const SHORT_SALT_RECORD: &str =
+        "$argon2id$v=19$m=8,t=1,p=1$a25v$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
     const BELOW_MINIMUM_MEMORY_RECORD: &str =
         "$argon2id$v=19$m=4,t=1,p=1$a25vd25hbnN3ZXI$DP4mHqE7C+N9peSJezbHkEO9xfDPZGs3rs6E9ccF+Xk";
 
@@ -245,9 +265,9 @@ mod tests {
 
         assert_eq!(hash.algorithm.as_str(), "argon2id");
         assert_eq!(hash.version, Some(19));
-        assert_eq!(decimal_parameter(&hash, "m"), MEMORY_KIB);
-        assert_eq!(decimal_parameter(&hash, "t"), ITERATIONS);
-        assert_eq!(decimal_parameter(&hash, "p"), PARALLELISM);
+        assert_eq!(decimal_parameter(&hash, MEMORY_PARAM), MEMORY_KIB);
+        assert_eq!(decimal_parameter(&hash, ITERATIONS_PARAM), ITERATIONS);
+        assert_eq!(decimal_parameter(&hash, PARALLELISM_PARAM), PARALLELISM);
     }
 
     #[test]
@@ -307,9 +327,12 @@ mod tests {
         let verifier = record(PINNED_OTHER_PARAMS_RECORD);
         let hash = PasswordHash::new(verifier.as_str()).expect("pinned record must parse");
 
-        assert_eq!(decimal_parameter(&hash, "m"), OTHER_MEMORY_KIB);
-        assert_eq!(decimal_parameter(&hash, "t"), OTHER_ITERATIONS);
-        assert_eq!(decimal_parameter(&hash, "p"), OTHER_PARALLELISM);
+        assert_eq!(decimal_parameter(&hash, MEMORY_PARAM), OTHER_MEMORY_KIB);
+        assert_eq!(decimal_parameter(&hash, ITERATIONS_PARAM), OTHER_ITERATIONS);
+        assert_eq!(
+            decimal_parameter(&hash, PARALLELISM_PARAM),
+            OTHER_PARALLELISM
+        );
         assert!(verifier
             .verify(PINNED_OTHER_PARAMS_PASSWORD)
             .expect("verification must succeed"));
@@ -384,6 +407,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_and_verify_reject_a_record_with_a_short_salt() {
+        assert!(matches!(
+            PasswordVerifier::parse(SHORT_SALT_RECORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+        assert!(matches!(
+            unvalidated(SHORT_SALT_RECORD).verify(PASSWORD),
+            Err(PasswordError::MalformedRecord(_))
+        ));
+    }
+
+    #[test]
     fn verify_rejects_a_record_with_memory_below_the_minimum() {
         assert!(matches!(
             unvalidated(BELOW_MINIMUM_MEMORY_RECORD).verify(PASSWORD),
@@ -401,7 +436,7 @@ mod tests {
 
     #[test]
     fn derive_rejects_an_unusable_salt_length() {
-        for length in [1, 49] {
+        for length in [7, 49] {
             assert!(matches!(
                 PasswordVerifier::derive(PASSWORD, params_with_salt(length)),
                 Err(PasswordError::SaltLength(rejected)) if rejected == length
