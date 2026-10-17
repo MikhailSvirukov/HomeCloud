@@ -112,13 +112,14 @@ empty. The default level is `info`; set `RUST_LOG` to override it (for example
 The file rotates so it does not grow without bound. A rotation starts a new
 active file when appending the next record would exceed `max_file_size_bytes`,
 or when the active file is older than `max_file_age_ms`. The previous active
-file is renamed in the same directory to `<file name>.<UTC epoch milliseconds>`
-(for example `dedicated-server.log.1750000000000`); a numeric suffix such as
-`.1` is added when that name already exists, so rotation never overwrites a
-file.
+file is renamed in the same directory to `<file name>.<UTC epoch milliseconds
+of the segment start>` (for example `dedicated-server.log.1750000000000`); a
+numeric suffix such as `.1` is added when that name already exists, so rotation
+never overwrites a file.
 
-After each rotation the rotated files are pruned oldest first. A rotated file is
-deleted when its modification time is older than `retention_ms`, or when the
+Rotated files are pruned oldest first, at startup, after each rotation, and
+whenever appending a record pushed the set over the size limit. A rotated file
+is deleted when its modification time is older than `retention_ms`, or when the
 total size of the active file plus all rotated files exceeds
 `max_total_size_bytes`; pruning stops once both limits are satisfied. Only
 files whose names match the rotated-name pattern of the configured path are

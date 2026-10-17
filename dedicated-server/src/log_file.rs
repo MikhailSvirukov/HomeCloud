@@ -51,6 +51,7 @@ pub(crate) struct RotatingFile<C = fn() -> u64> {
     limits: LogLimits,
     file: Option<File>,
     size: u64,
+    rotated_total: u64,
     segment_started_at: u64,
     now: C,
 }
@@ -82,6 +83,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
             limits,
             file: Some(file),
             size,
+            rotated_total: 0,
             segment_started_at,
             now,
         };
@@ -105,7 +107,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
         self.flush()?;
         drop(self.file.take());
 
-        let rotated = self.rotated_path(current)?;
+        let rotated = self.rotated_path(self.segment_started_at)?;
         fs::rename(&self.path, &rotated)?;
 
         self.file = Some(open_append(&self.path)?);
@@ -179,6 +181,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
                 Err(error) => return Err(error),
             }
         }
+        self.rotated_total = total_size.saturating_sub(self.size);
 
         Ok(())
     }
@@ -220,6 +223,12 @@ impl<C: Fn() -> u64> Write for RotatingFile<C> {
         self.size = self
             .size
             .saturating_add(u64::try_from(written).unwrap_or(u64::MAX));
+        // The set must stay inside the configured limit once the record is
+        // appended, so a record written after a rotation can still force the
+        // oldest rotated files out.
+        if self.size.saturating_add(self.rotated_total) > self.limits.max_total_size {
+            self.prune(current)?;
+        }
         Ok(written)
     }
 
