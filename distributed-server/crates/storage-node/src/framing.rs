@@ -1,142 +1,58 @@
-//! Frame header for the frame-only TCP actor.
+//! Length prefix for the frame-only TCP actor.
 //!
-//! The storage-node protocol opens every frame with a fixed unencrypted prefix
-//! carrying only framing information; passwords, file names, and metadata stay
-//! inside the encrypted payload. Wire layout, 5 bytes total:
-//!
-//! ```text
-//! byte 0      protocol version (`u8`)
-//! bytes 1..5  payload length, big-endian `u32`
-//! ```
+//! Every frame opens with a 4-byte big-endian unsigned length prefix. The
+//! value counts the payload bytes that follow the prefix and excludes the
+//! prefix itself. Receivers validate the declared length against the
+//! configured maximum before buffering the frame body.
 
-/// Protocol version emitted by [`FrameHeader::new`] and required by
-/// [`FrameHeader::decode`].
+use core::num::NonZeroU32;
+
+/// Encoded length of the frame-length prefix in bytes.
+pub const FRAME_LENGTH_PREFIX_LEN: usize = 4;
+
+/// Protocol version negotiated when a connection opens; it is not part of the
+/// length prefix.
 pub const PROTOCOL_VERSION: u8 = 1;
-
-/// Encoded length of a [`FrameHeader`] in bytes.
-pub const FRAME_HEADER_LEN: usize = 5;
-
-/// Largest accepted payload length, 16 MiB.
-pub const MAX_FRAME_PAYLOAD_LEN: u32 = 16 * 1024 * 1024;
 
 type Result<T> = core::result::Result<T, FramingError>;
 
-/// Decoded frame header of the storage-node wire protocol.
+/// Validated payload length of one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FrameHeader {
-    payload_len: u32,
-}
+pub struct FrameLength(u32);
 
-impl FrameHeader {
-    /// Creates a header carrying `payload_len` bytes for [`PROTOCOL_VERSION`].
-    pub fn new(payload_len: u32) -> Result<Self> {
-        if payload_len > MAX_FRAME_PAYLOAD_LEN {
-            Err(FramingError::PayloadTooLarge)
+impl FrameLength {
+    /// Creates a length that does not exceed `max_frame_len`.
+    pub fn new(len: u32, max_frame_len: NonZeroU32) -> Result<Self> {
+        if len > max_frame_len.get() {
+            Err(FramingError::FrameTooLarge {
+                len,
+                max: max_frame_len.get(),
+            })
         } else {
-            Ok(Self { payload_len })
+            Ok(Self(len))
         }
     }
 
-    /// Payload length in bytes.
-    pub const fn payload_len(&self) -> u32 {
-        self.payload_len
+    /// Payload length in bytes, excluding the prefix.
+    pub const fn get(self) -> u32 {
+        self.0
     }
 
-    /// Encodes the header into its fixed-size wire representation.
-    pub fn encode(&self) -> [u8; FRAME_HEADER_LEN] {
-        let length = self.payload_len.to_be_bytes();
-        [PROTOCOL_VERSION, length[0], length[1], length[2], length[3]]
+    /// Encodes the length as a big-endian 4-byte prefix.
+    pub const fn encode(self) -> [u8; FRAME_LENGTH_PREFIX_LEN] {
+        self.0.to_be_bytes()
     }
 
-    /// Decodes a header from the start of `bytes`, ignoring trailing bytes.
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
-        match bytes {
-            [PROTOCOL_VERSION, rest @ ..] if rest.len() >= FRAME_HEADER_LEN - 1 => {
-                let payload_len = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
-                if payload_len > MAX_FRAME_PAYLOAD_LEN {
-                    Err(FramingError::PayloadTooLarge)
-                } else {
-                    Ok(Self { payload_len })
-                }
-            }
-            [version, ..] if *version != PROTOCOL_VERSION && bytes.len() >= FRAME_HEADER_LEN => {
-                Err(FramingError::UnsupportedVersion)
-            }
-            _ => Err(FramingError::TruncatedHeader),
-        }
+    /// Decodes a big-endian 4-byte prefix that does not exceed `max_frame_len`.
+    pub fn decode(bytes: [u8; FRAME_LENGTH_PREFIX_LEN], max_frame_len: NonZeroU32) -> Result<Self> {
+        Self::new(u32::from_be_bytes(bytes), max_frame_len)
     }
 }
 
-/// Failure modes when building or parsing a [`FrameHeader`].
+/// Failure modes when validating a frame length.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FramingError {
-    /// Fewer than [`FRAME_HEADER_LEN`] bytes were supplied.
-    #[error("frame header truncated")]
-    TruncatedHeader,
-    /// The wire version is not [`PROTOCOL_VERSION`].
-    #[error("unsupported protocol version")]
-    UnsupportedVersion,
-    /// The declared payload length exceeds [`MAX_FRAME_PAYLOAD_LEN`].
-    #[error("payload length exceeds maximum")]
-    PayloadTooLarge,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
-    };
-
-    #[test]
-    fn encode_then_decode_round_trips() {
-        let header = FrameHeader::new(1024).expect("1024 bytes is within the limit");
-        let encoded = header.encode();
-
-        assert_eq!(encoded.len(), FRAME_HEADER_LEN);
-        assert_eq!(encoded[0], PROTOCOL_VERSION);
-        assert_eq!(FrameHeader::decode(&encoded), Ok(header));
-        assert_eq!(header.payload_len(), 1024);
-    }
-
-    #[test]
-    fn decode_ignores_trailing_payload_bytes() {
-        let header = FrameHeader::new(2).expect("2 bytes is within the limit");
-        let mut encoded = header.encode().to_vec();
-        encoded.extend_from_slice(&[0xAA, 0xBB]);
-
-        assert_eq!(FrameHeader::decode(&encoded), Ok(header));
-    }
-
-    #[test]
-    fn decode_rejects_truncated_header() {
-        let short = [PROTOCOL_VERSION, 0, 0];
-        assert_eq!(
-            FrameHeader::decode(&short),
-            Err(FramingError::TruncatedHeader)
-        );
-    }
-
-    #[test]
-    fn decode_rejects_unsupported_version() {
-        let bytes = [PROTOCOL_VERSION + 1, 0, 0, 0, 0];
-        assert_eq!(
-            FrameHeader::decode(&bytes),
-            Err(FramingError::UnsupportedVersion)
-        );
-    }
-
-    #[test]
-    fn payload_length_over_limit_is_rejected() {
-        let length = (MAX_FRAME_PAYLOAD_LEN + 1).to_be_bytes();
-        let bytes = [PROTOCOL_VERSION, length[0], length[1], length[2], length[3]];
-
-        assert_eq!(
-            FrameHeader::decode(&bytes),
-            Err(FramingError::PayloadTooLarge)
-        );
-        assert_eq!(
-            FrameHeader::new(MAX_FRAME_PAYLOAD_LEN + 1),
-            Err(FramingError::PayloadTooLarge)
-        );
-    }
+    /// The declared payload length exceeds the configured maximum.
+    #[error("frame length {len} exceeds maximum {max}")]
+    FrameTooLarge { len: u32, max: u32 },
 }

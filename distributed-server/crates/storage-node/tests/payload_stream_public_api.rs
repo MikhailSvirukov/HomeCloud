@@ -2,7 +2,7 @@
 //! streams, so `send_payload` and `write_chain` are exercised end to end rather
 //! than through in-memory buffer helpers.
 
-use core::num::NonZeroUsize;
+use core::num::{NonZeroU32, NonZeroUsize};
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -16,6 +16,10 @@ use tokio::io::{duplex, AsyncRead, ReadBuf};
 /// Builds a non-zero capacity for the streaming entry points.
 fn non_zero(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).expect("test capacity is non-zero")
+}
+
+fn max_frame_len() -> NonZeroU32 {
+    NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
 }
 
 /// An async source that yields its bytes and then fails its next read.
@@ -63,7 +67,7 @@ where
         .await
         .expect("in-memory duplex read cannot fail")
     {
-        match decode_frame(&frame).expect("the reader yields whole frames") {
+        match decode_frame(&frame, max_frame_len()).expect("the reader yields whole frames") {
             DecodeOutcome::Complete { payload, .. } => payloads.push(payload.to_vec()),
             DecodeOutcome::Incomplete { needed } => {
                 panic!("the reader yielded a frame needing {needed} more bytes")
@@ -80,12 +84,12 @@ async fn send_payload_streams_a_source_as_frames() {
     let expected = source.clone();
 
     let (peer, writer_half) = duplex(64 * 1024);
-    let mut reader = FrameReader::new(peer);
+    let mut reader = FrameReader::new(peer, max_frame_len());
 
     let producer = tokio::spawn(async move {
         let mut pool = pool(SizeClass::new(1024, 4));
         let mut source = source.as_slice();
-        let mut writer = FrameWriter::new(writer_half);
+        let mut writer = FrameWriter::new(writer_half, max_frame_len());
         send_payload(
             &mut writer,
             &mut source,
@@ -110,12 +114,12 @@ async fn send_payload_streams_a_source_as_frames() {
 #[tokio::test]
 async fn send_payload_of_an_empty_source_writes_nothing() {
     let (peer, writer_half) = duplex(64 * 1024);
-    let mut reader = FrameReader::new(peer);
+    let mut reader = FrameReader::new(peer, max_frame_len());
     let mut pool = pool(SizeClass::new(1024, 2));
     let mut source: &[u8] = &[];
 
     {
-        let mut writer = FrameWriter::new(writer_half);
+        let mut writer = FrameWriter::new(writer_half, max_frame_len());
         send_payload(
             &mut writer,
             &mut source,
@@ -144,7 +148,7 @@ async fn send_payload_returns_buffers_to_the_pool() {
     let mut sink = Vec::new();
 
     {
-        let mut writer = FrameWriter::new(&mut sink);
+        let mut writer = FrameWriter::new(&mut sink, max_frame_len());
         send_payload(
             &mut writer,
             &mut source,
@@ -173,7 +177,7 @@ async fn send_payload_returns_buffers_when_the_source_fails() {
 
     let (peer, writer_half) = duplex(64 * 1024);
     let outcome = {
-        let mut writer = FrameWriter::new(writer_half);
+        let mut writer = FrameWriter::new(writer_half, max_frame_len());
         send_payload(
             &mut writer,
             &mut source,
@@ -210,9 +214,9 @@ async fn write_chain_writes_each_chunk_as_a_frame() {
     assert_eq!(chunks.chunk_count(), 2);
 
     let (peer, writer_half) = duplex(64 * 1024);
-    let mut reader = FrameReader::new(peer);
+    let mut reader = FrameReader::new(peer, max_frame_len());
     {
-        let mut writer = FrameWriter::new(writer_half);
+        let mut writer = FrameWriter::new(writer_half, max_frame_len());
         write_chain(&mut writer, &chunks)
             .await
             .expect("in-memory duplex write cannot fail");

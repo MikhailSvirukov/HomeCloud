@@ -10,6 +10,7 @@
 //! session state and can be composed into a larger actor without leaking wire
 //! details upward.
 
+use core::num::NonZeroU32;
 use std::io;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
@@ -17,7 +18,7 @@ use tokio::sync::mpsc;
 use tracing::trace;
 
 use crate::codec::encode_frame;
-use crate::frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
+use crate::frame_buffer::FrameBuffer;
 use crate::framing::FramingError;
 
 /// Number of bytes reserved for each read from the underlying stream.
@@ -44,11 +45,12 @@ pub struct FrameReader<R> {
 }
 
 impl<R: AsyncRead + Unpin> FrameReader<R> {
-    /// Wraps `reader`, pre-allocating the read chunk.
-    pub fn new(reader: R) -> Self {
+    /// Wraps `reader`, pre-allocating the read chunk and bounding frames by
+    /// `max_frame_len`.
+    pub fn new(reader: R, max_frame_len: NonZeroU32) -> Self {
         Self {
             reader,
-            buffer: FrameBuffer::new(),
+            buffer: FrameBuffer::new(max_frame_len),
             read_chunk: vec![0; READ_CHUNK_LEN],
         }
     }
@@ -66,15 +68,13 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
                 return Ok(Some(frame));
             }
 
-            let remaining = MAX_BUFFERED_FRAME_LEN.saturating_sub(self.buffer.buffered_len());
+            let remaining = self.buffer.remaining_capacity();
             debug_assert!(
                 remaining > 0,
                 "an incomplete frame always leaves room to complete it"
             );
-            let read = self
-                .reader
-                .read(&mut self.read_chunk[..remaining.min(READ_CHUNK_LEN)])
-                .await?;
+            let limit = remaining.min(READ_CHUNK_LEN);
+            let read = self.reader.read(&mut self.read_chunk[..limit]).await?;
             if read == 0 {
                 return Ok(None);
             }
@@ -87,17 +87,21 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
 /// Writes whole frames to an async byte sink.
 pub struct FrameWriter<W> {
     writer: W,
+    max_frame_len: NonZeroU32,
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
-    /// Wraps `writer`.
-    pub fn new(writer: W) -> Self {
-        Self { writer }
+    /// Wraps `writer`, bounding outbound payloads by `max_frame_len`.
+    pub fn new(writer: W, max_frame_len: NonZeroU32) -> Self {
+        Self {
+            writer,
+            max_frame_len,
+        }
     }
 
     /// Encodes `payload` as one frame and writes it out.
     pub async fn send_frame(&mut self, payload: &[u8]) -> Result<()> {
-        let frame = encode_frame(payload)?;
+        let frame = encode_frame(payload, self.max_frame_len)?;
         self.writer.write_all(&frame).await?;
         trace!(payload_len = payload.len(), "frame written");
         Ok(())
@@ -105,12 +109,18 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
 }
 
 /// Splits an async stream into a frame reader and a frame writer.
-pub fn split_frames<S>(stream: S) -> (FrameReader<ReadHalf<S>>, FrameWriter<WriteHalf<S>>)
+pub fn split_frames<S>(
+    stream: S,
+    max_frame_len: NonZeroU32,
+) -> (FrameReader<ReadHalf<S>>, FrameWriter<WriteHalf<S>>)
 where
     S: AsyncRead + AsyncWrite,
 {
     let (reader, writer) = tokio::io::split(stream);
-    (FrameReader::new(reader), FrameWriter::new(writer))
+    (
+        FrameReader::new(reader, max_frame_len),
+        FrameWriter::new(writer, max_frame_len),
+    )
 }
 
 /// Runs the frame-only connection: frames read from the stream are sent to
@@ -120,11 +130,12 @@ pub async fn pump_frames<S>(
     stream: S,
     inbound: mpsc::Sender<Vec<u8>>,
     outbound: mpsc::Receiver<Vec<u8>>,
+    max_frame_len: NonZeroU32,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let (reader, writer) = split_frames(stream);
+    let (reader, writer) = split_frames(stream, max_frame_len);
     pump_halves(reader, writer, inbound, outbound).await
 }
 

@@ -7,7 +7,7 @@
 //! the framing, payload streaming, and connection halves together over a real
 //! socket instead of in-memory buffers.
 
-use core::num::NonZeroUsize;
+use core::num::{NonZeroU32, NonZeroUsize};
 
 use storage_node::{
     decode_frame, send_payload, split_frames, DecodeOutcome, Listener, PayloadBufferPool, SizeClass,
@@ -25,6 +25,10 @@ const MAX_CHUNKS: usize = 2;
 
 fn non_zero(value: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).expect("test constant is non-zero")
+}
+
+fn max_frame_len() -> NonZeroU32 {
+    NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
 }
 
 /// Builds a payload with a non-trivial byte pattern so framing mistakes surface.
@@ -46,7 +50,7 @@ async fn uploads_a_payload_over_tcp_and_reassembles_it() {
     let (reassembled_tx, reassembled_rx) = oneshot::channel();
     let server = tokio::spawn(async move {
         let (mut reader, _writer, _peer) = listener
-            .accept()
+            .accept(max_frame_len())
             .await
             .expect("the listener accepts the client connection");
 
@@ -56,7 +60,9 @@ async fn uploads_a_payload_over_tcp_and_reassembles_it() {
             .await
             .expect("reading frames from the accepted connection cannot fail")
         {
-            match decode_frame(&frame).expect("the client writes whole encoded frames") {
+            match decode_frame(&frame, max_frame_len())
+                .expect("the client writes whole encoded frames")
+            {
                 DecodeOutcome::Complete { payload, .. } => reassembled.extend_from_slice(payload),
                 DecodeOutcome::Incomplete { needed } => {
                     panic!("the frame reader yields whole frames, got incomplete need {needed}")
@@ -76,7 +82,7 @@ async fn uploads_a_payload_over_tcp_and_reassembles_it() {
     let client = TcpStream::connect(address)
         .await
         .expect("connecting to the bound loopback address cannot fail");
-    let (client_reader, mut client_writer) = split_frames(client);
+    let (client_reader, mut client_writer) = split_frames(client, max_frame_len());
 
     let mut source_reader = source.as_slice();
     send_payload(

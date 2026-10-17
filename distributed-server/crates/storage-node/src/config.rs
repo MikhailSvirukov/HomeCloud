@@ -1,11 +1,12 @@
 //! Node identity and static configuration.
 //!
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
-//! a data directory, the paths of its encryption and signing key files, and the
-//! addresses of its fixed peers. v1 clusters are fixed, so this model is
-//! validated when it is built.
+//! a data directory, the paths of its encryption and signing key files, the
+//! maximum frame length its framing layer accepts, and the addresses of its
+//! fixed peers. v1 clusters are fixed, so this model is validated when it is
+//! built.
 
-use core::num::NonZeroU16;
+use core::num::{NonZeroU16, NonZeroU32};
 use std::path::PathBuf;
 
 /// Fallible configuration operation result.
@@ -24,6 +25,8 @@ const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 /// Recognized `from_pairs` key for the signing key file path.
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
+/// Recognized `from_pairs` key for the maximum frame length.
+const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// Recognized `from_pairs` key for the peer address list.
 const KEY_PEERS: &str = "peers";
 /// Separator between peer addresses in the `peers` pair value.
@@ -79,6 +82,7 @@ pub struct NodeConfig {
     pub data_dir: PathBuf,
     pub encryption_key_path: PathBuf,
     pub signing_key_path: PathBuf,
+    pub max_frame_len: NonZeroU32,
     pub peers: Vec<String>,
 }
 
@@ -90,6 +94,7 @@ impl NodeConfig {
         data_dir: PathBuf,
         encryption_key_path: PathBuf,
         signing_key_path: PathBuf,
+        max_frame_len: NonZeroU32,
         peers: Vec<String>,
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
@@ -100,17 +105,19 @@ impl NodeConfig {
             data_dir,
             encryption_key_path,
             signing_key_path,
+            max_frame_len,
             peers: normalize_peers(peers)?,
         })
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
         let mut data_dir = None;
         let mut encryption_key_path = None;
         let mut signing_key_path = None;
+        let mut max_frame_len = None;
         let mut peers = Vec::new();
 
         for (key, value) in pairs {
@@ -124,6 +131,7 @@ impl NodeConfig {
                 KEY_SIGNING_KEY_PATH if !value.is_empty() => {
                     signing_key_path = Some(PathBuf::from(value));
                 }
+                KEY_MAX_FRAME_LEN if !value.is_empty() => max_frame_len = Some(*value),
                 KEY_PEERS => peers = split_peers(value),
                 _ => {}
             }
@@ -150,6 +158,12 @@ impl NodeConfig {
                 key: KEY_SIGNING_KEY_PATH,
             });
         };
+        let Some(max_frame_len) = max_frame_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_MAX_FRAME_LEN,
+            });
+        };
+        let max_frame_len = parse_max_frame_len(max_frame_len)?;
 
         Self::new(
             node_id,
@@ -157,6 +171,7 @@ impl NodeConfig {
             data_dir,
             encryption_key_path,
             signing_key_path,
+            max_frame_len,
             peers,
         )
     }
@@ -186,6 +201,9 @@ pub enum ConfigError {
     /// A peer entry was empty after trimming.
     #[error("peer address must not be empty")]
     EmptyPeerAddr,
+    /// The maximum frame length was not a positive integer.
+    #[error("invalid maximum frame length {value}")]
+    InvalidMaxFrameLen { value: String },
     /// The same peer address appeared more than once.
     #[error("duplicate peer address {addr}")]
     DuplicatePeer { addr: String },
@@ -256,13 +274,25 @@ fn split_peers(value: &str) -> Vec<String> {
     }
 }
 
+/// Parses a maximum frame length that must be a non-zero `u32`.
+fn parse_max_frame_len(value: &str) -> Result<NonZeroU32> {
+    value
+        .parse::<u32>()
+        .ok()
+        .and_then(NonZeroU32::new)
+        .ok_or_else(|| ConfigError::InvalidMaxFrameLen {
+            value: value.to_owned(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
+    use core::num::NonZeroU32;
     use std::path::PathBuf;
 
     use super::{
         ConfigError, NodeConfig, NodeId, KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR,
-        KEY_NODE_ID, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
+        KEY_MAX_FRAME_LEN, KEY_NODE_ID, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
 
     const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
@@ -270,6 +300,10 @@ mod tests {
 
     fn node_id(label: &str) -> NodeId {
         NodeId::parse(label).expect("test label is valid")
+    }
+
+    fn max_frame_len() -> NonZeroU32 {
+        NonZeroU32::new(1_048_576).expect("test limit is non-zero")
     }
 
     fn data_dir() -> PathBuf {
@@ -312,6 +346,7 @@ mod tests {
             data_dir(),
             encryption_key_path(),
             signing_key_path(),
+            max_frame_len(),
             vec![" 10.0.0.2:9000 ".to_owned()],
         )
         .expect("config is valid");
@@ -321,6 +356,7 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from("/data"));
         assert_eq!(config.encryption_key_path, encryption_key_path());
         assert_eq!(config.signing_key_path, signing_key_path());
+        assert_eq!(config.max_frame_len.get(), 1_048_576);
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
 
@@ -333,6 +369,7 @@ mod tests {
                 data_dir(),
                 encryption_key_path(),
                 signing_key_path(),
+                max_frame_len(),
                 Vec::new(),
             );
             let expected = ConfigError::InvalidListenAddr {
@@ -350,6 +387,7 @@ mod tests {
             data_dir(),
             encryption_key_path(),
             signing_key_path(),
+            max_frame_len(),
             vec!["   ".to_owned()],
         );
         assert_eq!(result, Err(ConfigError::EmptyPeerAddr));
@@ -363,6 +401,7 @@ mod tests {
             data_dir(),
             encryption_key_path(),
             signing_key_path(),
+            max_frame_len(),
             vec!["10.0.0.2".to_owned()],
         );
         let expected = ConfigError::InvalidPeerAddr {
@@ -379,6 +418,7 @@ mod tests {
             ("data_dir", "/data"),
             (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+            (KEY_MAX_FRAME_LEN, "1048576"),
             ("peers", ""),
         ])
         .expect("pairs are valid");
@@ -472,6 +512,7 @@ mod tests {
             ("data_dir", "/data"),
             (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+            (KEY_MAX_FRAME_LEN, "1048576"),
         ])
         .expect("unknown keys are ignored");
 

@@ -2,9 +2,15 @@
 //! loopback sockets, so accepting connections and reacting to shutdown are
 //! driven end to end rather than through in-memory helpers.
 
+use core::num::NonZeroU32;
+
 use storage_node::{serve, split_frames, Listener};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
+
+fn max_frame_len() -> NonZeroU32 {
+    NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
+}
 
 #[tokio::test]
 async fn serve_stops_when_shutdown_resolves() {
@@ -13,9 +19,13 @@ async fn serve_stops_when_shutdown_resolves() {
         .expect("binding an ephemeral loopback port cannot fail");
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let server = tokio::spawn(serve(listener, async move {
-        let _ = shutdown_rx.await;
-    }));
+    let server = tokio::spawn(serve(
+        listener,
+        async move {
+            let _ = shutdown_rx.await;
+        },
+        max_frame_len(),
+    ));
 
     shutdown_tx
         .send(())
@@ -38,14 +48,18 @@ async fn serve_accepts_and_closes_a_client_connection_on_shutdown() {
         .expect("a bound listener reports its address");
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let server = tokio::spawn(serve(listener, async move {
-        let _ = shutdown_rx.await;
-    }));
+    let server = tokio::spawn(serve(
+        listener,
+        async move {
+            let _ = shutdown_rx.await;
+        },
+        max_frame_len(),
+    ));
 
     let client = TcpStream::connect(address)
         .await
         .expect("connecting to the bound loopback address cannot fail");
-    let (mut client_reader, mut client_writer) = split_frames(client);
+    let (mut client_reader, mut client_writer) = split_frames(client, max_frame_len());
     client_writer
         .send_frame(b"ping")
         .await

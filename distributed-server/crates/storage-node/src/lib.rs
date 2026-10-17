@@ -1,15 +1,15 @@
 //! PicBackup distributed storage-node crate.
 //!
-//! Structural increments so far: the frame header for the frame-only TCP actor,
-//! whole-frame encode/decode over byte slices, a bounded, size-classed payload
-//! buffer pool, the ordered payload chain and pooled chunk stream, the
-//! validated node identity/configuration model, the upload metadata model with
-//! the idempotent upload ledger, the receive-side frame buffer, the typed
-//! upload outcome codes ([`UploadStatus`] and [`ResponseError`]), and the
-//! frame reader/writer halves ([`FrameReader`], [`FrameWriter`]) with
-//! [`split_frames`] and the forwarding [`pump_frames`] plus its split-half
-//! variant [`pump_halves`], which move whole frames over an async byte stream,
-//! the payload streaming path ([`send_payload`],
+//! Structural increments so far: the 4-byte big-endian frame-length prefix for
+//! the frame-only TCP actor, whole-frame encode/decode over byte slices, a
+//! bounded, size-classed payload buffer pool, the ordered payload chain and
+//! pooled chunk stream, the validated node identity/configuration model, the
+//! upload metadata model with the idempotent upload ledger, the receive-side
+//! frame buffer, the typed upload outcome codes ([`UploadStatus`] and
+//! [`ResponseError`]), and the frame reader/writer halves ([`FrameReader`],
+//! [`FrameWriter`]) with [`split_frames`] and the forwarding [`pump_frames`]
+//! plus its split-half variant [`pump_halves`], which move whole frames over an
+//! async byte stream, the payload streaming path ([`send_payload`],
 //! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
 //! TCP listener ([`Listener`]) that yields frame reader/writer halves per
 //! accepted connection, and the node runtime ([`serve`]) that accepts
@@ -22,8 +22,10 @@
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
-//! - Custom framing over TCP; the only unencrypted prefix is the protocol
-//!   version and frame length, modelled by [`FrameHeader`].
+//! - Custom framing over TCP; the only unencrypted prefix is a 4-byte
+//!   big-endian payload length, modelled by [`FrameLength`]. The length counts
+//!   the bytes after the prefix and excludes the prefix itself, and receivers
+//!   validate it against the configured maximum before buffering the frame.
 //! - File payloads stream as bounded blocks with explicit buffer ownership and
 //!   return; the whole file is never held in RAM.
 //! - A large payload is a logical chain of buffers including a trailing partial
@@ -63,10 +65,8 @@ pub use connection::{
     pump_frames, pump_halves, split_frames, ConnectionError, FrameReader, FrameWriter,
 };
 pub use cpu_pool::{CpuPool, CpuPoolError};
-pub use frame_buffer::{FrameBuffer, MAX_BUFFERED_FRAME_LEN};
-pub use framing::{
-    FrameHeader, FramingError, FRAME_HEADER_LEN, MAX_FRAME_PAYLOAD_LEN, PROTOCOL_VERSION,
-};
+pub use frame_buffer::FrameBuffer;
+pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
 pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
 pub use metadata::{

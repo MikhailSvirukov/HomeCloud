@@ -2,12 +2,18 @@
 //! sockets, so binding, address reporting, and accepted frame halves are driven
 //! end to end rather than through in-memory buffer helpers.
 
+use core::num::NonZeroU32;
+
 use storage_node::{encode_frame, split_frames, Listener, ListenerError};
 use tokio::net::TcpStream;
 
+fn max_frame_len() -> NonZeroU32 {
+    NonZeroU32::new(64 * 1024).expect("test limit is non-zero")
+}
+
 /// Encodes `payload`, asserting the test payload fits within the frame limit.
 fn frame(payload: &[u8]) -> Vec<u8> {
-    encode_frame(payload).expect("test payload is within the frame limit")
+    encode_frame(payload, max_frame_len()).expect("test payload is within the frame limit")
 }
 
 #[tokio::test]
@@ -36,12 +42,12 @@ async fn accepts_a_connection_and_exchanges_frames() {
         .local_addr()
         .expect("a bound listener reports its address");
 
-    let accept_task = tokio::spawn(async move { listener.accept().await });
+    let accept_task = tokio::spawn(async move { listener.accept(max_frame_len()).await });
 
     let client = TcpStream::connect(address)
         .await
         .expect("connecting to the bound loopback address cannot fail");
-    let (mut client_reader, mut client_writer) = split_frames(client);
+    let (mut client_reader, mut client_writer) = split_frames(client, max_frame_len());
 
     let (mut server_reader, mut server_writer, _peer) = accept_task
         .await

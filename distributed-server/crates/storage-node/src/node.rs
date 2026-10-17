@@ -1,5 +1,6 @@
 //! Node runtime: serves frame connections on a bound listener.
 
+use core::num::NonZeroU32;
 use std::future::Future;
 use std::net::SocketAddr;
 
@@ -17,8 +18,9 @@ type Result<T> = core::result::Result<T, ListenerError>;
 /// Frames buffered per direction for one connection.
 const CONNECTION_CHANNEL_CAPACITY: usize = 16;
 
-/// Accepts connections until `shutdown` resolves, serving each on its own task.
-pub async fn serve<F>(listener: Listener, shutdown: F) -> Result<()>
+/// Accepts connections until `shutdown` resolves, serving each on its own task
+/// with frames bounded by `max_frame_len`.
+pub async fn serve<F>(listener: Listener, shutdown: F, max_frame_len: NonZeroU32) -> Result<()>
 where
     F: Future<Output = ()>,
 {
@@ -26,7 +28,7 @@ where
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
-            accepted = listener.accept() => {
+            accepted = listener.accept(max_frame_len) => {
                 let (reader, writer, peer) = accepted?;
                 info!(%peer, "connection accepted");
                 connections.spawn(handle_connection(reader, writer, peer));
