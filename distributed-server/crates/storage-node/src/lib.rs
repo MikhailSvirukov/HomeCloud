@@ -18,7 +18,8 @@
 //! worker threads, the on-disk storage layout ([`StorageLayout`]) with
 //! separate accounts and Raft roots and hex-encoded account/blob paths, and
 //! private-key file loading ([`PrivateKey`], [`KeyError`]) from configured
-//! owner-only files.
+//! owner-only files, and Ed25519 message signing/verification
+//! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]).
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -53,6 +54,7 @@ mod node;
 mod payload;
 mod payload_stream;
 mod response;
+mod signing;
 mod storage_layout;
 
 pub use buffer_pool::{
@@ -77,4 +79,7 @@ pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use response::{ResponseError, UploadStatus};
+pub use signing::{
+    MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
+};
 pub use storage_layout::{LayoutError, StorageLayout};
