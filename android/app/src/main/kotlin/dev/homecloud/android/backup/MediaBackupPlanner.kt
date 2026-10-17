@@ -1,13 +1,14 @@
 package dev.homecloud.android.backup
 
-import dev.homecloud.android.media.MediaDiscovery
+import dev.homecloud.android.media.MediaVersionScanner
+import dev.homecloud.android.media.newVersionUploadId
 import dev.homecloud.android.queue.UploadQueue
 
 /**
  * Outcome of a single [MediaBackupPlanner.plan] run.
  *
- * [newlyEnqueued] counts only candidates first seen in that run: ids already tracked, or repeated
- * within the run, are excluded.
+ * [newlyEnqueued] counts only versions not tracked before that run: candidates whose identity is
+ * already queued, or repeated within the run, are excluded.
  */
 internal data class PlanResult(
     val discoveredCandidates: Int,
@@ -15,42 +16,42 @@ internal data class PlanResult(
 )
 
 /**
- * Coordinates media discovery with the upload queue: [plan] records candidates not yet tracked as
- * pending work. Pure domain coordination, with no persistence, scheduling, I/O, or coroutines; the
- * upload identity policy is delegated to the injected [uploadIdFactory].
+ * Coordinates media discovery with the upload queue: [plan] records versions not yet tracked as
+ * pending work. The version identity decides whether a candidate is new, so an unchanged candidate
+ * is left alone and a changed one receives a new upload id. Pure domain coordination, with no
+ * persistence, scheduling, I/O, or coroutines.
  */
 internal class MediaBackupPlanner(
-    private val discovery: MediaDiscovery,
-    private val uploadIdFactory: UploadIdFactory,
+    private val scanner: MediaVersionScanner,
     val queue: UploadQueue,
 ) {
     /**
-     * Enqueues each discovered candidate whose upload id is not already tracked. Discovery is
-     * queried once and the tracked ids are snapshotted before enqueuing, so two candidates mapping to
-     * the same id produce exactly one entry and a re-run after a successful pass enqueues nothing.
+     * Enqueues each scanned candidate whose version identity is not already tracked. The scan runs
+     * once and the tracked identities are snapshotted before enqueuing, so two candidates carrying
+     * the same identity produce exactly one entry and a re-run over an unchanged media store
+     * enqueues nothing.
      */
     fun plan(): PlanResult {
-        val candidates = discovery.discoverBackupCandidates()
-        val trackedUploadIds = queue.entries().map { entry -> entry.uploadId }.toSet()
+        val candidates = scanner.scan()
+        val trackedIdentities = queue.entries().map { entry -> entry.identity }.toSet()
 
-        val newVersionEnqueues =
+        val newVersions =
             candidates
-                .map { item -> uploadIdFactory.uploadIdFor(item) to item }
-                .distinctBy { (uploadId, _) -> uploadId }
-                .filter { (uploadId, _) -> uploadId !in trackedUploadIds }
+                .filter { candidate -> candidate.identity !in trackedIdentities }
+                .distinctBy { candidate -> candidate.identity }
 
-        newVersionEnqueues.forEach { (uploadId, item) ->
+        newVersions.forEach { candidate ->
             queue.enqueue(
-                uploadId = uploadId,
-                sourceId = item.id,
-                sizeBytes = item.sizeBytes,
-                dateModifiedEpochSeconds = item.dateModifiedEpochSeconds,
+                uploadId = newVersionUploadId(),
+                sourceId = candidate.item.id,
+                identity = candidate.identity,
+                sizeBytes = candidate.item.sizeBytes,
             )
         }
 
         return PlanResult(
             discoveredCandidates = candidates.size,
-            newlyEnqueued = newVersionEnqueues.size,
+            newlyEnqueued = newVersions.size,
         )
     }
 }

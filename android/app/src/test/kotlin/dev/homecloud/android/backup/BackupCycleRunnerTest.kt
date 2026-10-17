@@ -2,16 +2,15 @@ package dev.homecloud.android.backup
 
 import dev.homecloud.android.log.BackupCycleLog
 import dev.homecloud.android.log.NoOpBackupCycleLog
-import dev.homecloud.android.media.MediaDiscovery
-import dev.homecloud.android.media.RawMediaEntry
+import dev.homecloud.android.media.MediaKind
+import dev.homecloud.android.media.MediaVersionCandidate
 import dev.homecloud.android.queue.FileUploadQueueStore
 import dev.homecloud.android.queue.InMemoryUploadQueue
 import dev.homecloud.android.queue.UploadQueueEntry
 import dev.homecloud.android.queue.UploadQueueState
 import dev.homecloud.android.queue.UploadQueueStore
 import dev.homecloud.android.queue.UploadQueueStoreException
-import dev.homecloud.android.testsupport.FakeMediaRowSource
-import dev.homecloud.android.testsupport.FakeUploadIdFactory
+import dev.homecloud.android.testsupport.FakeMediaVersionScanner
 import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -38,8 +37,16 @@ class BackupCycleRunnerTest {
             result,
         )
         assertEquals(
-            listOf("$UPLOAD_ID_PREFIX$IMAGE_ID", "$UPLOAD_ID_PREFIX$VIDEO_ID"),
-            queue.entries().map { entry -> entry.uploadId },
+            listOf(IMAGE_ID, VIDEO_ID),
+            queue.entries().map { entry -> entry.sourceId },
+        )
+        assertEquals(
+            CANDIDATE_COUNT,
+            queue
+                .entries()
+                .map { entry -> entry.uploadId }
+                .distinct()
+                .size,
         )
     }
 
@@ -70,7 +77,7 @@ class BackupCycleRunnerTest {
             runnerFor(
                 store = store,
                 queue = queue,
-                rows = listOf(MediaTestData.row(id = CANDIDATE_ID, mimeType = MediaTestData.IMAGE_MIME_TYPE)),
+                candidates = listOf(MediaTestData.candidate(id = CANDIDATE_ID, kind = MediaKind.IMAGE)),
             )
 
         val result = runner.runOnce()
@@ -102,7 +109,7 @@ class BackupCycleRunnerTest {
     fun `runOnce with no discovered candidates reports an empty plan and stores an empty snapshot`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val store = FileUploadQueueStore(storeFile())
-        val runner = runnerFor(store = store, queue = queue, rows = emptyList())
+        val runner = runnerFor(store = store, queue = queue, candidates = emptyList())
 
         val result = runner.runOnce()
 
@@ -178,18 +185,17 @@ class BackupCycleRunnerTest {
     private fun runnerFor(
         store: UploadQueueStore,
         queue: InMemoryUploadQueue,
-        rows: List<RawMediaEntry> = imageAndVideoRows(),
+        candidates: List<MediaVersionCandidate> = imageAndVideoCandidates(),
         log: BackupCycleLog = NoOpBackupCycleLog,
     ): BackupCycleRunner {
-        val planner =
-            MediaBackupPlanner(MediaDiscovery(FakeMediaRowSource(rows)), FakeUploadIdFactory(), queue)
+        val planner = MediaBackupPlanner(FakeMediaVersionScanner(candidates), queue)
         return BackupCycleRunner(planner = planner, store = store, log = log)
     }
 
-    private fun imageAndVideoRows(): List<RawMediaEntry> =
+    private fun imageAndVideoCandidates(): List<MediaVersionCandidate> =
         listOf(
-            MediaTestData.row(id = IMAGE_ID, mimeType = MediaTestData.IMAGE_MIME_TYPE),
-            MediaTestData.row(id = VIDEO_ID, mimeType = MediaTestData.VIDEO_MIME_TYPE),
+            MediaTestData.candidate(id = IMAGE_ID, kind = MediaKind.IMAGE),
+            MediaTestData.candidate(id = VIDEO_ID, kind = MediaKind.VIDEO),
         )
 
     private fun entry(
@@ -200,8 +206,8 @@ class BackupCycleRunnerTest {
         UploadQueueEntry(
             uploadId = uploadId,
             sourceId = CANDIDATE_ID,
+            identity = MediaTestData.versionIdentity(sourceId = CANDIDATE_ID),
             sizeBytes = MediaTestData.SIZE_BYTES,
-            dateModifiedEpochSeconds = MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
             attemptCount = attemptCount,
             state = state,
         )
