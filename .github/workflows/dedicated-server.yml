@@ -78,7 +78,7 @@ jobs:
           log_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-logs.XXXXXX")"
           stderr_file="$(mktemp "$RUNNER_TEMP/dedicated-server-stderr.XXXXXX")"
           cleanup() {
-            rm -rf "$config_dir" "$log_dir"
+            sudo rm -rf "$config_dir" "$log_dir"
             rm -f "$stderr_file"
           }
           trap cleanup EXIT
@@ -92,6 +92,7 @@ jobs:
             "$config_dir/keys/encryption.key" \
             "$config_dir/keys/signing.key"
           sudo chown -R 10001:10001 "$config_dir" "$log_dir"
+          sudo chmod 0755 "$log_dir"
 
           status=0
           docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
