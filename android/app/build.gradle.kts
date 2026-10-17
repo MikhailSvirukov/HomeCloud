@@ -60,6 +60,7 @@ ktlint {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    implementation("com.github.luben:zstd-jni:${libs.versions.zstdJni.get()}@aar")
     implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -76,4 +77,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation(libs.zstd.jni)
 }
