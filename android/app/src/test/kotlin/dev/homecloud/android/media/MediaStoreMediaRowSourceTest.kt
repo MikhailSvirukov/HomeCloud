@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -99,6 +100,15 @@ class MediaStoreMediaRowSourceTest {
     }
 
     @Test
+    fun `readAll throws when the provider returns no cursor`() {
+        installProvider(emptyList()).queryReturnsNull = true
+
+        assertThrows(MediaLibraryUnreadableException::class.java) {
+            MediaStoreMediaRowSource(resolver()).readAll()
+        }
+    }
+
+    @Test
     fun `readAll closes the cursor when the provider has no rows`() {
         val provider = installProvider(emptyList())
 
@@ -158,6 +168,9 @@ internal class RecordingMediaContentProvider : ContentProvider() {
     /** Rows served to the next query, each in projection order. */
     var rows: List<Array<Any?>> = emptyList()
 
+    /** Whether the next query returns no cursor, as an unreadable provider does. */
+    var queryReturnsNull: Boolean = false
+
     var lastUri: Uri? = null
         private set
 
@@ -181,11 +194,12 @@ internal class RecordingMediaContentProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<String>?,
         sortOrder: String?,
-    ): Cursor {
+    ): Cursor? {
         lastUri = uri
         lastProjection = projection
         lastSelection = selection
         lastSelectionArgs = selectionArgs
+        if (queryReturnsNull) return null
         val cursor = RecordingMatrixCursor(projection ?: emptyArray())
         rows.forEach { cursor.addRow(it) }
         lastCursor = cursor
