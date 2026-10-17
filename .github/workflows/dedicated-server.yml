@@ -55,3 +55,54 @@ jobs:
           workspaces: dedicated-server
       - name: Run the area checks
         run: bash scripts/ci.sh
+
+  image:
+    name: Runtime image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+      - name: Validate the Compose configuration
+        env:
+          # compose.yaml requires these for every service; only their presence matters here.
+          DEDICATED_SERVER_CONFIG_DIR: ${{ runner.temp }}/dedicated-server-config
+          GITHUB_MCP_TOKEN: ci-placeholder
+          DEEPSEEK_API_KEY: ci-placeholder
+        run: docker compose config --quiet
+      - name: Build the runtime image
+        run: docker build -f dedicated-server/Dockerfile -t homecloud-dedicated-server:ci .
+      - name: Smoke-run the runtime image
+        run: |
+          config_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-smoke.XXXXXX")"
+          stderr_file="$(mktemp "$RUNNER_TEMP/dedicated-server-stderr.XXXXXX")"
+          cleanup() {
+            rm -rf "$config_dir"
+            rm -f "$stderr_file"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$config_dir/keys"
+          cp dedicated-server/config/dedicated-server.example.toml "$config_dir/dedicated-server.toml"
+          openssl rand -out "$config_dir/keys/encryption.key" 32
+          openssl rand -out "$config_dir/keys/signing.key" 32
+          chmod 700 "$config_dir" "$config_dir/keys"
+          chmod 600 "$config_dir/dedicated-server.toml" \
+            "$config_dir/keys/encryption.key" \
+            "$config_dir/keys/signing.key"
+
+          status=0
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" \
+            -v "$config_dir:/etc/homecloud:ro" \
+            homecloud-dedicated-server:ci 2>"$stderr_file" || status=$?
+
+          cat "$stderr_file" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "runtime image exited with status $status" >&2
+            exit 1
+          fi
+          if ! grep -Fq '"event":"startup"' "$stderr_file"; then
+            echo 'runtime image did not emit an "event":"startup" record' >&2
+            exit 1
+          fi
