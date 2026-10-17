@@ -109,6 +109,23 @@ The binary writes UTF-8 JSON Lines events to the file named by
 empty. The default level is `info`; set `RUST_LOG` to override it (for example
 `RUST_LOG=debug`). Lines are emitted without ANSI colours.
 
+The file rotates so it does not grow without bound. A rotation starts a new
+active file when appending the next record would exceed `max_file_size_bytes`,
+or when the active file is older than `max_file_age_ms`. The previous active
+file is renamed in the same directory to `<file name>.<UTC epoch milliseconds>`
+(for example `dedicated-server.log.1750000000000`); a numeric suffix such as
+`.1` is added when that name already exists, so rotation never overwrites a
+file.
+
+After each rotation the rotated files are pruned oldest first. A rotated file is
+deleted when its modification time is older than `retention_ms`, or when the
+total size of the active file plus all rotated files exceeds
+`max_total_size_bytes`; pruning stops once both limits are satisfied. Only
+files whose names match the rotated-name pattern of the configured path are
+removed, the active file is never removed, and unrelated files in the directory
+are left untouched. A record larger than `max_file_size_bytes` is written whole
+to an empty active file so a JSON line is never split.
+
 Each event carries:
 
 - `timestamp`: UTC time in RFC 3339 format with milliseconds.
@@ -165,9 +182,14 @@ for the whole process and flushes buffered records when dropped.
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
   (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
-- `logging`: `path`, the structured JSON Lines log file. It is required and has
-  no default; the process opens it in append mode. An unopenable path is a
-  startup failure.
+- `logging`: `path`, the structured JSON Lines log file, and four non-zero
+  limits (`NonZeroU64`): `retention_ms` (how long a rotated file is kept),
+  `max_file_age_ms` (maximum age of the active file before rotation),
+  `max_file_size_bytes` (maximum size of one file), and
+  `max_total_size_bytes` (maximum size of the active file plus every rotated
+  file). It is required and has no default; the process opens it in append mode.
+  `max_total_size_bytes` must be at least `max_file_size_bytes`, otherwise
+  loading fails. An unopenable path is a startup failure.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -198,6 +220,10 @@ salt_length_bytes = 16
 
 [logging]
 path = "/var/log/homecloud/dedicated-server.log"
+retention_ms = 604800000
+max_file_age_ms = 86400000
+max_file_size_bytes = 104857600
+max_total_size_bytes = 1073741824
 
 [[cluster.nodes]]
 sender_id = "00000000000000000000000000000001"

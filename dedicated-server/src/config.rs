@@ -98,9 +98,17 @@ pub(crate) struct PasswordConfig {
 /// Structured log file configuration.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct LoggingConfig {
+pub struct LoggingConfig {
     /// Path of the structured JSON Lines log file.
     pub(crate) path: PathBuf,
+    /// How long a rotated log file is kept, in milliseconds.
+    pub(crate) retention_ms: NonZeroU64,
+    /// Maximum age of the active log file before it is rotated, in milliseconds.
+    pub(crate) max_file_age_ms: NonZeroU64,
+    /// Maximum size of one log file in bytes.
+    pub(crate) max_file_size_bytes: NonZeroU64,
+    /// Maximum total size of the active file and every rotated file, in bytes.
+    pub(crate) max_total_size_bytes: NonZeroU64,
 }
 
 /// Fixed storage cluster bootstrap information.
@@ -262,6 +270,17 @@ pub enum ConfigError {
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
     DuplicateNodeField { field: NodeField },
+    /// The total log size limit cannot hold even one maximum-size log file.
+    #[error(
+        "logging.max_total_size_bytes ({max_total_size_bytes}) must be at least \
+         logging.max_file_size_bytes ({max_file_size_bytes})"
+    )]
+    LoggingTotalSizeBelowFileSize {
+        /// Configured maximum total log set size.
+        max_total_size_bytes: u64,
+        /// Configured maximum size of one log file.
+        max_file_size_bytes: u64,
+    },
 }
 
 impl PasswordConfig {
@@ -296,9 +315,9 @@ impl ServerConfig {
         Ok(config)
     }
 
-    /// Path of the configured structured log file.
-    pub fn logging_path(&self) -> &Path {
-        &self.logging.path
+    /// Structured log file and retention configuration.
+    pub fn logging(&self) -> &LoggingConfig {
+        &self.logging
     }
 
     /// Read, parse and validate a configuration file.
@@ -315,6 +334,20 @@ impl ServerConfig {
     fn validate(&self) -> Result<()> {
         validate_identity(&self.identity, self.max_label_bytes)
             .and_then(|()| validate_cluster(&self.cluster, self.max_label_bytes))
+            .and_then(|()| validate_logging(&self.logging))
+    }
+}
+
+fn validate_logging(logging: &LoggingConfig) -> Result<()> {
+    let max_file_size_bytes = logging.max_file_size_bytes.get();
+    let max_total_size_bytes = logging.max_total_size_bytes.get();
+    if max_total_size_bytes < max_file_size_bytes {
+        Err(ConfigError::LoggingTotalSizeBelowFileSize {
+            max_total_size_bytes,
+            max_file_size_bytes,
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -450,9 +483,13 @@ mod tests {
         assert_eq!(config.password.parallelism.get(), 1);
         assert_eq!(config.password.salt_length_bytes.get(), 16);
         assert_eq!(
-            config.logging_path(),
+            config.logging().path,
             Path::new("/var/log/homecloud/dedicated-server.log")
         );
+        assert_eq!(config.logging().retention_ms.get(), 604_800_000);
+        assert_eq!(config.logging().max_file_age_ms.get(), 86_400_000);
+        assert_eq!(config.logging().max_file_size_bytes.get(), 104_857_600);
+        assert_eq!(config.logging().max_total_size_bytes.get(), 1_073_741_824);
         assert_eq!(config.cluster.nodes.len(), 2);
         assert_eq!(
             config.cluster.nodes[0].sender_id.as_bytes(),
@@ -584,6 +621,31 @@ mod tests {
         assert!(parse_error(UNKNOWN_LOGGING_KEY)
             .to_string()
             .contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn rejects_logging_section_without_retention_period() {
+        let document = VALID_SERVER.replace("retention_ms = 604800000\n", "");
+
+        assert!(parse_error(&document)
+            .to_string()
+            .contains("missing field `retention_ms`"));
+    }
+
+    #[test]
+    fn rejects_total_log_size_smaller_than_one_file() {
+        let document = VALID_SERVER.replace(
+            "max_total_size_bytes = 1073741824",
+            "max_total_size_bytes = 104857599",
+        );
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::LoggingTotalSizeBelowFileSize {
+                max_total_size_bytes: 104_857_599,
+                max_file_size_bytes: 104_857_600,
+            })
+        ));
     }
 
     #[test]
