@@ -441,8 +441,8 @@ pub fn startup_failed_to_stderr(error: &StartupError) -> io::Result<()> {
 
 /// Write the log writer initialization failure record directly to stderr.
 ///
-/// This is the bootstrap fallback used when the configured log file cannot be
-/// opened, so it intentionally bypasses the background writer.
+/// This is the bootstrap fallback used when the configured log file or its rotated
+/// set cannot be initialized, so it intentionally bypasses the background writer.
 pub fn logging_failed_to_stderr() -> io::Result<()> {
     write_failure_to_stderr(ERROR_CODE_LOGGING, MESSAGE_LOGGING)
 }

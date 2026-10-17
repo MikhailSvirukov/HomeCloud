@@ -167,10 +167,12 @@ The configuration names the log file, so the binary starts in two phases:
 1. It loads and validates the configuration. If that fails, the log path is
    unknown, so it writes exactly one `startup` failure record (error code
    `configuration_error`) directly to stderr and exits with the failure code.
-2. It opens `[logging] path` in append mode and installs the JSON Lines
-   subscriber. If the file cannot be opened or a global subscriber is already
-   installed, it writes exactly one `startup` failure record (error code
-   `logging_error`) directly to stderr and exits with the failure code.
+2. It opens `[logging] path` in append mode, applies the rotation and
+   retention limits to the existing files, and installs the JSON Lines
+   subscriber. If the file or its rotated set cannot be initialized, or a
+   global subscriber is already installed, it writes exactly one `startup`
+   failure record (error code `logging_error`) directly to stderr and exits
+   with the failure code.
    Otherwise the key identity is loaded; an identity failure is written through
    the installed writer to the configured file.
 
