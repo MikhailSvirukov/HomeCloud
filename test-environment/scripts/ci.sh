@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Area-local quality gates for the test-environment Rust workspace.
 #
-# Runs the gates required by the repository-root AGENTS.md. Integration tests
-# that need Docker are not started here; they run separately through the
-# Testcontainers-based scenarios.
+# Runs the gates required by the repository-root AGENTS.md. Daemon-free tests
+# run first; ignored Docker-backed integration tests run in a second pass and
+# require a Docker daemon in the CI environment.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,3 +13,4 @@ cd "${workspace_root}"
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
+cargo test --workspace --all-features --locked -- --ignored

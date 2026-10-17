@@ -81,4 +81,10 @@ pub enum HarnessError {
     /// A command could not be started.
     #[error("could not start {program}")]
     CommandNotStarted { program: String },
+    /// A Docker API operation failed.
+    #[error("docker {operation} failed: {message}")]
+    DockerApiFailed {
+        operation: &'static str,
+        message: String,
+    },
 }

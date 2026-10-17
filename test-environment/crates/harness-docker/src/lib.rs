@@ -5,12 +5,14 @@
 //! daemon-free tests. The runtime seam abstracts container lifecycle operations;
 //! [`FakeClusterRuntime`] is the in-memory implementation used by tests.
 
+mod bollard_runtime;
 mod cli;
 mod command;
 mod plan;
 mod process;
 mod runtime;
 
+pub use bollard_runtime::BollardClusterRuntime;
 pub use cli::{CliClusterRuntime, CommandRunner, RecordingCommandRunner};
 pub use command::{
     Command, container_kill, container_name, container_remove, container_run, container_start,
