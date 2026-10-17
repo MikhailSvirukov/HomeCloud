@@ -109,6 +109,40 @@ The binary writes UTF-8 JSON Lines events to the file named by
 empty. The default level is `info`; set `RUST_LOG` to override it (for example
 `RUST_LOG=debug`). Lines are emitted without ANSI colours.
 
+The file rotates so it does not grow without bound. A rotation starts a new
+active file when appending the next record would exceed `max_file_size_bytes`,
+when the active file is older than `max_file_age_ms`, or when the writer opens
+an active file that already exceeds either limit. The previous active file is
+renamed in the same directory to `<file name>.<UTC epoch milliseconds of the
+segment start>` (for example `dedicated-server.log.1750000000000`); a numeric
+suffix such as `.1` is added when that name already exists, so rotation never
+overwrites a file. Within one process the timestamp is the maximum of the
+segment start and the previous rotation timestamp plus one, so names increase
+monotonically and a freed name is not reused. After a restart a timestamp can
+be reused; the numeric suffix then separates the generations. Cross-restart
+ordering is best effort when a reused timestamp and a previous-run file share a
+modification time, because the suffix does not record which run is newer.
+
+Rotated files are pruned oldest first when the writer opens, after every
+rotation, before a record that would push the total over `max_total_size_bytes`,
+and at least once every `min(retention_ms, max_file_age_ms)` of writing. A
+rotated file is deleted when its modification time is older than `retention_ms`,
+or when the total size of the active file plus all rotated files must shrink so
+the incoming record fits `max_total_size_bytes`; pruning stops once no file is
+expired and the incoming record fits. Files are ordered by modification time,
+then by the embedded timestamp, then by the numeric suffix, so equal timestamps
+still prune deterministically. Only files whose names match the rotated-name
+pattern of the configured path are removed, the active file is never removed,
+and unrelated files in the directory are left untouched.
+
+A record larger than `max_file_size_bytes` is written whole to an empty active
+file so a JSON line is never split. A record larger than `max_total_size_bytes`
+is also written whole; either case temporarily leaves the file or the whole set
+above its configured limit instead of truncating the record. Reserve free space
+beyond `max_total_size_bytes` in the log directory for the active file and for
+filesystem overhead; the example values stay well below the 1 GiB tmpfs used by
+the runtime setup.
+
 Each event carries:
 
 - `timestamp`: UTC time in RFC 3339 format with milliseconds.
@@ -133,10 +167,12 @@ The configuration names the log file, so the binary starts in two phases:
 1. It loads and validates the configuration. If that fails, the log path is
    unknown, so it writes exactly one `startup` failure record (error code
    `configuration_error`) directly to stderr and exits with the failure code.
-2. It opens `[logging] path` in append mode and installs the JSON Lines
-   subscriber. If the file cannot be opened or a global subscriber is already
-   installed, it writes exactly one `startup` failure record (error code
-   `logging_error`) directly to stderr and exits with the failure code.
+2. It opens `[logging] path` in append mode, applies the rotation and
+   retention limits to the existing files, and installs the JSON Lines
+   subscriber. If the file or its rotated set cannot be initialized, or a
+   global subscriber is already installed, it writes exactly one `startup`
+   failure record (error code `logging_error`) directly to stderr and exits
+   with the failure code.
    Otherwise the key identity is loaded; an identity failure is written through
    the installed writer to the configured file.
 
@@ -165,16 +201,23 @@ for the whole process and flushes buffered records when dropped.
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
   (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
-- `logging`: `path`, the structured JSON Lines log file. It is required and has
-  no default; the process opens it in append mode. An unopenable path is a
-  startup failure.
+- `logging`: `path`, the structured JSON Lines log file, and four non-zero
+  limits (`NonZeroU64`): `retention_ms` (how long a rotated file is kept),
+  `max_file_age_ms` (maximum age of the active file before rotation),
+  `max_file_size_bytes` (maximum size of one file), and
+  `max_total_size_bytes` (maximum size of the active file plus every rotated
+  file). It is required and has no default; the process opens it in append mode.
+  `max_total_size_bytes` must be at least `max_file_size_bytes`, otherwise
+  loading fails. A path that cannot be initialized is a startup failure. Leave
+  free space beyond `max_total_size_bytes` in the log directory for the active
+  file and filesystem overhead.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
   keys are 16- and 32-byte values written in hexadecimal.
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
 
-Example, matching `tests/fixtures/valid_server.toml`:
+Example:
 
 ```toml
 listen = "10.0.0.1:7000"
@@ -198,6 +241,10 @@ salt_length_bytes = 16
 
 [logging]
 path = "/var/log/homecloud/dedicated-server.log"
+retention_ms = 604800000
+max_file_age_ms = 86400000
+max_file_size_bytes = 52428800
+max_total_size_bytes = 536870912
 
 [[cluster.nodes]]
 sender_id = "00000000000000000000000000000001"

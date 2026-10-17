@@ -24,6 +24,10 @@ salt_length_bytes = 16
 
 [logging]
 path = "/var/log/homecloud/dedicated-server.log"
+retention_ms = 604800000
+max_file_age_ms = 86400000
+max_file_size_bytes = 52428800
+max_total_size_bytes = 536870912
 
 [[cluster.nodes]]
 sender_id = "00000000000000000000000000000001"

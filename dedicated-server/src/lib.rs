@@ -8,6 +8,7 @@ mod clock;
 mod config;
 mod heartbeat;
 mod identity;
+mod log_file;
 mod logging;
 mod password;
 mod registration;
@@ -16,7 +17,7 @@ mod topology;
 
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
-    ConfigError, NodeField, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV,
+    ConfigError, LoggingConfig, NodeField, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV,
     DEFAULT_CONFIG_FILE_NAME,
 };
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};

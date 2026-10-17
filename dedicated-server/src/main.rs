@@ -33,7 +33,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let _guard = match init_logging(config.logging_path()) {
+    let _guard = match init_logging(config.logging()) {
         Ok(guard) => guard,
         Err(_) => {
             let _ = logging_failed_to_stderr();

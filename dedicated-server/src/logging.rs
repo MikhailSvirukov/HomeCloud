@@ -13,11 +13,11 @@
 //! or other user metadata.
 
 use std::fmt;
-use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 use thiserror::Error;
@@ -32,6 +32,8 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
+use crate::config::LoggingConfig;
+use crate::log_file::{LogLimits, RotatingFile};
 use crate::report::StartupError;
 
 /// Component name written to every event.
@@ -209,9 +211,9 @@ where
             message: visitor.message,
         };
 
-        let line = record.to_json_line().map_err(|_| fmt::Error)?;
-        writer.write_str(&line)?;
-        writer.write_char('\n')
+        let mut line = record.to_json_line().map_err(|_| fmt::Error)?;
+        line.push('\n');
+        writer.write_str(&line)
     }
 }
 
@@ -300,13 +302,13 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 }
 
-/// Errors produced while opening the structured log writer.
+/// Errors produced while initializing the structured log writer.
 #[derive(Debug, Error)]
 pub enum LogError {
-    /// The configured log file could not be opened for appending.
-    #[error("failed to open log file '{path}': {source}")]
-    Open {
-        /// Configured log path that could not be opened.
+    /// The configured log file or its rotated set could not be initialized.
+    #[error("failed to initialize log file '{path}': {source}")]
+    Initialize {
+        /// Configured log path that could not be initialized.
         path: PathBuf,
         /// Underlying I/O failure.
         #[source]
@@ -333,27 +335,26 @@ impl LogGuard {
     }
 }
 
-/// Open `path` in append mode and install the JSON Lines subscriber writing to it.
+/// Open the configured active log file and install the JSON Lines subscriber
+/// writing to it.
 ///
 /// Records are handed to a bounded, lossy, non-blocking writer, so emitting one
 /// does not perform a file operation on the calling thread. Dropping the
 /// returned guard flushes buffered records.
-pub fn init(path: &Path) -> Result<LogGuard, LogError> {
+pub fn init(logging: &LoggingConfig) -> Result<LogGuard, LogError> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
 
-    init_with_filter(path, filter)
+    init_with_filter(logging, filter)
 }
 
-fn init_with_filter(path: &Path, filter: EnvFilter) -> Result<LogGuard, LogError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|source| LogError::Open {
-            path: path.to_path_buf(),
+fn init_with_filter(logging: &LoggingConfig, filter: EnvFilter) -> Result<LogGuard, LogError> {
+    let file = RotatingFile::new(&logging.path, log_limits(logging)).map_err(|source| {
+        LogError::Initialize {
+            path: logging.path.clone(),
             source,
-        })?;
+        }
+    })?;
 
     let errors = Arc::new(AtomicU64::new(0));
     let (non_blocking, worker) = NonBlockingBuilder::default()
@@ -375,6 +376,15 @@ fn init_with_filter(path: &Path, filter: EnvFilter) -> Result<LogGuard, LogError
         dropped,
         errors,
     })
+}
+
+fn log_limits(logging: &LoggingConfig) -> LogLimits {
+    LogLimits {
+        retention: Duration::from_millis(logging.retention_ms.get()),
+        max_file_age: Duration::from_millis(logging.max_file_age_ms.get()),
+        max_file_size: logging.max_file_size_bytes.get(),
+        max_total_size: logging.max_total_size_bytes.get(),
+    }
 }
 
 /// Log that the server started with its one-line summary.
@@ -431,8 +441,8 @@ pub fn startup_failed_to_stderr(error: &StartupError) -> io::Result<()> {
 
 /// Write the log writer initialization failure record directly to stderr.
 ///
-/// This is the bootstrap fallback used when the configured log file cannot be
-/// opened, so it intentionally bypasses the background writer.
+/// This is the bootstrap fallback used when the configured log file or its rotated
+/// set cannot be initialized, so it intentionally bypasses the background writer.
 pub fn logging_failed_to_stderr() -> io::Result<()> {
     write_failure_to_stderr(ERROR_CODE_LOGGING, MESSAGE_LOGGING)
 }
@@ -507,13 +517,33 @@ where
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::path::PathBuf;
+    use std::num::NonZeroU64;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 
     use tracing_subscriber::fmt::MakeWriter;
 
     use super::*;
+
+    const TEST_RETENTION_MS: u64 = 604_800_000;
+    const TEST_MAX_FILE_AGE_MS: u64 = 86_400_000;
+    const TEST_MAX_FILE_SIZE_BYTES: u64 = 104_857_600;
+    const TEST_MAX_TOTAL_SIZE_BYTES: u64 = 1_073_741_824;
+
+    fn logging_config(path: &Path) -> LoggingConfig {
+        LoggingConfig {
+            path: path.to_path_buf(),
+            retention_ms: nonzero(TEST_RETENTION_MS),
+            max_file_age_ms: nonzero(TEST_MAX_FILE_AGE_MS),
+            max_file_size_bytes: nonzero(TEST_MAX_FILE_SIZE_BYTES),
+            max_total_size_bytes: nonzero(TEST_MAX_TOTAL_SIZE_BYTES),
+        }
+    }
+
+    fn nonzero(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).expect("test limits must be non-zero")
+    }
 
     /// Owns a per-test temporary directory and removes it on drop.
     struct TempDir {
@@ -710,10 +740,11 @@ mod tests {
         let path = dir.file("dedicated-server.log");
 
         let filter = EnvFilter::new(DEFAULT_LOG_FILTER);
-        let guard = init_with_filter(&path, filter.clone()).expect("the log file must open");
+        let guard = init_with_filter(&logging_config(&path), filter.clone())
+            .expect("the log file must open");
         startup("dedicated-server listening on 10.0.0.1:7000");
         shutdown();
-        let second = init_with_filter(&dir.file("second.log"), filter)
+        let second = init_with_filter(&logging_config(&dir.file("second.log")), filter)
             .expect_err("a second subscriber must fail");
         assert!(matches!(second, LogError::SubscriberAlreadyInstalled));
         drop(guard);
@@ -731,15 +762,15 @@ mod tests {
     }
 
     #[test]
-    fn init_reports_an_unopenable_path_as_a_typed_error() {
+    fn init_reports_an_uninitializable_path_as_a_typed_error() {
         let dir = TempDir::new("unopenable");
         let path = dir.file("missing").join("dedicated-server.log");
 
-        let error = init(&path).expect_err("a missing parent directory must fail");
+        let error = init(&logging_config(&path)).expect_err("a missing parent directory must fail");
 
         assert!(matches!(
             error,
-            LogError::Open {
+            LogError::Initialize {
                 path: error_path,
                 ..
             } if error_path == path
