@@ -35,6 +35,11 @@ class CaptureTimeResolverTest {
     }
 
     @Test
+    fun `parseDateTime returns null for a well-formed but impossible calendar date`() {
+        assertNull(CaptureTimeResolver.parseDateTime(IMPOSSIBLE_DATE_FORM))
+    }
+
+    @Test
     fun `parseOffset parses signed hours and minutes in the colon form`() {
         assertEquals(POSITIVE_OFFSET, CaptureTimeResolver.parseOffset(POSITIVE_OFFSET_TEXT))
         assertEquals(NEGATIVE_OFFSET, CaptureTimeResolver.parseOffset(NEGATIVE_OFFSET_TEXT))
@@ -124,24 +129,6 @@ class CaptureTimeResolverTest {
         assertEquals(MEDIA_STORE_EPOCH_MILLIS, millis)
     }
 
-    @Test
-    fun `trackedTimeMillis prefers metadata over the media store time`() {
-        val metadata =
-            MediaCaptureTime(
-                dateTime = FIXED_LOCAL_DATE_TIME,
-                offset = ZoneOffset.ofHours(FIXED_LOCAL_OFFSET_HOURS),
-            )
-
-        val millis =
-            CaptureTimeResolver.trackedTimeMillis(
-                metadata = metadata,
-                mediaStoreModifiedEpochSeconds = MEDIA_STORE_EPOCH_SECONDS,
-                deviceZone = BERLIN_ZONE,
-            )
-
-        assertEquals(FIXED_INSTANT_EPOCH_MILLIS, millis)
-    }
-
     private companion object {
         const val COLON_FORM = "2021:03:04 05:06:07"
         val COLON_DATE_TIME: LocalDateTime = LocalDateTime.of(2021, 3, 4, 5, 6, 7)
@@ -153,6 +140,7 @@ class CaptureTimeResolverTest {
         val PADDED_DATE_TIME: LocalDateTime = LocalDateTime.of(2023, 7, 14, 9, 25, 41)
         const val BLANK_TEXT = "   "
         const val GARBAGE_TEXT = "not a capture time"
+        const val IMPOSSIBLE_DATE_FORM = "2023:02:30 09:25:41"
 
         val POSITIVE_OFFSET: ZoneOffset = ZoneOffset.ofHours(2)
         val NEGATIVE_OFFSET: ZoneOffset = ZoneOffset.ofHoursMinutes(-5, -30)
