@@ -13,22 +13,22 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | Section | Content | Requirement IDs and revisions |
 |---|---|---|
 | 1 | Scope and precedence | none (document metadata) |
-| 2 | Canonical encoding | `INT-NET-005 / 1`, `INT-NET-006 / 2`, `INT-NET-047 / 2`, `INT-NET-049 / 1`; field rules from `INT-NET-050 / 4`, `INT-NET-054 / 1`, `INT-NET-063 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5` |
+| 2 | Canonical encoding | `INT-NET-005 / 1`, `INT-NET-006 / 2`, `INT-NET-011 / 1`, `INT-NET-047 / 2`, `INT-NET-049 / 1`; field rules from `INT-NET-050 / 4`, `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-063 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `FR-DED-027 / 1` |
 | 3 | Protocol version negotiation | `INT-NET-079 / 1`; `INT-NET-007 / 1` and `INT-NET-043 / 1` as the rejection rules named by `INT-NET-079` |
 | 4 | External frame header | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-050 / 4`; `INT-NET-009 / 1` and `INT-NET-011 / 1` for `upload_id`; `CFG-CL-031 / 1` for the label limit |
-| 5 | Client logical header | `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-051 / 3`, `INT-NET-060 / 1`; `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-057 / 1` for the worked topology request |
-| 6 | Result envelope | `INT-NET-061 / 1`, `INT-NET-062 / 1`, `INT-NET-063 / 1`, `INT-NET-064 / 1`, `INT-NET-069 / 1` |
+| 5 | Client logical header | `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-051 / 3`, `INT-NET-060 / 1`; `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-057 / 1` for the worked topology request; `FR-DED-027 / 1` and `CFG-CL-029 / 1` for the login and password |
+| 6 | Result envelope | `INT-NET-061 / 1`, `INT-NET-062 / 1`, `INT-NET-063 / 1`, `INT-NET-064 / 1`, `INT-NET-069 / 1`, `INT-NET-070 / 5` |
 | 7 | Topology answer | `INT-NET-070 / 5`; `CFG-CL-031 / 1` for the label limit |
 | 8 | Inter-server envelope and message types | `INT-NET-051 / 3`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-075 / 1`; `INT-NET-074 / 2` for RPC OpenRaft; `FR-TIME-005 / 3` for the offset source |
-| 9 | Not fixed by the SRS | `INT-NET-079 / 1`, `CFG-CL-031 / 1`; `OPEN-003`, `OPEN-007` (open decisions, not requirements) |
+| 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-060 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `CFG-CL-031 / 1`; `OPEN-003`, `OPEN-007` (open decisions, not requirements) |
 
 ## 2. Canonical encoding
 
 - **Deterministic CBOR.** The external frame header is serialized as deterministic CBOR according to RFC 8949 (`INT-NET-005 / 1`).
-- **Arrays, not maps.** The external and logical headers are CBOR arrays with a fixed positional order defined by the schema of the protocol version. Headers are not encoded as CBOR maps (`INT-NET-047 / 2`). The arrays defined by this contract are definite-length arrays, consistent with deterministic CBOR (`INT-NET-005 / 1`) and the fixed positional schemas of `INT-NET-047 / 2`; indefinite-length arrays are not used.
-- **Minimal integers.** Every unsigned integer in the structures defined by this contract is encoded in minimal-length form, using the shortest form of its CBOR major type. The cited requirements state this explicitly for `protocol_version` and `frame_number` (`INT-NET-006 / 2`, `INT-NET-050 / 4`), the result code (`INT-NET-063 / 1`), `message_type` (`INT-NET-072 / 2`), and every number in the heartbeat arguments (`INT-NET-073 / 5`).
+- **Arrays, not maps.** The external and logical headers are CBOR arrays with a fixed positional order defined by the schema of the protocol version; they are not CBOR maps (`INT-NET-047 / 2`). The decrypted inter-server logical header is a positional CBOR array of exactly two elements, `[message_type, args]` (`INT-NET-072 / 2`).
+- **Minimal integers.** The minimal deterministic representation is required only for the integers named by the cited requirements: `protocol_version` and `frame_number` (`INT-NET-006 / 2`, `INT-NET-050 / 4`), the operation type (`INT-NET-055 / 2`), the result code (`INT-NET-063 / 1`), `message_type` (`INT-NET-072 / 2`), and every number in the heartbeat arguments (`INT-NET-073 / 5`). This contract does not extend that rule to other integers.
 - **Optional positions.** An optional element of a header array is encoded as CBOR `null` in its own position. The array contains every position defined by the schema of the protocol version; positions are not omitted or shifted (`INT-NET-049 / 1`).
-- **Text.** Text fields named in this contract are UTF-8 CBOR text strings. Where a cited requirement forbids Unicode normalization, the text is carried exactly as specified: `responder_label` (`INT-NET-050 / 4`), the topology `label` (`INT-NET-070 / 5`), and `login` and `password` (`INT-NET-054 / 1`). `host` is a text string restricted to the canonical IP literal forms in §7 (`INT-NET-070 / 5`).
+- **Text.** Text fields named in this contract are CBOR text strings. No Unicode normalization is applied to `responder_label` (`INT-NET-050 / 4`), the topology `label` (`INT-NET-070 / 5`), or `password` (`INT-NET-054 / 1`). `login` is a CBOR text string restricted to `[A-Za-z0-9._-]` by `FR-DED-027 / 1` and must satisfy that established ASCII set (`INT-NET-054 / 1`). `host` is restricted to the canonical IP literal forms in §7 (`INT-NET-070 / 5`).
 - **Byte-string lengths.** The length of a byte string is fixed only where a cited requirement fixes it:
 
 **Table 2 — Fixed byte-string lengths**
@@ -86,15 +86,15 @@ The final position is `null` for an ordinary message because `bootstrap_signing_
 
 ## 5. Client logical header
 
-The logical header of a client request authenticated by an account begins with four elements in this order: operation type, login, password, and the operation-arguments array (`INT-NET-051 / 3`). The client logical schema is independent of the external-header schema (`INT-NET-048 / 2`), is a CBOR array rather than a map (`INT-NET-047 / 2`), and contains every schema position, using `null` for an optional element (`INT-NET-049 / 1`).
+The logical header of a client request authenticated by an account begins with four elements in this order: operation type, login, password, and the operation-arguments array (`INT-NET-051 / 3`). The client logical schema is independent of the external-header schema (`INT-NET-048 / 2`), is a CBOR array rather than a map (`INT-NET-047 / 2`), and contains every schema position, using `null` for an optional element (`INT-NET-049 / 1`). The operation type is encoded as CBOR `uint32` in the minimal deterministic representation (`INT-NET-055 / 2`).
 
 **Table 4 — Leading client logical header positions**
 
 | Position | Element | CBOR type | Rule | Requirement |
 |---|---|---|---|---|
 | 1 | operation type | `uint32`, minimal deterministic | unknown operation codes are rejected; operation-code values are fixed by the v1 operation table | `INT-NET-051 / 3`, `INT-NET-055 / 2` |
-| 2 | login | text string | must satisfy the established ASCII set | `INT-NET-051 / 3`, `INT-NET-054 / 1` |
-| 3 | password | text string | the UTF-8 bytes after decoding exactly match the entered string, without trimming or Unicode normalization | `INT-NET-051 / 3`, `INT-NET-054 / 1` |
+| 2 | login | text string | must satisfy the established ASCII set `[A-Za-z0-9._-]`; minimum and maximum length configured by `CFG-CL-029 / 1` | `INT-NET-051 / 3`, `INT-NET-054 / 1`, `FR-DED-027 / 1`, `CFG-CL-029 / 1` |
+| 3 | password | text string | the UTF-8 bytes after decoding exactly match the entered string, without trimming or Unicode normalization; minimum and maximum length configured by `CFG-CL-029 / 1` and measured in UTF-8 bytes | `INT-NET-051 / 3`, `INT-NET-054 / 1`, `CFG-CL-029 / 1` |
 | 4 | operation arguments | CBOR array | schema determined uniquely by the operation type and validated strictly | `INT-NET-051 / 3` |
 
 The v1 operation-code table makes `0` invalid and assigns `1` to account/installation registration, `2` to topology retrieval, `3` to a catalog-page request, and `4` to media upload (`INT-NET-057 / 1`).
@@ -180,7 +180,7 @@ and the nodes follow the order of the static manifest (`INT-NET-070 / 5`). The a
 |---|---|---|---|---|---|
 | 1 | `sender_id` | byte string | 16 bytes | the node's UUID from the static manifest | `INT-NET-070 / 5` |
 | 2 | `label` | UTF-8 text string | at most the configured limit in bytes (`CFG-CL-031 / 1`) | no Unicode normalization | `INT-NET-070 / 5` |
-| 3 | `host` | text string | not fixed by `INT-NET-070` | canonical IPv4 or IPv6 literal; DNS names and IPv6 zone identifiers are not permitted in v1 | `INT-NET-070 / 5` |
+| 3 | `host` | text string | maximum length not fixed by `INT-NET-070 / 5` | canonical IPv4 or IPv6 literal; DNS names and IPv6 zone identifiers are not permitted in v1 | `INT-NET-070 / 5` |
 | 4 | `port` | unsigned integer | `1..=65535` | none | `INT-NET-070 / 5` |
 | 5 | `x25519_public_key` | byte string | 32 bytes | open X25519 key of the node | `INT-NET-070 / 5` |
 | 6 | `ed25519_public_key` | byte string | 32 bytes | open Ed25519 key of the node | `INT-NET-070 / 5` |
@@ -191,7 +191,7 @@ and the nodes follow the order of the static manifest (`INT-NET-070 / 5`). The a
 
 ## 8. Inter-server envelope and message types
 
-The decrypted logical header of an inter-server message is a positional CBOR array of exactly two elements, `[message_type, args]` (`INT-NET-072 / 2`). `message_type` is a CBOR `uint32` in the minimal deterministic representation (`INT-NET-072 / 2`). The composition, order, types and permitted values of `args` are fixed separately for each message type, and the receiver rejects an unknown code, an incorrect array length, or an incorrect argument type or value (`INT-NET-072 / 2`). The envelope does not carry the client `login` and `password` fields (`INT-NET-051 / 3`).
+The decrypted logical header of an inter-server message is a positional CBOR array of exactly two elements, `[message_type, args]` (`INT-NET-072 / 2`). `message_type` is a CBOR `uint32` in the minimal deterministic representation (`INT-NET-072 / 2`); the code values themselves are fixed by `INT-NET-075 / 1`. The composition, order, types and permitted values of `args` are fixed separately for each message type, and the receiver rejects an unknown code, an incorrect array length, or an incorrect argument type or value (`INT-NET-072 / 2`). The envelope does not carry the client `login` and `password` fields (`INT-NET-051 / 3`).
 
 **Table 8 — Inter-server message types**
 
@@ -234,14 +234,16 @@ The response returns the received `sequence_number` without modification (`INT-N
 
 `message_type = 3` denotes RPC OpenRaft (`INT-NET-075 / 1`). Each RPC between storage nodes is a separate inter-server message with arguments `[rpc_bytes]`, where `rpc_bytes` is a CBOR byte string containing the serialized RPC message produced by the OpenRaft transport adapter (`INT-NET-074 / 2`). The serialization format of `rpc_bytes` is the subject of `OPEN-007` (`INT-NET-074 / 2`); this contract fixes only the byte-string wrapper.
 
-## 9. Not fixed by the SRS
+## 9. Elements left unfixed by the SRS
 
-`OPEN-003` is an open decision, not a requirement. It records that the remaining positions, types, mandatory-ness and maximum sizes of the external and logical header CBOR arrays for each explicitly supported version are not fixed. It also records that the external-header order and primary-registration rules are fixed by `INT-NET-006`, `INT-NET-008`, `INT-NET-021 / 3` and `INT-NET-050`; the inter-server shell and `message_type` are fixed by `INT-NET-072`; the heartbeat schemas are fixed by `INT-NET-073`; the heartbeat and RPC OpenRaft codes are fixed by `INT-NET-073`–`INT-NET-075`; the OpenRaft serialization format is considered under `OPEN-007`; and the schemas of the remaining inter-server message types are not fixed.
+`OPEN-003` is an open decision, not a requirement. It records that the remaining positions, types, mandatory-ness and maximum sizes of the external and logical header CBOR arrays for each explicitly supported version are not fixed. It also records that the external-header order and primary-registration rules are fixed by `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3` and `INT-NET-050 / 4`; the inter-server shell `[message_type, args]` and the CBOR type of `message_type` are fixed by `INT-NET-072 / 2`; the heartbeat schemas are fixed by `INT-NET-073 / 5`; the RPC OpenRaft wrapper is fixed by `INT-NET-074 / 2`; the message-type code values, including the heartbeat and RPC OpenRaft codes, are fixed by `INT-NET-075 / 1`; the OpenRaft serialization format is considered under `OPEN-007`; and the schemas of the remaining inter-server message types are not fixed.
 
-Consequently, the following are outside this contract:
+The following elements are left unfixed by the cited requirements, so this contract does not define them:
 
 - **External header positions, types and limits.** `INT-NET-050 / 4` fixes the order of the seven named positions restated in §4. `OPEN-003` remains open for any element position, type, mandatory rule or maximum size not fixed by the cited requirements, and this contract does not supply it. The label maximum is the configured limit of `CFG-CL-031 / 1`; its numeric value is not fixed here.
 - **Client logical header positions, types and limits.** `INT-NET-051 / 3` fixes the four leading positions restated in §5. The remaining positions, types, mandatory rules and maximum sizes of the client logical array are not fixed by the cited requirements (`OPEN-003`), and this contract does not assert that the four leading positions complete the array.
+- **Topology `host` maximum length.** `INT-NET-070 / 5` fixes the form of `host` as a canonical IPv4 or IPv6 literal, with DNS names and IPv6 zone identifiers not permitted in v1; that requirement does not fix a maximum length for `host`, and this contract supplies none.
+- **Zero `previous_clock_offset_ms`.** `INT-NET-073 / 5` fixes `int64` for a non-zero `previous_clock_offset_ms` and CBOR `null` before the first calculated estimate. It does not state how a computed offset of exactly zero is encoded; this contract does not choose an encoding for that case.
 - **Client operations other than topology.** The operation-arguments schema is determined by the operation type (`INT-NET-051 / 3`). This contract restates only the topology request's empty array (`INT-NET-060 / 1`); the argument schemas of the other client operations are defined by requirements outside the cited set and are not restated here.
 - **Inter-server message types other than 1, 2 and 3.** Only the heartbeat request, the heartbeat response and RPC OpenRaft have a schema stated in this contract. The schemas of the remaining inter-server message types are not fixed (`OPEN-003`).
 - **RPC serialization.** `rpc_bytes` is opaque at this layer. Its serialization format is not fixed by this contract (`OPEN-007`, referenced by `INT-NET-074 / 2`).
