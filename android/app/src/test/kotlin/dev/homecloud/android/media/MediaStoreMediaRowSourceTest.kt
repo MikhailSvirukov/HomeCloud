@@ -1,12 +1,17 @@
 package dev.homecloud.android.media
 
+import android.content.ContentProvider
 import android.content.ContentResolver
+import android.content.ContentValues
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.provider.MediaStore
 import dev.homecloud.android.testsupport.MediaTestData
 import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,8 +59,15 @@ class MediaStoreMediaRowSourceTest {
     fun `readAll maps each column to the raw entry and normalizes null text columns`() {
         installProvider(
             listOf(
-                arrayOf(ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE),
-                arrayOf(NULL_TEXT_ID, null, NULL_TEXT_SIZE_BYTES, NULL_TEXT_DATE_MODIFIED, null),
+                arrayOf(
+                    ID,
+                    DISPLAY_NAME,
+                    SIZE_BYTES,
+                    DATE_MODIFIED_EPOCH_SECONDS,
+                    MediaTestData.IMAGE_MIME_TYPE,
+                    MediaTestData.DATE_TAKEN_EPOCH_MILLIS,
+                ),
+                arrayOf(NULL_TEXT_ID, null, NULL_TEXT_SIZE_BYTES, NULL_TEXT_DATE_MODIFIED, null, null),
             ),
         )
 
@@ -67,6 +79,7 @@ class MediaStoreMediaRowSourceTest {
         assertEquals(SIZE_BYTES, entries[0].sizeBytes)
         assertEquals(DATE_MODIFIED_EPOCH_SECONDS, entries[0].dateModifiedEpochSeconds)
         assertEquals(MediaTestData.IMAGE_MIME_TYPE, entries[0].mimeType)
+        assertEquals(MediaTestData.DATE_TAKEN_EPOCH_MILLIS, entries[0].dateTakenEpochMillis)
         assertEquals(NULL_TEXT_ID, entries[1].id)
         assertEquals(EMPTY_TEXT, entries[1].displayName)
         assertEquals(NULL_TEXT_SIZE_BYTES, entries[1].sizeBytes)
@@ -75,10 +88,49 @@ class MediaStoreMediaRowSourceTest {
     }
 
     @Test
+    fun `readAll maps a null taken-time cell to a null taken time`() {
+        installProvider(
+            listOf(
+                arrayOf(ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE, null),
+            ),
+        )
+
+        val entry = MediaStoreMediaRowSource(resolver()).readAll().single()
+
+        assertNull(entry.dateTakenEpochMillis)
+    }
+
+    @Test
+    fun `readAll maps an absent taken-time column to a null taken time`() {
+        installFixedColumnsProvider(
+            columns =
+                arrayOf(
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.DATE_MODIFIED,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                ),
+            row = arrayOf(ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE),
+        )
+
+        val entry = MediaStoreMediaRowSource(resolver()).readAll().single()
+
+        assertNull(entry.dateTakenEpochMillis)
+    }
+
+    @Test
     fun `readAll builds each entry uri from the collection uri and the row id`() {
         installProvider(
             listOf(
-                arrayOf(URI_ROW_ID, DISPLAY_NAME, SIZE_BYTES, DATE_MODIFIED_EPOCH_SECONDS, MediaTestData.IMAGE_MIME_TYPE),
+                arrayOf(
+                    URI_ROW_ID,
+                    DISPLAY_NAME,
+                    SIZE_BYTES,
+                    DATE_MODIFIED_EPOCH_SECONDS,
+                    MediaTestData.IMAGE_MIME_TYPE,
+                    MediaTestData.DATE_TAKEN_EPOCH_MILLIS,
+                ),
             ),
         )
 
@@ -139,6 +191,24 @@ class MediaStoreMediaRowSourceTest {
         return installed
     }
 
+    private fun installFixedColumnsProvider(
+        columns: Array<String>,
+        row: Array<Any?>,
+    ): FixedColumnsMediaContentProvider {
+        val authority =
+            requireNotNull(collectionUri().authority) {
+                "media collection uri must carry an authority"
+            }
+        val installed =
+            Robolectric
+                .buildContentProvider(FixedColumnsMediaContentProvider::class.java)
+                .create(authority)
+                .get()
+        installed.columns = columns
+        installed.row = row
+        return installed
+    }
+
     private fun resolver(): ContentResolver = RuntimeEnvironment.getApplication().contentResolver
 
     private fun collectionUri(): Uri = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -155,4 +225,47 @@ class MediaStoreMediaRowSourceTest {
         const val NULL_TEXT_DATE_MODIFIED = 1_700_000_500L
         const val EMPTY_TEXT = ""
     }
+}
+
+/**
+ * A [ContentProvider] that serves one row through a cursor with fixed columns, ignoring the query
+ * projection, so a test can model a media store that does not expose a column the source reads
+ * defensively.
+ */
+internal class FixedColumnsMediaContentProvider : ContentProvider() {
+    var columns: Array<String> = emptyArray()
+    var row: Array<Any?> = emptyArray()
+
+    override fun onCreate(): Boolean = true
+
+    override fun query(
+        uri: Uri,
+        projection: Array<String>?,
+        selection: String?,
+        selectionArgs: Array<String>?,
+        sortOrder: String?,
+    ): Cursor =
+        MatrixCursor(columns).apply {
+            addRow(row)
+        }
+
+    override fun getType(uri: Uri): String? = null
+
+    override fun insert(
+        uri: Uri,
+        values: ContentValues?,
+    ): Uri? = null
+
+    override fun delete(
+        uri: Uri,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): Int = 0
+
+    override fun update(
+        uri: Uri,
+        values: ContentValues?,
+        selection: String?,
+        selectionArgs: Array<String>?,
+    ): Int = 0
 }

@@ -35,7 +35,7 @@ internal class MediaStoreVersionScanner(
 
     private fun versionCandidate(item: MediaItem): MediaVersionCandidate {
         val contentSha256 = content.open(item.uri).use { stream -> MediaContentHasher.sha256Hex(stream) }
-        val metadataCaptureTime = metadataTime.captureTime(item.uri, mimeTypeOf(item.kind))
+        val metadataCaptureTime = metadataTime.captureTime(item)
         val trackedTimeMillis =
             CaptureTimeResolver.trackedTimeMillis(
                 metadata = metadataCaptureTime,
@@ -49,22 +49,5 @@ internal class MediaStoreVersionScanner(
                 trackedTimeMillis = trackedTimeMillis,
             )
         return MediaVersionCandidate(item = item, identity = identity)
-    }
-
-    /**
-     * The media type family passed to the metadata source.
-     *
-     * A classified [MediaItem] keeps its kind but not its exact mime type, so the family wildcard
-     * is the most specific value available at this layer.
-     */
-    private fun mimeTypeOf(kind: MediaKind): String =
-        when (kind) {
-            MediaKind.IMAGE -> IMAGE_MIME_TYPE_FAMILY
-            MediaKind.VIDEO -> VIDEO_MIME_TYPE_FAMILY
-        }
-
-    private companion object {
-        const val IMAGE_MIME_TYPE_FAMILY = "image/*"
-        const val VIDEO_MIME_TYPE_FAMILY = "video/*"
     }
 }

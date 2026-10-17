@@ -36,6 +36,9 @@ internal object MediaTestData {
     /** The default last-modified instant of a raw row, in epoch seconds. */
     const val DATE_MODIFIED_EPOCH_SECONDS: Long = 1_700_000_000
 
+    /** A taken instant for rows that carry the media store's taken time, in epoch milliseconds. */
+    const val DATE_TAKEN_EPOCH_MILLIS: Long = 1_700_000_123_456
+
     /**
      * Builds a raw row whose uri and display name are derived from the given id,
      * so rows are distinguishable without repeating the literals in each test.
@@ -45,6 +48,7 @@ internal object MediaTestData {
         mimeType: String,
         sizeBytes: Long = SIZE_BYTES,
         dateModifiedEpochSeconds: Long = DATE_MODIFIED_EPOCH_SECONDS,
+        dateTakenEpochMillis: Long? = null,
     ): RawMediaEntry =
         RawMediaEntry(
             id = id,
@@ -53,6 +57,7 @@ internal object MediaTestData {
             sizeBytes = sizeBytes,
             dateModifiedEpochSeconds = dateModifiedEpochSeconds,
             mimeType = mimeType,
+            dateTakenEpochMillis = dateTakenEpochMillis,
         )
 
     /**
