@@ -7,6 +7,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use serde_json::Value;
+
 use dedicated_server::CONFIG_PATH_ENV;
 
 /// Binary under test, provided by Cargo for integration tests.
@@ -15,6 +17,12 @@ const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
 const RUST_LOG_ENV: &str = "RUST_LOG";
 /// Log level that keeps the startup summary and error events visible.
 const RUST_LOG_LEVEL: &str = "info";
+/// Error code the binary reports when the key identity cannot be loaded.
+const IDENTITY_ERROR_CODE: &str = "identity_error";
+/// Fixed message the binary reports when the key identity cannot be loaded.
+const IDENTITY_FAILURE_MESSAGE: &str = "key identity loading failed";
+/// Fixed message the binary reports when it stops.
+const SHUTDOWN_MESSAGE: &str = "server stopped";
 /// Label configured for the identity under test.
 const LABEL: &str = "dedicated-1";
 /// Distinct, non-empty key material for the two configured roles.
@@ -84,9 +92,6 @@ fn run_with_config(config: &Path) -> Output {
 }
 
 /// Run the binary without `RUST_LOG` so its built-in default filter applies.
-///
-/// Mirrors [`run_with_config`] instead of taking a flag so the two cases stay
-/// readable; `env_remove` also drops any ambient value from the test runner.
 fn run_with_config_without_log_filter(config: &Path) -> Output {
     Command::new(BINARY)
         .env(CONFIG_PATH_ENV, config)
@@ -106,6 +111,42 @@ fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+/// Parse every non-empty stderr line as one JSON event.
+fn stderr_events(output: &Output) -> Vec<Value> {
+    let stderr = stderr_of(output);
+    stderr
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_str(line).expect("stderr line must be a JSON object"))
+        .collect()
+}
+
+/// Assert that a timestamp is RFC 3339 in UTC with milliseconds.
+fn assert_utc_timestamp(event: &Value) {
+    let timestamp = event["timestamp"]
+        .as_str()
+        .expect("event must carry a timestamp string");
+    assert!(
+        timestamp.ends_with('Z'),
+        "timestamp must be UTC: {timestamp}"
+    );
+    assert_eq!(
+        timestamp.len(),
+        24,
+        "timestamp must carry milliseconds: {timestamp}"
+    );
+}
+
+/// Assert that an event is the shutdown record that ends every run.
+fn assert_shutdown_event(event: &Value) {
+    assert_eq!(event["event"], "shutdown");
+    assert_eq!(event["outcome"], "success");
+    assert_eq!(event["component"], "dedicated-server");
+    assert_eq!(event["level"], "INFO");
+    assert_utc_timestamp(event);
+    assert_eq!(event["message"], SHUTDOWN_MESSAGE);
+}
+
 #[test]
 fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
     let dir = TempDir::new("valid");
@@ -123,31 +164,42 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
         "stdout must stay empty, got: {:?}",
         stdout_of(&output)
     );
-    let summary = stderr_of(&output);
+    let events = stderr_events(&output);
+    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "success");
+    assert_eq!(event["component"], "dedicated-server");
+    assert_eq!(event["level"], "INFO");
+    assert_utc_timestamp(event);
+    assert_shutdown_event(&events[1]);
+    let summary = event["message"]
+        .as_str()
+        .expect("startup event must carry a message");
     assert!(
         summary.contains("listening on 10.0.0.1:7000"),
-        "stderr: {summary}"
+        "message: {summary}"
     );
     assert!(
         summary.contains(&format!("label={LABEL}")),
-        "stderr: {summary}"
+        "message: {summary}"
     );
-    assert!(summary.contains("nodes=2"), "stderr: {summary}");
-    assert!(summary.contains("interval_ms=1000"), "stderr: {summary}");
-    assert!(summary.contains("timeout_ms=500"), "stderr: {summary}");
-    assert!(summary.contains("miss_threshold=3"), "stderr: {summary}");
+    assert!(summary.contains("nodes=2"), "message: {summary}");
+    assert!(summary.contains("interval_ms=1000"), "message: {summary}");
+    assert!(summary.contains("timeout_ms=500"), "message: {summary}");
+    assert!(summary.contains("miss_threshold=3"), "message: {summary}");
     assert!(
         summary.contains(&format!("encryption_key_bytes={}", ENCRYPTION_KEY.len())),
-        "stderr: {summary}"
+        "message: {summary}"
     );
     assert!(
         summary.contains(&format!("signing_key_bytes={}", SIGNING_KEY.len())),
-        "stderr: {summary}"
+        "message: {summary}"
     );
 }
 
 #[test]
-fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
+fn missing_encryption_key_file_fails_with_the_identity_error_code_and_no_paths() {
     let dir = TempDir::new("missing-encryption");
     let missing = dir.file("absent-encryption.key");
     let signing = dir.file("signing.key");
@@ -162,14 +214,41 @@ fn missing_encryption_key_file_fails_and_names_key_and_config_paths() {
         "the process must exit with the failure code, stderr: {}",
         stderr_of(&output)
     );
-    let error = stderr_of(&output);
     assert!(
-        error.contains(&missing.display().to_string()),
-        "stderr must name the missing key: {error}"
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    let events = stderr_events(&output);
+    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "failure");
+    assert_eq!(event["level"], "ERROR");
+    assert_eq!(event["error_code"], IDENTITY_ERROR_CODE);
+    assert_eq!(event["component"], "dedicated-server");
+    assert_utc_timestamp(event);
+    assert_shutdown_event(&events[1]);
+    let message = event["message"]
+        .as_str()
+        .expect("startup failure event must carry a message");
+    assert_eq!(message, IDENTITY_FAILURE_MESSAGE);
+    let raw = stderr_of(&output);
+    assert!(
+        !raw.contains(&missing.display().to_string()),
+        "stderr must not name the key file: {raw}"
     );
     assert!(
-        error.contains(&config.display().to_string()),
-        "stderr must name the configuration: {error}"
+        !raw.contains(&config.display().to_string()),
+        "stderr must not name the configuration file: {raw}"
+    );
+    assert!(
+        !raw.contains("absent-encryption.key"),
+        "stderr must not contain a file name: {raw}"
+    );
+    assert!(
+        !raw.contains("dedicated-server.toml"),
+        "stderr must not contain a file name: {raw}"
     );
 }
 
@@ -190,13 +269,24 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
         "stdout must stay empty, got: {:?}",
         stdout_of(&output)
     );
-    let summary = stderr_of(&output);
+    let events = stderr_events(&output);
+    assert_eq!(events.len(), 2, "stderr: {}", stderr_of(&output));
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "success");
+    assert_eq!(event["component"], "dedicated-server");
+    assert_eq!(event["level"], "INFO");
+    assert_utc_timestamp(event);
+    assert_shutdown_event(&events[1]);
+    let summary = event["message"]
+        .as_str()
+        .expect("the default filter must still emit the startup summary");
     assert!(
         summary.contains("listening on 10.0.0.1:7000"),
-        "the default filter must still emit the startup summary: {summary}"
+        "message: {summary}"
     );
     assert!(
         summary.contains(&format!("label={LABEL}")),
-        "stderr: {summary}"
+        "message: {summary}"
     );
 }
