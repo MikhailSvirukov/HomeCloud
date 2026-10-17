@@ -28,8 +28,8 @@ internal data class MediaPermissionPrompt(
 /**
  * Decides what the media-read permission surface shows for the current API level, granted and
  * refused permissions and whether a request has already been answered. The mapping is delegated to
- * [MediaPermissionRequestPolicy], so a full grant wins, a pending refusal blocks, and a still-missing
- * permission that was not refused is requested.
+ * [MediaPermissionRequestPolicy], so a full grant wins, selected access offers another request,
+ * a pending refusal blocks, and a still-missing permission that was not refused is requested.
  *
  * The refused set only influences the outcome once a request has been answered. Before that Android
  * cannot tell a refusal from a permission that was never asked for, so the policy is asked with an
@@ -47,6 +47,12 @@ internal fun mediaPermissionPrompt(
             MediaPermissionPrompt(
                 messageResId = R.string.media_permission_granted_message,
                 action = MediaPermissionAction.NONE,
+            )
+
+        MediaPermissionStatus.LIMITED ->
+            MediaPermissionPrompt(
+                messageResId = R.string.media_permission_limited_message,
+                action = MediaPermissionAction.REQUEST,
             )
 
         MediaPermissionStatus.REQUESTABLE ->

@@ -18,7 +18,7 @@ class MediaPermissionPolicyTest {
 
     @Test
     fun `sdk 33 and above requires exactly the image and video read permissions`() {
-        MODERN_SDK_LEVELS.forEach { sdkInt ->
+        PER_TYPE_SDK_LEVELS.forEach { sdkInt ->
             assertEquals(
                 "sdk $sdkInt",
                 listOf(MediaPermissionPolicy.READ_MEDIA_IMAGES, MediaPermissionPolicy.READ_MEDIA_VIDEO),
@@ -28,9 +28,34 @@ class MediaPermissionPolicyTest {
     }
 
     @Test
-    fun `returned permissions never contain audio location contacts camera or storage write`() {
+    fun `requested permissions below api 34 equal the required read permissions`() {
+        BELOW_PARTIAL_ACCESS_SDK_LEVELS.forEach { sdkInt ->
+            assertEquals(
+                "sdk $sdkInt",
+                MediaPermissionPolicy.requiredPermissions(sdkInt),
+                MediaPermissionPolicy.requestedPermissions(sdkInt),
+            )
+        }
+    }
+
+    @Test
+    fun `requested permissions from api 34 add the visual user selected permission`() {
+        PARTIAL_ACCESS_SDK_LEVELS.forEach { sdkInt ->
+            assertEquals(
+                "sdk $sdkInt",
+                MediaPermissionPolicy.requiredPermissions(sdkInt) +
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                MediaPermissionPolicy.requestedPermissions(sdkInt),
+            )
+        }
+    }
+
+    @Test
+    fun `returned permissions never contain audio location contacts camera storage write or internet`() {
         ALL_SDK_LEVELS.forEach { sdkInt ->
-            val permissions = MediaPermissionPolicy.requiredPermissions(sdkInt)
+            val permissions =
+                MediaPermissionPolicy.requiredPermissions(sdkInt) +
+                    MediaPermissionPolicy.requestedPermissions(sdkInt)
             FORBIDDEN_PERMISSIONS.forEach { forbidden ->
                 assertFalse(
                     "sdk $sdkInt unexpectedly requested $forbidden",
@@ -42,8 +67,12 @@ class MediaPermissionPolicyTest {
 
     private companion object {
         val LEGACY_SDK_LEVELS = listOf(26, 32)
-        val MODERN_SDK_LEVELS = listOf(33, 36)
-        val ALL_SDK_LEVELS = LEGACY_SDK_LEVELS + MODERN_SDK_LEVELS
+        val PER_TYPE_SDK_LEVELS = listOf(33, 34, 35, 36)
+        val BELOW_PARTIAL_ACCESS_SDK_LEVELS =
+            listOf(26, 32, MediaPermissionPolicy.PER_TYPE_MEDIA_PERMISSIONS_SDK_INT)
+        val PARTIAL_ACCESS_SDK_LEVELS =
+            listOf(MediaPermissionPolicy.VISUAL_USER_SELECTED_SDK_INT, 35, 36)
+        val ALL_SDK_LEVELS = LEGACY_SDK_LEVELS + PER_TYPE_SDK_LEVELS
         val FORBIDDEN_PERMISSIONS =
             listOf(
                 "android.permission.READ_MEDIA_AUDIO",
@@ -52,6 +81,7 @@ class MediaPermissionPolicyTest {
                 "android.permission.READ_CONTACTS",
                 "android.permission.CAMERA",
                 "android.permission.WRITE_EXTERNAL_STORAGE",
+                "android.permission.INTERNET",
             )
     }
 }

@@ -92,8 +92,25 @@ class MediaPermissionPromptTest {
         )
     }
 
+    @Test
+    fun `visual user selected access at api 34 prompts with the limited coverage message and the request action`() {
+        assertEquals(
+            MediaPermissionPrompt(R.string.media_permission_limited_message, MediaPermissionAction.REQUEST),
+            mediaPermissionPrompt(
+                PARTIAL_ACCESS_SDK_INT,
+                setOf(
+                    MediaPermissionPolicy.READ_MEDIA_IMAGES,
+                    MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
+                ),
+                setOf(MediaPermissionPolicy.READ_MEDIA_VIDEO),
+                hasRequested = true,
+            ),
+        )
+    }
+
     private companion object {
         const val LEGACY_SDK_INT = 32
         const val MODERN_SDK_INT = 33
+        const val PARTIAL_ACCESS_SDK_INT = 34
     }
 }

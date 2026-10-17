@@ -22,14 +22,14 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
 - The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
 - A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, which also declares the no-op default, and `log/AndroidBackupCycleLog`).
-- The launched activity's media-read permission surface, which shows the current permission status, requests exactly the permissions the policy reports as missing, and opens the application's settings page when access was permanently refused (`permissions/MediaPermissionRequestContent`, `permissions/MediaPermissionPrompt`).
+- The launched activity's media-read permission surface, which shows the current permission status, requests the media-read permissions in one runtime operation (including the partial-access permission from Android 14), reports limited coverage when the user allows only some photos and videos, and opens the application's settings page when access was permanently refused (`permissions/MediaPermissionRequestContent`, `permissions/MediaPermissionPrompt`).
 - The media-library summary shown once access is granted, reporting the combined number of photos and videos available to back up, with a loading line while the library is read and a failure line when it cannot be read (`media/MediaLibrarySummaryContent`, `media/MediaLibrarySummary`).
 
 Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
 
 ## Declared permissions
 
-The manifest declares exactly three permissions: `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, and `READ_EXTERNAL_STORAGE` capped with `android:maxSdkVersion="32"`. On API 33 and above the client uses the two per-type reads; below 33 it uses the legacy read, matching `MediaPermissionPolicy.requiredPermissions(sdkInt)`. No audio, contacts, location, camera, or storage-write permission is declared.
+The manifest permission set and the requirement each permission serves are tracked in [PERMISSIONS.md](PERMISSIONS.md).
 
 ## Pinned decisions
 

@@ -5,6 +5,7 @@
     <string name="media_permission_request_message">HomeCloud needs access to your photos and videos to back them up.</string>
     <string name="media_permission_request_action">Allow access</string>
     <string name="media_permission_blocked_message">Photo and video access is turned off. Enable it in the app\'s settings to continue.</string>
+    <string name="media_permission_limited_message">HomeCloud can back up only the photos and videos you selected.</string>
     <string name="media_permission_settings_action">Open settings</string>
     <string name="media_library_loading">Checking your media library…</string>
     <string name="media_library_failed">Could not read the media library.</string>
