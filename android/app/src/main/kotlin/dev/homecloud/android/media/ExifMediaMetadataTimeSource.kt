@@ -1,9 +1,5 @@
 package dev.homecloud.android.media
 
-import android.content.ContentResolver
-import android.net.Uri
-import androidx.exifinterface.media.ExifInterface
-import java.io.IOException
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -26,22 +22,20 @@ internal fun exifCaptureTime(
 }
 
 /**
- * [MediaMetadataTimeSource] that prefers a photo's EXIF capture time and falls back to the
- * `MediaStore` taken time.
+ * [MediaMetadataTimeSource] that prefers a photo's Exif capture time and otherwise uses the
+ * media-store taken time.
  *
- * EXIF metadata is used when the app can read it (`FR-AND-008`); an unreadable or malformed stream
- * counts as no metadata instead of failing the scan. Without an EXIF time the `MediaStore` taken
+ * Exif metadata is used when the app can read it (`FR-AND-008`); an unreadable or malformed stream
+ * counts as no metadata instead of failing the scan. Without an Exif time the media-store taken
  * time applies (`FR-AND-009`), represented in [deviceZone] because the store records no offset
  * (`FR-AND-011`). Reading is synchronous, so callers must keep [captureTime] off the main thread.
  */
 internal class ExifMediaMetadataTimeSource(
-    private val contentResolver: ContentResolver,
+    private val exifReader: ExifDateTimeReader,
     private val deviceZone: ZoneId,
 ) : MediaMetadataTimeSource {
     /**
-     * Reads the EXIF time of a photo, or the item's store taken time, whichever exists.
-     *
-     * Only photos are opened for EXIF, and every opened stream is closed here.
+     * Reads the Exif time of a photo, or the item's store taken time, whichever exists.
      */
     override fun captureTime(item: MediaItem): MediaCaptureTime? =
         if (item.kind == MediaKind.IMAGE) {
@@ -50,27 +44,24 @@ internal class ExifMediaMetadataTimeSource(
             mediaStoreTimeOf(item)
         }
 
-    private fun exifTimeOf(item: MediaItem): MediaCaptureTime? =
-        try {
-            contentResolver.openInputStream(Uri.parse(item.uri))?.use { stream ->
-                val exif = ExifInterface(stream)
-                exifCaptureTime(
-                    dateTimeOriginal = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL),
-                    offsetTimeOriginal = exif.getAttribute(ExifInterface.TAG_OFFSET_TIME_ORIGINAL),
-                )
-            }
-        } catch (_: IOException) {
-            null
-        } catch (_: SecurityException) {
-            null
-        }
+    private fun exifTimeOf(item: MediaItem): MediaCaptureTime? {
+        val attributes = exifReader.read(item.uri) ?: return null
+        return exifCaptureTime(
+            dateTimeOriginal = attributes.dateTimeOriginal,
+            offsetTimeOriginal = attributes.offsetTimeOriginal,
+        )
+    }
 
     private fun mediaStoreTimeOf(item: MediaItem): MediaCaptureTime? {
-        val takenEpochMillis = item.dateTakenEpochMillis ?: return null
-        val instant = Instant.ofEpochMilli(takenEpochMillis)
-        return MediaCaptureTime(
-            dateTime = LocalDateTime.ofInstant(instant, deviceZone),
-            offset = deviceZone.rules.getOffset(instant),
-        )
+        val takenEpochMillis = item.dateTakenEpochMillis
+        return if (takenEpochMillis != null && takenEpochMillis > 0) {
+            val instant = Instant.ofEpochMilli(takenEpochMillis)
+            MediaCaptureTime(
+                dateTime = LocalDateTime.ofInstant(instant, deviceZone),
+                offset = deviceZone.rules.getOffset(instant),
+            )
+        } else {
+            null
+        }
     }
 }

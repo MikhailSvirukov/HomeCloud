@@ -139,6 +139,7 @@ class MainActivityTest {
             MediaTestData.SIZE_BYTES,
             MediaTestData.DATE_MODIFIED_EPOCH_SECONDS,
             mimeType,
+            MediaTestData.DATE_TAKEN_EPOCH_MILLIS,
         )
 
     private fun waitForLibrarySummary() {

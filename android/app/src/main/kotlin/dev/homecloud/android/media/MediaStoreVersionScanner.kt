@@ -9,9 +9,10 @@ import java.time.ZoneId
  * id-ascending order (`FR-AND-003`). Each candidate's original bytes are opened exactly once and
  * hashed before compression or encryption (`FR-AND-007`), then the content hash, original display
  * name and tracked time form the version identity (`FR-AND-015`). The tracked time prefers the
- * file's metadata (`FR-AND-008`) and falls back to the `MediaStore` modification time
- * (`FR-AND-009`), with zone-less metadata interpreted in the device zone supplied at construction
- * (`FR-AND-011`).
+ * metadata seam's capture time (`FR-AND-008`), which supplies an image's Exif time or the
+ * media-store taken time, and falls back to the `MediaStore` modification time when the seam
+ * reports none (`FR-AND-009`). Zone-less metadata is interpreted in the device zone supplied at
+ * construction (`FR-AND-011`); the media-store taken instant is not normalised.
  *
  * A candidate whose bytes cannot be opened or read fails the whole scan: the exception propagates
  * and no partial candidate list is returned.
