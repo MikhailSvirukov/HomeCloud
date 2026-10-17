@@ -6,4 +6,10 @@
     <string name="media_permission_request_action">Allow access</string>
     <string name="media_permission_blocked_message">Photo and video access is turned off. Enable it in the app\'s settings to continue.</string>
     <string name="media_permission_settings_action">Open settings</string>
+    <string name="media_library_loading">Checking your media library...</string>
+    <string name="media_library_failed">Could not read the media library.</string>
+    <plurals name="media_library_found">
+        <item quantity="one">%1$d photo or video available to back up</item>
+        <item quantity="other">%1$d photos and videos available to back up</item>
+    </plurals>
 </resources>

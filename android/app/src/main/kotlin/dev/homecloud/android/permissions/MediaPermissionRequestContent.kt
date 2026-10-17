@@ -38,12 +38,14 @@ private const val PACKAGE_URI_SCHEME = "package"
  * Renders the media-read permission surface for the activity. It reflects whether the client may
  * read photos and videos: while access can still be asked for it requests exactly the missing
  * media-read permissions and reflects the answer, and once access was permanently refused it sends
- * the user to the app's system settings instead of asking again.
+ * the user to the app's system settings instead of asking again. Once access is granted it also
+ * renders the supplied content below the message.
  */
 @Composable
 internal fun MediaPermissionRequestContent(
     activity: ComponentActivity,
     modifier: Modifier = Modifier,
+    content: @Composable () -> Unit = {},
 ) {
     var hasRequested by rememberSaveable { mutableStateOf(false) }
     var revision by remember { mutableStateOf(0) }
@@ -86,11 +88,13 @@ internal fun MediaPermissionRequestContent(
         },
         onOpenSettings = { openAppSettings(activity) },
         modifier = modifier,
+        content = content,
     )
 }
 
 /**
- * Shows the prompt's message and, when access was not granted, the single action it carries.
+ * Shows the prompt's message and, when access was not granted, the single action it carries. Once
+ * access is granted it renders the supplied content in place of an action.
  */
 @Composable
 private fun MediaPermissionSurface(
@@ -98,6 +102,7 @@ private fun MediaPermissionSurface(
     onRequestPermissions: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    content: @Composable () -> Unit = {},
 ) {
     Column(
         modifier =
@@ -118,7 +123,7 @@ private fun MediaPermissionSurface(
                     Text(text = stringResource(R.string.media_permission_settings_action))
                 }
 
-            MediaPermissionAction.NONE -> Unit
+            MediaPermissionAction.NONE -> content()
         }
     }
 }
