@@ -10,6 +10,12 @@ interval_ms = 1000
 timeout_ms = 500
 miss_threshold = 3
 
+[password]
+memory_kib = 8
+iterations = 1
+parallelism = 1
+salt_length_bytes = 16
+
 [[cluster.nodes]]
 label = "storage-1"
 address = "10.0.0.11:7100"

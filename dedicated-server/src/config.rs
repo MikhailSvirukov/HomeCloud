@@ -1,7 +1,8 @@
 //! Loading and validation of the dedicated server configuration.
 //!
 //! The configuration describes how the control plane listens, its own key
-//! identity, heartbeat timing, and the fixed storage cluster it bootstraps.
+//! identity, heartbeat timing, password derivation parameters, and the fixed
+//! storage cluster it bootstraps.
 //! `serde` enforces the shape of every field while parsing, and the cross-field
 //! rules (non-empty and unique entries) are checked afterwards so the runtime
 //! can assume a usable [`ServerConfig`].
@@ -9,12 +10,14 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::SocketAddr;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::password::Argon2Params;
 
 /// Environment variable holding the path to the server configuration file.
 pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
@@ -35,6 +38,8 @@ pub struct ServerConfig {
     pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
     pub(crate) heartbeat: HeartbeatConfig,
+    /// Argon2id parameters and salt length used to derive password verifiers.
+    pub(crate) password: PasswordConfig,
     /// Fixed storage cluster bootstrap information.
     pub(crate) cluster: ClusterConfig,
 }
@@ -61,6 +66,20 @@ pub(crate) struct HeartbeatConfig {
     pub(crate) timeout_ms: NonZeroU64,
     /// Number of consecutive missed heartbeats tolerated before the node is considered down.
     pub(crate) miss_threshold: NonZeroU32,
+}
+
+/// Argon2id parameters and salt length used to derive password verifiers.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PasswordConfig {
+    /// Memory cost in kibibytes.
+    pub(crate) memory_kib: NonZeroU32,
+    /// Number of passes.
+    pub(crate) iterations: NonZeroU32,
+    /// Degree of parallelism.
+    pub(crate) parallelism: NonZeroU32,
+    /// Salt length in bytes.
+    pub(crate) salt_length_bytes: NonZeroUsize,
 }
 
 /// Fixed storage cluster bootstrap information.
@@ -138,6 +157,18 @@ pub enum ConfigError {
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
     DuplicateNodeField { field: NodeField },
+}
+
+impl PasswordConfig {
+    /// Derivation parameters taken from this configuration.
+    pub(crate) fn params(&self) -> Argon2Params {
+        Argon2Params {
+            memory_kib: self.memory_kib,
+            iterations: self.iterations,
+            parallelism: self.parallelism,
+            salt_length_bytes: self.salt_length_bytes,
+        }
+    }
 }
 
 impl HeartbeatConfig {
@@ -256,6 +287,8 @@ mod tests {
     const DUPLICATE_NODE_ADDRESS: &str =
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
+    const ZERO_PASSWORD_MEMORY: &str =
+        include_str!("../tests/fixtures/invalid/zero_password_memory.toml");
 
     #[test]
     fn parses_valid_fixture_with_expected_meaningful_values() {
@@ -269,6 +302,10 @@ mod tests {
         assert_eq!(config.heartbeat.interval().as_millis(), 1000);
         assert_eq!(config.heartbeat.timeout().as_millis(), 500);
         assert_eq!(config.heartbeat.miss_threshold.get(), 3);
+        assert_eq!(config.password.memory_kib.get(), 8);
+        assert_eq!(config.password.iterations.get(), 1);
+        assert_eq!(config.password.parallelism.get(), 1);
+        assert_eq!(config.password.salt_length_bytes.get(), 16);
         assert_eq!(config.cluster.nodes.len(), 2);
         assert_eq!(config.cluster.nodes[0].label, "storage-1");
         assert_eq!(config.cluster.nodes[1].label, "storage-2");
@@ -337,5 +374,30 @@ mod tests {
             ServerConfig::from_toml_str(ZERO_INTERVAL),
             Err(ConfigError::Parse { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_zero_password_memory_as_parse_error() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(ZERO_PASSWORD_MEMORY),
+            Err(ConfigError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn password_params_carry_each_configured_value() {
+        let document = VALID_SERVER
+            .replace("memory_kib = 8", "memory_kib = 24")
+            .replace("iterations = 1", "iterations = 3")
+            .replace("parallelism = 1", "parallelism = 2")
+            .replace("salt_length_bytes = 16", "salt_length_bytes = 20");
+        let config = ServerConfig::from_toml_str(&document).expect("valid fixture must parse");
+
+        let params = config.password.params();
+
+        assert_eq!(params.memory_kib.get(), 24);
+        assert_eq!(params.iterations.get(), 3);
+        assert_eq!(params.parallelism.get(), 2);
+        assert_eq!(params.salt_length_bytes.get(), 20);
     }
 }
