@@ -28,7 +28,8 @@ for clients; it does not relay Raft or blob traffic.
   `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
   frames through the payload buffer pools), `src/config.rs` (node
-  identity/configuration), `src/response.rs` (typed upload outcomes / status
+  identity/configuration), `src/keys.rs` (private key material loaded from
+  configured owner-only files), `src/response.rs` (typed upload outcomes / status
   codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
   hash, upload record), `src/listener.rs` (binds the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
@@ -40,7 +41,8 @@ for clients; it does not relay Raft or blob traffic.
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
-  `upload_ledger_public_api.rs`, `upload_outcomes_public_api.rs`,
+  `keys_public_api.rs`, `upload_ledger_public_api.rs`,
+  `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `storage_layout_public_api.rs`, `e2e_pump_over_tcp.rs`,
   `e2e_upload_over_tcp.rs`).
