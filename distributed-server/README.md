@@ -79,6 +79,9 @@ at startup:
 
 ## Build and test
 
+The CI script is run by GitHub Actions for pull requests. OpenCode agents add
+tests but do not execute test suites locally; use the PR checks as the result.
+
 ```sh
 ./ci/check.sh
 ```

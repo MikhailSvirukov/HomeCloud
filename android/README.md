@@ -102,6 +102,9 @@ android/
 
 No Gradle wrapper JAR is committed: the repository publishing path is text-only, so committing a binary wrapper artifact is not possible. Instead, `ci/check.sh` downloads the pinned `gradle-8.14.3-bin` distribution on first use, verifies its SHA-256 checksum, unzips it into a cache, and runs the build.
 
+GitHub Actions runs this check for pull requests. OpenCode agents add or update
+tests but do not execute test suites locally; use the PR checks as the result.
+
 Run it from any working directory (invoke it through `bash` so it does not depend on the stored executable bit):
 
 ```sh

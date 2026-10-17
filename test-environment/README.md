@@ -66,12 +66,11 @@ test-environment/
 
 ## Gates
 
-```sh
-test-environment/scripts/ci.sh
-```
-
-The same gates run in GitHub Actions via
+GitHub Actions runs `scripts/ci.sh` for pull requests via
 [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
+OpenCode agents add or update tests but do not execute test suites locally;
+use the PR checks as the result. Docker-backed integration tests run in the CI
+environment that provides Docker.
 
 Fast isolated tests use the in-memory fakes, the shared fixtures, and
 `CliClusterRuntime` with `RecordingCommandRunner`, and need no Docker. The CLI

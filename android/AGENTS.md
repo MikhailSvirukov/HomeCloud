@@ -40,7 +40,10 @@ Read the root `/workspace/AGENTS.md` first for repository-wide process rules; it
 
 ## Quality gate
 
-Run the area-local check before handing off:
+GitHub Actions runs the area-local check for pull requests affecting Android.
+Agent containers must not run unit, integration, acceptance, or instrumentation
+tests locally. Add or update tests, publish the PR, and have the orchestrator
+verify the required Actions result before merge. The CI check is:
 
 ```sh
 bash android/ci/check.sh

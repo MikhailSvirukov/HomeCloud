@@ -17,7 +17,10 @@ defined there, not in this file.
 
 ## Quality gate
 
-`./ci/check.sh` is the required local gate. It runs, in order:
+GitHub Actions runs `./ci/check.sh` for pull requests affecting this area. Agent
+containers must not run unit, integration, acceptance, or fault-injection tests
+locally. Add or update the tests, publish the PR, and have the orchestrator verify
+the required Actions result before merge. The CI script runs, in order:
 
 1. `cargo fmt --all --check`
 2. `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`

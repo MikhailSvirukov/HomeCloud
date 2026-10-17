@@ -10,9 +10,17 @@ registration, client topology responses, fixed-cluster bootstrap information,
 and its independent node heartbeat. It is not a file proxy and not a Raft
 transport, and it must never accept, store, or proxy photo/video data.
 
+The dedicated-server workstream also owns repository-wide shared files when an
+issue explicitly names their paths and carries the `area:dedicated-server`
+label. Shared paths include root-level files, `.github/`, `.opencode/`,
+`contracts/`, shared `docs/`, and Dockerfile/Compose configuration. Delegate
+only the paths named in the issue. Do not modify another component's area or
+area-specific SRS/brief.
+
 Do not read or modify other workstream areas (`android/`,
 `distributed-server/`, `test-environment/`). Coordinate shared
-protocol/contract changes through `contracts/` and an issue.
+protocol/contract changes through `contracts/` and an issue assigned to this
+workstream.
 
 ## Code style
 
@@ -31,8 +39,10 @@ protocol/contract changes through `contracts/` and an issue.
 
 ## Quality gates
 
-- `bash scripts/ci.sh` (fmt, clippy with `-D warnings`, tests) must pass before
-  merge.
+- GitHub Actions runs `bash scripts/ci.sh` for pull requests affecting this area.
+  Agent containers must not run unit, integration, acceptance, or fault-injection
+  tests locally. Add or update tests, publish the PR, and have the orchestrator
+  verify the required Actions result before merge.
 - No `unwrap`/`expect`/`panic!` outside tests; keep I/O at system boundaries.
 
 ## Reviews and pull requests

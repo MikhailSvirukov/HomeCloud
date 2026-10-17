@@ -32,7 +32,7 @@ Do not put provider keys or GitHub tokens in tracked files. `.env` is ignored by
    ```
 
    Do not copy `.env`, `.git/`, `agent-feedback/`, `agent-state/`, or the clone directories. The clones currently contain only the initial commit, so they do not yet have `.opencode/` or the project instructions required by the agents.
-   The repository may start with no project files. Seed the initial backlog with four separate area-bootstrap issues plus narrowly scoped shared-root setup issues. Each area orchestrator can create its own root directory, `AGENTS.md`, independent workspace/build configuration, and local CI checks. Schedule a separately scoped issue for `.github/workflows/` and other shared root files; GitHub Actions workflow YAML lives at the repository root and calls those local checks.
+   The repository may start with no project files. Seed the initial backlog with four separate area-bootstrap issues plus narrowly scoped shared-file setup issues assigned to `dedicated-server`. Each area orchestrator can create its own root directory, `AGENTS.md`, independent workspace/build configuration, and local CI checks. The dedicated-server orchestrator owns shared root files, `.github/workflows/`, and other repository-wide setup; GitHub Actions workflow YAML lives at the repository root and calls the area-local checks.
 3. From `/home/mikhail/workdir/backup`, copy the example environment file (the example already points to `/home/mikhail/workdir/homecloud-clones/<workstream>`):
 
    ```sh
@@ -68,7 +68,7 @@ Use this single GitHub account for every OpenCode role. The existing `GITHUB_MCP
    docker compose build
    ```
 
-   The role images are defined in `Dockerfile.agent`: Android gets JDK 17 and Android SDK 36, Rust services get Rust 1.99.0 plus liburing/OpenSSL build dependencies, and the test image additionally gets Docker CLI/Compose. The host still needs Docker to build/run them. Android connected tests require an external emulator/device. Testcontainers uses the isolated DinD service in `compose.test-engine.yaml`; this optional test-only service requires privileged mode.
+   The role images are defined in `Dockerfile.agent`: Android gets JDK 17 and Android SDK 36, Rust services get Rust 1.99.0 plus liburing/OpenSSL build dependencies, and the test image additionally gets Docker CLI/Compose. The host still needs Docker to build/run them. Agent containers do not execute test suites locally; GitHub Actions on the pull request is the test authority. Android connected tests require an external emulator/device. Testcontainers uses the isolated DinD service in `compose.test-engine.yaml`; this optional test-only service requires privileged mode.
 
 ## Where OpenCode agent settings live
 
@@ -119,7 +119,7 @@ Start only the workstream you want to review that day. For example, Android:
 docker compose run --rm android
 ```
 
-Other service names are `distributed-server`, `dedicated-server`, and `test-environment`. Each service runs `opencode run --continue --agent orchestrator --auto` using its own named data volume, so it resumes that workstream's latest saved OpenCode session. The run reads the latest daily review, resumes the issue in `.agent-state/project-state.md` if there is one, checks the open GitHub issue queue, and claims a clearly matching issue. It creates a new issue only if no suitable owner-created issue exists. Ambiguous or cross-workstream issues are left for you to classify. OpenCode runs without the TUI; progress and the final summary appear in the `docker compose` output.
+Other service names are `distributed-server`, `dedicated-server`, and `test-environment`. Each service runs `opencode run --continue --agent orchestrator --auto` using its own named data volume, so it resumes that workstream's latest saved OpenCode session. The run reads the latest daily review, resumes the issue in `.agent-state/project-state.md` if there is one, checks the open GitHub issue queue, and claims a clearly matching issue. It creates a new issue only if no suitable owner-created issue exists. The orchestrator resolves ambiguity from the approved requirements, prior decisions, v1 scope, and platform/security guidance; it splits cross-workstream work by ownership and routes shared paths to `dedicated-server`. It documents any required SRS decision in its own PR and proceeds without waiting for operator approval. OpenCode runs without the TUI; progress and the final summary appear in the `docker compose` output.
 
 Defaults are 20 issue/PR work items and 3600 seconds (60 minutes) per invocation. Set `AGENT_MAX_TASKS` and `AGENT_MAX_RUN_SECONDS` in `.env` to change them; for example, `AGENT_MAX_TASKS=3` and `AGENT_MAX_RUN_SECONDS=1800` caps a run at three items and 30 minutes. The task limit is counted when an issue is claimed. The time limit is a soft model-instructed checkpoint, not a hard Docker timeout. After each merge the orchestrator records state and may pick up the next clear issue while both limits allow. On a safe checkpoint it records the issue, branch, progress, and blocker in the workstream state file. `docker compose run --rm` removes the run container when OpenCode exits, while the checkout and separate named volumes preserve workstream state and session history. Run a new container after updating the review; the resumed session reads all notes for the newest date. It does not watch GitHub or the review directory in the background.
 
@@ -137,7 +137,7 @@ Repeat with the affected service name if another workstream has the same problem
 
 ### Testcontainers Docker Engine
 
-Docker-backed tests use a separate Docker-in-Docker daemon defined in `compose.test-engine.yaml`. The daemon is isolated from the host Docker socket and serves the test agent over TLS with client certificates generated by the official DinD entrypoint. The DinD service requires Docker's `privileged` mode; use this setup only for trusted test code and only when you intend to run the test workstream.
+Docker-backed tests in GitHub Actions use the runner's Docker service. Agent containers do not run Docker-backed tests locally and do not mount the host Docker socket. The optional Docker-in-Docker setup in `compose.test-engine.yaml` remains available for explicit manual test-environment work; it serves the test agent over TLS and requires Docker's `privileged` mode. Do not use it during normal agent runs.
 
 Start the self-contained test setup with:
 

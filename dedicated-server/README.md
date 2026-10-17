@@ -15,14 +15,16 @@ and the key identity, logs a one-line startup summary to stderr, and exits.
 Network I/O, the wire protocol, registration over the network, cluster
 replication, and topology responses are not implemented yet.
 
-## Build, test, and run
+## Build and run
+
+GitHub Actions runs the quality-gate script for pull requests. OpenCode agents
+do not run test suites locally; use the PR checks as the test result. CI runs
+the area's quality-gate script; agent containers must not invoke it.
 
 Run from `dedicated-server/` (`Cargo.lock` is committed):
 
 ```bash
 cargo build --locked
-cargo test --workspace --all-features
-bash scripts/ci.sh
 ```
 
 ```bash

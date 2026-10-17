@@ -20,7 +20,7 @@ This repository follows the guidance from [Rust Best Practices](https://github.c
 - Keep transform chains readable and line-broken.
 - Always verify jj status before starting work, if unavailable, use `git status --short --branch`. Ensure workspace not stale.
 - Always review the current branch before merge or commit decisions, focusing on behavior regressions, performance risks, and test coverage gaps.
-- Minimum Rust quality gates (must remain covered or be run explicitly):
+- Minimum Rust quality gates (must be covered by required GitHub Actions CI; agent containers do not run test suites locally):
   - `cargo fmt --all --check`
   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
   - `cargo test --workspace --all-features`
@@ -69,7 +69,7 @@ This repository follows the guidance from [Rust Best Practices](https://github.c
 - Cover success and error behavior for behavioral paths.
 - Add integration tests for public behavior and unit tests for internals when appropriate.
 - Use snapshot tests only for complex, stable structured outputs.
-- Required pre-merge quality gates:
+- Required pre-merge quality gates, verified from the pull request's required GitHub Actions checks:
   - Intentional ownership/data-flow review
   - Explicit and aligned error handling
   - `cargo fmt --all --check`
@@ -77,6 +77,7 @@ This repository follows the guidance from [Rust Best Practices](https://github.c
   - `cargo test --workspace --all-features`
   - Measured performance claims before acceptance
   - Documentation reflects runtime behavior
+- Do not run unit, integration, acceptance, or fault-injection tests inside OpenCode agent containers. Add or update the tests, push the pull request, and use its GitHub Actions results as the test evidence. Do not merge while a required check is pending, failing, missing, or skipped for the changed area.
 - Avoid unnecessary `#[allow]` and prefer explicit local `#[expect(...)]` only when justified.
 - High-risk review triggers:
   - unnecessary cloning in hot paths

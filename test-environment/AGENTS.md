@@ -18,7 +18,8 @@ protocol/API interfaces required to build mocks and fakes.
   published contracts under `contracts/` or public traits/types only; if a
   contract is missing, file an issue for the owning workstream.
 - Keep fast isolated tests (in-memory fakes, no Docker) separate from Docker
-  integration scenarios. `scripts/ci.sh` runs only the fast gates.
+  integration scenarios. CI runs the applicable suites; agent containers must
+  not run tests locally because the test agent has no local Docker daemon.
 - Prefer the two base fault classes from the brief — node shutdown and selective
   network degradation — and keep the scenario API extensible for recovery checks.
 - Follow the root Rust practices: typed errors with `thiserror`, no `unwrap`/
@@ -56,9 +57,11 @@ that recur most in `test-environment/`.
 
 ## Quality gates
 
-Run `test-environment/scripts/ci.sh` before hand-off. The same gates run in
-GitHub Actions through [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
-The script runs:
+GitHub Actions runs `test-environment/scripts/ci.sh` through
+[`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
+Do not run the script from an agent container. Add or update the tests and have
+the orchestrator verify the required Actions result on the PR before merge. The
+CI script runs:
 
 ```sh
 cargo fmt --all --check
