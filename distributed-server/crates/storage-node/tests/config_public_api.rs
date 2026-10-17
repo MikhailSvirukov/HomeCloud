@@ -15,8 +15,10 @@ const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
+const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
 const KEY_PEERS: &str = "peers";
 const MAX_FRAME_LEN: &str = "1048576";
+const QUEUE_CAPACITY: &str = "16";
 
 #[test]
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
@@ -27,6 +29,7 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
         (KEY_PEERS, " 10.0.0.2:9000 ,10.0.0.3:9000 "),
     ])
     .expect("valid pairs build a config");
@@ -40,6 +43,7 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     );
     assert_eq!(config.signing_key_path, PathBuf::from(SIGNING_KEY_PATH));
     assert_eq!(config.max_frame_len.get(), 1_048_576);
+    assert_eq!(config.queue_capacity.get(), 16);
     assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
 }
 
@@ -142,6 +146,65 @@ fn from_pairs_with_unparsable_max_frame_len_reports_invalid_max_frame_len() {
 }
 
 #[test]
+fn from_pairs_without_queue_capacity_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_QUEUE_CAPACITY,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_queue_capacity_reports_invalid_queue_capacity() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, "0"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidQueueCapacity {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_queue_capacity_reports_invalid_queue_capacity() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, "not-a-number"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidQueueCapacity {
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
 fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
@@ -150,6 +213,7 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
     ]);
 
     assert_eq!(
@@ -169,6 +233,7 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
         (KEY_PEERS, "10.0.0.2"),
     ]);
 
@@ -189,6 +254,7 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
         (KEY_PEERS, "10.0.0.2:9000,10.0.0.2:9000"),
     ]);
 

@@ -81,11 +81,14 @@ at startup:
 - `SIGNING_KEY_PATH` — private signing key file (maps to the `signing_key_path` key).
 - `MAX_FRAME_LEN` — maximum frame size in bytes; must be non-zero (maps to the
   `max_frame_len` key).
+- `QUEUE_CAPACITY` — per-connection inter-actor queue capacity; must be non-zero (maps
+  to the `queue_capacity` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
-`encryption_key_path`, `signing_key_path`, `max_frame_len`, and `peers` keys; an absent
-or empty value for any required key is reported as missing, and unknown keys are ignored.
+`encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`, and `peers`
+keys; an absent or empty value for any required key is reported as missing, and unknown
+keys are ignored.
 Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
 value it encodes is checked against the configured maximum before the frame is buffered,
 and a larger value is rejected.
