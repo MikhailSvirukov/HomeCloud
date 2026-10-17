@@ -86,8 +86,9 @@ at startup:
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, and `peers` keys; an absent
 or empty value for any required key is reported as missing, and unknown keys are ignored.
-Frames use a 4-byte big-endian length prefix, and a prefix above the configured maximum is
-rejected.
+Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
+value it encodes is checked against the configured maximum before the frame is buffered,
+and a larger value is rejected.
 
 Startup loads both private key files after the configuration is validated and before
 the listener binds, so a missing or unreadable key stops the process without opening a

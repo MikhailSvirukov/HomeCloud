@@ -113,7 +113,7 @@ mod tests {
 
         let text = format!("{buffer:?}");
 
-        assert!(text.contains("buffered_len"));
+        assert!(text.contains(&format!("buffered_len: {}", buffer.buffered_len())));
         assert!(!text.contains("SECRET-PAYLOAD-BYTES"));
     }
 
