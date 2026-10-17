@@ -6,12 +6,12 @@
 use std::fmt::Write;
 use std::path::PathBuf;
 
+use crate::metadata::UPLOAD_ID_LEN;
+
 /// Directory holding the per-account blob directories.
 const ACCOUNTS_DIR: &str = "accounts";
 /// Directory holding Raft state.
 const RAFT_DIR: &str = "raft";
-/// Length of an upload id in bytes.
-pub const UPLOAD_ID_LEN: usize = 16;
 
 /// Failure modes when building a storage path.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
