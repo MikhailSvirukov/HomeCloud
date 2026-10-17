@@ -43,7 +43,8 @@ for clients; it does not relay Raft or blob traffic.
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
-  `keys_public_api.rs`, `upload_ledger_public_api.rs`,
+  `keys_public_api.rs`, `content_hash_public_api.rs`,
+  `upload_ledger_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `storage_layout_public_api.rs`, `signing_public_api.rs`,
@@ -58,7 +59,8 @@ with `split_frames` and the `pump_frames`/`pump_halves` forwarding pumps, buffer
 blocks, the logical payload chain with chunked streaming/backpressure, the
 payload streaming path that frames pooled chunks onto the connection writer, the
 node identity/configuration model, the idempotent upload ledger (upload id, content
-hash, upload record), the typed upload outcomes (status codes), and the TCP
+hash that computes a SHA-256 digest of the original uncompressed bytes, upload
+record), the typed upload outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
 compression/crypto work off the Tokio worker threads, and the node runtime that

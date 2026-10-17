@@ -6,13 +6,15 @@
 //! [`UploadLedger`] maps an upload id to the first recorded version so retries
 //! are idempotent: a repeated upload id never creates a second version.
 //!
-//! This module deliberately implements no cryptography. [`ContentHash`] only
-//! wraps 32 bytes produced elsewhere.
+//! [`ContentHash`] wraps a 32-byte SHA-256 digest and can compute one from the
+//! original uncompressed bytes.
 
 use std::collections::HashMap;
 use std::fmt;
 
 use core::fmt::Write as _;
+
+use sha2::{Digest, Sha256};
 
 /// Length of an upload identifier in bytes (`INT-NET-011 / 1`).
 pub const UPLOAD_ID_LEN: usize = 16;
@@ -47,7 +49,7 @@ impl fmt::Display for UploadId {
     }
 }
 
-/// SHA-256 digest of the original file bytes, supplied by the caller.
+/// SHA-256 digest of the original uncompressed file bytes (`INT-NET-031 / 1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContentHash([u8; CONTENT_HASH_LEN]);
 
@@ -55,6 +57,12 @@ impl ContentHash {
     /// Wraps caller-supplied digest bytes.
     pub const fn from_bytes(bytes: [u8; CONTENT_HASH_LEN]) -> Self {
         Self(bytes)
+    }
+
+    /// Computes the SHA-256 digest of `bytes`.
+    pub fn digest(bytes: &[u8]) -> Self {
+        let digest: [u8; CONTENT_HASH_LEN] = Sha256::digest(bytes).into();
+        Self(digest)
     }
 
     /// Returns the raw digest bytes.
