@@ -14,9 +14,12 @@ pub struct ExchangeTimestamps {
 }
 
 /// Clock offset and round-trip delay estimated from one exchange.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct ClockSample {
     /// Node clock minus this server's clock, in milliseconds.
+    ///
+    /// The estimate assumes a symmetric network delay, so its possible absolute
+    /// error is bounded by `rtt_ms / 2`.
     pub offset_ms: i64,
     /// Round-trip delay excluding the node's own processing time.
     pub rtt_ms: i64,
@@ -40,7 +43,7 @@ impl ExchangeTimestamps {
 }
 
 /// Offset estimate to carry into the next heartbeat request.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ClockOffset {
     previous: Option<i64>,
 }
@@ -151,6 +154,18 @@ mod tests {
     fn offset_state_tracks_latest_valid_sample() {
         let mut offset = ClockOffset::default();
         assert_eq!(offset.previous(), None);
+
+        let zero = ExchangeTimestamps {
+            sent_at_ms: 1_000,
+            node_received_at_ms: 1_050,
+            node_sent_at_ms: 1_050,
+            completed_at_ms: 1_100,
+        };
+        assert_eq!(
+            offset.observe(&zero).map(|sample| sample.offset_ms),
+            Some(0)
+        );
+        assert_eq!(offset.previous(), Some(0));
 
         let valid = ExchangeTimestamps {
             sent_at_ms: 1_000,
