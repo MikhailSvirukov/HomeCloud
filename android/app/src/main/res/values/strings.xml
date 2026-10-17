@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PicBackup</string>
+    <string name="app_name">HomeCloud</string>
+    <string name="media_permission_granted_message">HomeCloud can read your photos and videos.</string>
+    <string name="media_permission_request_message">HomeCloud needs access to your photos and videos to back them up.</string>
+    <string name="media_permission_request_action">Allow access</string>
+    <string name="media_permission_blocked_message">Photo and video access is turned off. Enable it in the app\'s settings to continue.</string>
+    <string name="media_permission_settings_action">Open settings</string>
 </resources>

@@ -7,14 +7,14 @@ plugins {
 }
 
 android {
-    namespace = "dev.picbackup.android"
+    namespace = "dev.homecloud.android"
     compileSdk = 36
     // Only build-tools 36.0.0 is installed and the SDK directory is read-only,
     // so AGP 8.13.2's default (35.0.0) cannot be provisioned.
     buildToolsVersion = libs.versions.buildTools.get()
 
     defaultConfig {
-        applicationId = "dev.picbackup.android"
+        applicationId = "dev.homecloud.android"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -23,6 +23,21 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    testOptions {
+        // Compose/Robolectric render tests read the merged debug manifest and resources; without
+        // this Robolectric only sees the framework and cannot resolve the test activity that
+        // ui-test-manifest declares.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Robolectric keeps its runtime-jar cache and download lock under
+            // `user.home`, which agent containers can map to a read-only path. Always
+            // point the forked test JVM at the Gradle user home: it is writable, it is
+            // where Gradle already keeps caches, and the CI workflow caches it, so a
+            // runner stops re-downloading the jars on every change.
+            it.systemProperty("user.home", gradle.gradleUserHomeDir.absolutePath)
+        }
     }
 
     compileOptions {
@@ -48,5 +63,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
 }

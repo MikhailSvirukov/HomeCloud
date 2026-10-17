@@ -59,6 +59,18 @@ pub fn network_create(plan: &ClusterPlan) -> Command {
     )
 }
 
+/// `docker network rm <network>`.
+pub fn network_remove(plan: &ClusterPlan) -> Command {
+    Command::new(
+        DOCKER,
+        [
+            NETWORK.to_string(),
+            REMOVE.to_string(),
+            plan.network.name.clone(),
+        ],
+    )
+}
+
 /// `docker run --detach ...` for one container on the plan's network.
 pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
     let mut args = vec![

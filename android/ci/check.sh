@@ -11,7 +11,7 @@ readonly SCRIPT_DIR
 ANDROID_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly ANDROID_DIR
 
-CACHE_DIR="${GRADLE_DIST_CACHE:-$HOME/.cache/picbackup-gradle}"
+CACHE_DIR="${GRADLE_DIST_CACHE:-$HOME/.cache/homecloud-gradle}"
 readonly CACHE_DIR
 readonly GRADLE_HOME="${CACHE_DIR}/gradle-${GRADLE_VERSION}"
 readonly GRADLE_BIN="${GRADLE_HOME}/bin/gradle"
@@ -43,7 +43,7 @@ fi
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
 
-echo "[check] Running :app:assembleDebug and :app:testDebugUnitTest"
-"${GRADLE_BIN}" --no-daemon --stacktrace -p "${ANDROID_DIR}" :app:assembleDebug :app:testDebugUnitTest
+echo "[check] Running :app:assembleDebug, :app:testDebugUnitTest and :app:lintDebug"
+"${GRADLE_BIN}" --no-daemon --stacktrace -p "${ANDROID_DIR}" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 
-echo "[check] Android build and unit tests completed"
+echo "[check] Android build, unit tests and lint completed"

@@ -9,8 +9,8 @@ use crate::error::HarnessError;
 type Result<T> = core::result::Result<T, HarnessError>;
 
 /// Stable numeric identifier of a node in the test cluster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u16);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(u16);
 
 impl NodeId {
     /// Wraps a raw numeric identifier.
@@ -107,10 +107,6 @@ impl ClusterTopology {
     pub fn builder() -> ClusterTopologyBuilder {
         ClusterTopologyBuilder::new()
     }
-    /// The single dedicated server (client entry point).
-    pub fn dedicated_server(&self) -> &NodeSpec {
-        &self.dedicated
-    }
     /// The storage nodes in insertion order.
     pub fn storage_nodes(&self) -> &[NodeSpec] {
         &self.storage
@@ -126,10 +122,6 @@ impl ClusterTopology {
     /// Iterates every node, dedicated server first, then storage nodes.
     pub fn nodes(&self) -> impl Iterator<Item = &NodeSpec> {
         std::iter::once(&self.dedicated).chain(self.storage.iter())
-    }
-    /// Total node count, including the dedicated server.
-    pub fn node_count(&self) -> usize {
-        self.storage.len() + 1
     }
     /// Majority quorum over the storage nodes only.
     pub fn quorum(&self) -> usize {
@@ -258,7 +250,7 @@ mod tests {
     #[test]
     fn duplicate_node_id_is_rejected() {
         let result = build(specs(&[(2, 7002), (2, 7003), (4, 7004)]));
-        assert!(matches!(result, Err(E::DuplicateNodeId { id: NodeId(2) })));
+        assert!(matches!(result, Err(E::DuplicateNodeId { id }) if id == NodeId::new(2)));
     }
     #[test]
     fn duplicate_address_is_rejected() {
@@ -283,7 +275,7 @@ mod tests {
         );
         assert!(matches!(
             result,
-            Err(E::WrongNodeRole { id: NodeId(1), .. })
+            Err(E::WrongNodeRole { id, .. }) if id == NodeId::new(1)
         ));
     }
     #[test]
@@ -292,7 +284,7 @@ mod tests {
         let result = build(storage);
         assert!(matches!(
             result,
-            Err(E::WrongNodeRole { id: NodeId(2), .. })
+            Err(E::WrongNodeRole { id, .. }) if id == NodeId::new(2)
         ));
     }
     #[test]

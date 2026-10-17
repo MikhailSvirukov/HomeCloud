@@ -4,17 +4,18 @@
 //! would: build a validated topology, derive a [`ClusterPlan`], and assert the
 //! ordered `docker` arguments. No Docker daemon or socket is touched.
 
+mod common;
+
 use std::collections::BTreeMap;
 
 use harness_core::NodeId;
 use harness_docker::{
-    ClusterPlan, ContainerEnv, ContainerPlan, PlanSettings, container_name, container_remove,
-    container_run, container_stop, network_create,
+    ClusterPlan, Command, ContainerPlan, container_name, container_remove, container_run,
+    container_stop, network_create, network_remove,
 };
-use harness_test_support::topology;
 
-/// The Docker CLI program every command must invoke.
-const DOCKER: &str = "docker";
+use common::{DOCKER, FIRST_STORAGE_ID, NETWORK_NAME, plan};
+
 /// `docker network` subcommand.
 const NETWORK: &str = "network";
 /// `network create` subcommand.
@@ -39,46 +40,6 @@ const STOP: &str = "stop";
 const REMOVE: &str = "rm";
 /// Force flag for `docker rm`.
 const FORCE: &str = "--force";
-/// Network name configured for the isolated test cluster.
-const NETWORK_NAME: &str = "harness-net";
-/// Image configured for the dedicated-server container.
-const SERVER_IMAGE: &str = "server:1";
-/// Image configured for storage containers.
-const STORAGE_IMAGE: &str = "storage:1";
-/// Node id of the single dedicated server.
-const DEDICATED_ID: u16 = 1;
-/// First node id handed out to storage nodes.
-const FIRST_STORAGE_ID: u16 = 2;
-/// Number of storage nodes in the shared fixture.
-const STORAGE_NODES: u16 = 3;
-
-/// Derives the plan settings used across these tests.
-fn settings() -> PlanSettings {
-    PlanSettings::new(
-        NETWORK_NAME,
-        SERVER_IMAGE,
-        STORAGE_IMAGE,
-        ContainerEnv {
-            node_id: "NODE_ID".to_string(),
-            node_label: "NODE_LABEL".to_string(),
-            node_role: "NODE_ROLE".to_string(),
-            listen_address: "LISTEN_ADDRESS".to_string(),
-            dedicated_server_role: "dedicated-server".to_string(),
-            storage_role: "storage".to_string(),
-        },
-    )
-}
-
-/// Derives a plan for the shared test topology.
-fn plan() -> ClusterPlan {
-    ClusterPlan::from_topology(&topology(STORAGE_NODES), &settings())
-}
-
-/// The dedicated-server container of a plan.
-fn dedicated(plan: &ClusterPlan) -> &ContainerPlan {
-    plan.container(NodeId::new(DEDICATED_ID))
-        .expect("the plan always has the dedicated-server container")
-}
 
 /// The first storage container of a plan.
 fn storage(plan: &ClusterPlan) -> &ContainerPlan {
@@ -91,17 +52,6 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
 
-/// The argument immediately following `flag`.
-fn value_after<'a>(args: &'a [String], flag: &str) -> &'a str {
-    let position = args
-        .iter()
-        .position(|arg| arg == flag)
-        .expect("the expected flag is present in the argument list");
-    args.get(position + 1)
-        .map(String::as_str)
-        .expect("every rendered flag is followed by a value")
-}
-
 /// Renders the `-e KEY=VALUE` arguments for an env map in `BTreeMap` order.
 fn env_args(env: &BTreeMap<String, String>) -> Vec<String> {
     env.iter()
@@ -109,77 +59,84 @@ fn env_args(env: &BTreeMap<String, String>) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn network_create_matches_the_configured_network() {
-    let plan = plan();
-    let command = network_create(&plan);
+/// The `docker network create` command these tests expect for `plan`.
+fn expected_network_create() -> Command {
+    Command::new(DOCKER, strings(&[NETWORK, CREATE, NETWORK_NAME]))
+}
 
-    assert_eq!(command.program, DOCKER);
-    assert_eq!(command.args, strings(&[NETWORK, CREATE, NETWORK_NAME]));
+/// The `docker network rm` command these tests expect for `plan`.
+fn expected_network_remove() -> Command {
+    Command::new(DOCKER, strings(&[NETWORK, REMOVE, NETWORK_NAME]))
+}
+
+/// The `docker run --detach` command these tests expect for one container.
+fn expected_run_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    let name = container_name(plan, container);
+    let mut args = strings(&[
+        RUN,
+        DETACH,
+        NAME,
+        name.as_str(),
+        HOSTNAME,
+        container.hostname.as_str(),
+        NETWORK_FLAG,
+        plan.network.name.as_str(),
+        NETWORK_ALIAS,
+        container.hostname.as_str(),
+    ]);
+    args.extend(env_args(&container.env));
+    args.push(container.image.clone());
+    Command::new(DOCKER, args)
+}
+
+/// The `docker stop` command these tests expect for one container.
+fn expected_stop_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[STOP, container_name(plan, container).as_str()]),
+    )
+}
+
+/// The `docker rm --force` command these tests expect for one container.
+fn expected_remove_command(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
+    Command::new(
+        DOCKER,
+        strings(&[REMOVE, FORCE, container_name(plan, container).as_str()]),
+    )
+}
+
+#[test]
+fn network_create_matches_the_expected_command() {
+    let plan = plan();
+    let actual = network_create(&plan);
+    let expected = expected_network_create();
+
+    assert_eq!(actual.program, expected.program);
+    assert_eq!(actual.args, expected.args);
     assert_eq!(plan.network.name, NETWORK_NAME);
 }
 
 #[test]
-fn container_run_is_consistent_with_each_plan_container() {
+fn network_remove_matches_the_expected_command() {
+    let plan = plan();
+    let actual = network_remove(&plan);
+    let expected = expected_network_remove();
+
+    assert_eq!(actual.program, expected.program);
+    assert_eq!(actual.args, expected.args);
+}
+
+#[test]
+fn container_run_matches_the_expected_command_for_every_container() {
     let plan = plan();
 
     for container in &plan.containers {
-        let run = container_run(&plan, container);
-        let expected_name = container_name(&plan, container);
+        let actual = container_run(&plan, container);
+        let expected = expected_run_command(&plan, container);
 
-        assert_eq!(run.program, DOCKER);
-        assert_eq!(value_after(&run.args, NAME), expected_name.as_str());
-        assert_eq!(
-            value_after(&run.args, HOSTNAME),
-            container.hostname.as_str()
-        );
-        assert_eq!(
-            value_after(&run.args, HOSTNAME),
-            value_after(&run.args, NETWORK_ALIAS)
-        );
-        assert_eq!(value_after(&run.args, NETWORK_FLAG), plan.network.name);
-        assert_eq!(
-            value_after(&run.args, NETWORK_ALIAS),
-            container.hostname.as_str()
-        );
-        assert_eq!(run.args.last(), Some(&container.image));
+        assert_eq!(actual.program, expected.program);
+        assert_eq!(actual.args, expected.args);
     }
-}
-
-#[test]
-fn container_run_passes_every_env_entry() {
-    let plan = plan();
-
-    for container in [dedicated(&plan), storage(&plan)] {
-        let run = container_run(&plan, container);
-        let expected = env_args(&container.env);
-        let start = run
-            .args
-            .iter()
-            .position(|arg| arg == ENV)
-            .expect("a container run always renders at least one env flag");
-
-        assert_eq!(
-            &run.args[start..start + expected.len()],
-            expected.as_slice()
-        );
-        assert_eq!(run.args.get(start + expected.len()), Some(&container.image));
-    }
-}
-
-#[test]
-fn stop_and_remove_target_the_container_name() {
-    let plan = plan();
-    let container = storage(&plan);
-    let name = container_name(&plan, container);
-
-    let stop = container_stop(&plan, container);
-    assert_eq!(stop.program, DOCKER);
-    assert_eq!(stop.args, strings(&[STOP, &name]));
-
-    let remove = container_remove(&plan, container);
-    assert_eq!(remove.program, DOCKER);
-    assert_eq!(remove.args, strings(&[REMOVE, FORCE, &name]));
 }
 
 #[test]
@@ -189,4 +146,20 @@ fn container_run_leads_with_run_and_detach() {
 
     assert_eq!(run.args.first().map(String::as_str), Some(RUN));
     assert_eq!(run.args.get(1).map(String::as_str), Some(DETACH));
+}
+
+#[test]
+fn stop_and_remove_match_the_expected_commands() {
+    let plan = plan();
+    let container = storage(&plan);
+
+    let stop = container_stop(&plan, container);
+    let expected_stop = expected_stop_command(&plan, container);
+    assert_eq!(stop.program, expected_stop.program);
+    assert_eq!(stop.args, expected_stop.args);
+
+    let remove = container_remove(&plan, container);
+    let expected_remove = expected_remove_command(&plan, container);
+    assert_eq!(remove.program, expected_remove.program);
+    assert_eq!(remove.args, expected_remove.args);
 }

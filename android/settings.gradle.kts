@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PicBackup"
+rootProject.name = "HomeCloud"
 
 include(":app")

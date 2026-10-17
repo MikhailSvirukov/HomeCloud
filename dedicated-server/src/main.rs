@@ -1,40 +1,55 @@
 //! Binary entry point for the dedicated server control plane.
 //!
 //! Resolves the configuration path from the environment or the default file
-//! name, loads and validates the configuration, loads the configured key
-//! identity, and reports a one-line topology and identity summary. Networking
-//! runtime behavior is added in later issues.
+//! name, loads the configuration together with the key identity it names, and
+//! logs a one-line topology and identity summary to stderr. Networking runtime
+//! behavior is added in later issues.
 
 use std::env;
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dedicated_server::{
-    startup_summary, ServerConfig, ServerIdentity, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
-};
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
-// Error context for a configuration load failure.
-const CONFIG_CONTEXT: &str = "load configuration";
-// Error context for a key identity load failure.
-const IDENTITY_CONTEXT: &str = "load key identity";
+use dedicated_server::{Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME};
+
+/// Process allocator tuned for the concurrent workload of a server process
+/// rather than the system default.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// Log level used when `RUST_LOG` is unset or cannot be parsed.
+const DEFAULT_LOG_FILTER: &str = "info";
 
 fn main() -> ExitCode {
+    init_logging();
+
     let path = config_path();
 
-    let config = match ServerConfig::load(&path) {
-        Ok(config) => config,
-        Err(error) => return report_failure(CONFIG_CONTEXT, &path, &error),
-    };
+    match Startup::load(&path) {
+        Ok(startup) => {
+            info!("{}", startup.summary());
+            ExitCode::SUCCESS
+        }
+        Err(error) => report_failure(&error),
+    }
+}
 
-    let (label, encryption_private_key, signing_private_key) = config.identity_key_material();
-    let identity = match ServerIdentity::load(label, encryption_private_key, signing_private_key) {
-        Ok(identity) => identity,
-        Err(error) => return report_failure(IDENTITY_CONTEXT, &path, &error),
-    };
+/// Install a stderr logger filtered by `RUST_LOG`, defaulting to [`DEFAULT_LOG_FILTER`].
+///
+/// ANSI colours are disabled so the output is stable when captured by tests and
+/// log collectors; stdout stays free for the process's own output.
+fn init_logging() {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
 
-    println!("{}", startup_summary(&config, &identity));
-    ExitCode::SUCCESS
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
 }
 
 /// Resolve the configuration path from [`CONFIG_PATH_ENV`] or the default file name.
@@ -45,22 +60,23 @@ fn config_path() -> PathBuf {
     }
 }
 
-/// Print the error context, `path`, and the error chain to stderr.
-fn report_error(context: &str, path: &Path, error: &impl Error) {
-    eprintln!(
-        "dedicated-server: failed to {context} '{}': {error}",
-        path.display()
-    );
-
-    let mut source = error.source();
-    while let Some(cause) = source {
-        eprintln!("  caused by: {cause}");
-        source = cause.source();
-    }
+/// Report a startup failure as one error event and return the failure exit code.
+fn report_failure(error: &StartupError) -> ExitCode {
+    error!("{}", failure_message(error));
+    ExitCode::FAILURE
 }
 
-/// Report a failure and return the failure exit code.
-fn report_failure(context: &str, path: &Path, error: &impl Error) -> ExitCode {
-    report_error(context, path, error);
-    ExitCode::FAILURE
+/// Render the startup error together with its remaining `caused by:` chain.
+///
+/// The startup error renders its immediate cause on the first line, so the
+/// chain continues from the cause of that cause.
+fn failure_message(error: &StartupError) -> String {
+    let mut message = error.to_string();
+    let mut cause = error.source().and_then(|source| source.source());
+    while let Some(current) = cause {
+        message.push_str("\n  caused by: ");
+        message.push_str(&current.to_string());
+        cause = current.source();
+    }
+    message
 }

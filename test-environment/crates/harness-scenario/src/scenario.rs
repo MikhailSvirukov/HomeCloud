@@ -42,7 +42,6 @@ impl Scenario {
 }
 
 /// Builder for [`Scenario`].
-#[derive(Default)]
 pub struct ScenarioBuilder {
     name: String,
     steps: Vec<Step>,

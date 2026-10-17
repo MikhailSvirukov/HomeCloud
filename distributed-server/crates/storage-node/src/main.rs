@@ -1,12 +1,16 @@
 //! `storage-node` binary entry point.
 //!
-//! Reads and validates the node configuration from environment variables and
-//! reports a concise startup summary. The actor runtime, TCP listener, and
-//! `io_uring` disk thread are later increments.
+//! Reads and validates the node configuration from environment variables,
+//! emits a structured startup log, binds the listen address, and serves frame
+//! connections until it receives a Ctrl-C shutdown signal. The `io_uring` disk
+//! thread is a later increment.
 
 use std::process::ExitCode;
 
-use storage_node::{NodeConfig, PROTOCOL_VERSION};
+use storage_node::{serve, Listener, NodeConfig, PROTOCOL_VERSION};
+
+/// Default log filter used when `RUST_LOG` is unset or unparsable.
+const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Environment variable carrying the node identity label.
 const ENV_NODE_ID: &str = "NODE_ID";
@@ -26,15 +30,26 @@ const KEY_DATA_DIR: &str = "data_dir";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 
-fn main() -> ExitCode {
-    run()
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    init_tracing();
+    run().await
 }
 
-/// Loads and validates configuration, reporting the outcome.
+/// Installs the global subscriber, honouring `RUST_LOG`.
+///
+/// A second initialization attempt is ignored so repeated setup cannot panic.
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+/// Loads and validates configuration, then serves until stopped.
 ///
 /// A missing environment variable is treated as an empty value so validation
 /// reports a missing key instead of aborting.
-fn run() -> ExitCode {
+async fn run() -> ExitCode {
     let node_id = env_value(ENV_NODE_ID);
     let listen_addr = env_value(ENV_LISTEN_ADDR);
     let data_dir = env_value(ENV_DATA_DIR);
@@ -47,32 +62,59 @@ fn run() -> ExitCode {
         (KEY_PEERS, peers.as_str()),
     ];
 
-    match NodeConfig::from_pairs(&pairs) {
-        Ok(config) => {
-            print_startup_summary(&config);
+    let config = match NodeConfig::from_pairs(&pairs) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::error!(error = %error, "invalid configuration");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(
+        crate_version = env!("CARGO_PKG_VERSION"),
+        protocol_version = PROTOCOL_VERSION,
+        node_id = %config.node_id,
+        listen_addr = %config.listen_addr,
+        data_dir = %config.data_dir.display(),
+        peers = config.peers.len(),
+        "storage node starting"
+    );
+
+    let listener = match Listener::bind(&config.listen_addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to bind listener");
+            return ExitCode::FAILURE;
+        }
+    };
+    let address = match listener.local_addr() {
+        Ok(address) => address,
+        Err(error) => {
+            tracing::error!(error = %error, "listener address unavailable");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(%address, "listening");
+
+    match serve(listener, shutdown_signal()).await {
+        Ok(()) => {
+            tracing::info!("storage node stopped");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("storage-node: invalid configuration: {error}");
+            tracing::error!(error = %error, "node runtime failed");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Resolves when the process receives Ctrl-C, failing open on a listen error.
+async fn shutdown_signal() {
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %error, "failed to listen for the shutdown signal");
     }
 }
 
 /// Reads an environment variable, mapping an absent variable to an empty string.
 fn env_value(name: &str) -> String {
     std::env::var(name).unwrap_or_default()
-}
-
-/// Prints the validated identity and endpoint summary.
-fn print_startup_summary(config: &NodeConfig) {
-    println!(
-        "storage-node {} (protocol version {})",
-        env!("CARGO_PKG_VERSION"),
-        PROTOCOL_VERSION
-    );
-    println!("node id: {}", config.node_id);
-    println!("listen address: {}", config.listen_addr);
-    println!("data dir: {}", config.data_dir.display());
-    println!("peers: {}", config.peers.len());
 }

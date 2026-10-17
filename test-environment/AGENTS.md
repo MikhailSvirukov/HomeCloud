@@ -24,12 +24,44 @@ protocol/API interfaces required to build mocks and fakes.
 - Follow the root Rust practices: typed errors with `thiserror`, no `unwrap`/
   `expect` outside tests, one behaviour per test with a descriptive name.
 
+## Rust review conventions
+
+These area conventions complement the repository-root [`AGENTS.md`](../AGENTS.md);
+that document remains the baseline, and this section records the review points
+that recur most in `test-environment/`.
+
+- **Types over strings.** Keep numeric data in a numeric type instead of `String`,
+  and type the domain (bounded newtypes, `NonZero*`) so range/zero checks
+  disappear. Model limited sets as enums and compare with the type's own traits
+  (`PartialEq`/`Ord`) rather than reading inner fields.
+- **Errors.** Use distinct `thiserror` variants for distinct failures; do not
+  funnel every case into a generic `Invalid` carrying a free-form message. When a
+  module has one error type, define `type Result<T>` there. A value reused by
+  several checks belongs in a constructor or check function, not many file-level
+  constants.
+- **API surface.** Keep public fields and functions minimal and curate the
+  exported surface with `pub use`. Do not replace a public field with a getter
+  method.
+- **Control flow.** Prefer `match` arms over `if`/`else` inside a `match`, avoid
+  `else if` in favour of early returns, and use `ToPrimitive`/`FromPrimitive`
+  instead of large enum-to-number `match`es. Prefer `and_then` for chains that
+  only propagate with `?`.
+- **Docs.** Do not add `# Errors`/`# Returns` sections or per-argument
+  descriptions; describe failure modes on the error variants instead.
+- **Tests.** Cover distinct scenarios only — never test the same scenario twice —
+  and do not test trivial constructors, getters, or static data. Form an expected
+  command/result in a dedicated helper.
+- No `unwrap`/`expect`/`panic!` outside tests (see Rules above). This area does
+  not need logging, so do not add direct printing.
+
 ## Quality gates
 
-Run `test-environment/scripts/ci.sh` before hand-off. It runs:
+Run `test-environment/scripts/ci.sh` before hand-off. The same gates run in
+GitHub Actions through [`.github/workflows/test-environment.yml`](../.github/workflows/test-environment.yml).
+The script runs:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
 ```

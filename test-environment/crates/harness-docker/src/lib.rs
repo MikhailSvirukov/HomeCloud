@@ -5,12 +5,17 @@
 //! daemon-free tests. The runtime seam abstracts container lifecycle operations;
 //! [`FakeClusterRuntime`] is the in-memory implementation used by tests.
 
+mod cli;
 mod command;
 mod plan;
+mod process;
 mod runtime;
 
+pub use cli::{CliClusterRuntime, CommandRunner, RecordingCommandRunner};
 pub use command::{
     Command, container_name, container_remove, container_run, container_stop, network_create,
+    network_remove,
 };
-pub use plan::{ClusterPlan, ContainerEnv, ContainerPlan, NetworkPlan, PlanSettings};
+pub use plan::{ClusterPlan, ContainerPlan, EnvBuilder, NetworkPlan, PlanSettings};
+pub use process::ProcessCommandRunner;
 pub use runtime::{ClusterRuntime, FakeClusterRuntime};

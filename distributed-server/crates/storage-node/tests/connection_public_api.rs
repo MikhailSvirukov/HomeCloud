@@ -1,51 +1,59 @@
-//! Integration tests exercising the public `FrameConnection` API over real
-//! duplex streams, so the actor codec is driven end to end rather than through
-//! in-memory buffer helpers.
+//! Integration tests exercising the public frame reader/writer, `split_frames`,
+//! and `pump_frames` over real duplex streams, so the connection halves are
+//! driven end to end rather than through in-memory buffer helpers.
 
 use storage_node::{
-    encode_frame, ConnectionError, FrameConnection, FramingError, MAX_FRAME_PAYLOAD_LEN,
+    encode_frame, pump_frames, split_frames, ConnectionError, FrameReader, FrameWriter,
+    FramingError, MAX_FRAME_PAYLOAD_LEN,
 };
 use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt, DuplexStream};
+use tokio::sync::mpsc;
 
 /// Encodes `payload`, asserting the test payload is within the frame limit.
 fn frame(payload: &[u8]) -> Vec<u8> {
     encode_frame(payload).expect("test payload is within the frame limit")
 }
 
-/// Builds a connected writer/reader pair of frame connections sharing `capacity`
-/// bytes of duplex buffer.
-fn connected_pair(
-    capacity: usize,
-) -> (FrameConnection<DuplexStream>, FrameConnection<DuplexStream>) {
-    let (writer_half, reader_half) = duplex(capacity);
-    (
-        FrameConnection::new(writer_half),
-        FrameConnection::new(reader_half),
-    )
+/// Builds a connected pair of duplex endpoints sharing `capacity` bytes.
+fn duplex_pair(capacity: usize) -> (DuplexStream, DuplexStream) {
+    duplex(capacity)
 }
 
 #[tokio::test]
-async fn round_trips_a_frame_over_duplex() {
-    let (mut writer, mut reader) = connected_pair(1024);
+async fn frames_round_trip_in_both_directions() {
+    let (client, server) = duplex_pair(1024);
+    let (mut client_reader, mut client_writer) = split_frames(client);
+    let (mut server_reader, mut server_writer) = split_frames(server);
 
-    writer
-        .send_frame(b"hello")
+    client_writer
+        .send_frame(b"ping")
+        .await
+        .expect("in-memory duplex write cannot fail");
+    server_writer
+        .send_frame(b"pong")
         .await
         .expect("in-memory duplex write cannot fail");
 
-    let received = reader
+    let received_by_server = server_reader
         .next_frame()
         .await
         .expect("in-memory duplex read cannot fail")
-        .expect("a whole frame was written");
+        .expect("the client frame was written");
+    let received_by_client = client_reader
+        .next_frame()
+        .await
+        .expect("in-memory duplex read cannot fail")
+        .expect("the server frame was written");
 
-    assert_eq!(received, frame(b"hello"));
+    assert_eq!(received_by_server, frame(b"ping"));
+    assert_eq!(received_by_client, frame(b"pong"));
 }
 
 #[tokio::test]
 async fn next_frame_returns_none_at_eof() {
-    let (writer, mut reader) = connected_pair(1024);
-    drop(writer);
+    let (peer, reader_half) = duplex_pair(1024);
+    let mut reader = FrameReader::new(reader_half);
+    drop(peer);
 
     let received = reader
         .next_frame()
@@ -61,8 +69,8 @@ async fn frame_split_across_writes_is_reassembled() {
     let midpoint = encoded.len() / 2;
     let (head, tail) = encoded.split_at(midpoint);
 
-    let (mut raw_writer, reader_half) = duplex(8);
-    let mut reader = FrameConnection::new(reader_half);
+    let (mut raw_writer, reader_half) = duplex_pair(8);
+    let mut reader = FrameReader::new(reader_half);
 
     let write_two_chunks = async {
         raw_writer
@@ -89,7 +97,9 @@ async fn max_size_frame_followed_by_another_is_read_whole() {
     let big_frame = frame(&big_payload);
     let small_frame = frame(b"tail");
 
-    let (mut writer, mut reader) = connected_pair(64 * 1024);
+    let (client, server) = duplex_pair(64 * 1024);
+    let (_client_reader, mut writer) = split_frames(client);
+    let (mut reader, _server_writer) = split_frames(server);
 
     let write_both = async {
         writer
@@ -124,8 +134,8 @@ async fn max_size_frame_followed_by_another_is_read_whole() {
 
 #[tokio::test]
 async fn send_frame_rejects_oversized_payload() {
-    let (mut peer, writer_half) = duplex(64);
-    let mut writer = FrameConnection::new(writer_half);
+    let (mut peer, writer_half) = duplex_pair(64);
+    let mut writer = FrameWriter::new(writer_half);
     let payload = vec![0u8; MAX_FRAME_PAYLOAD_LEN as usize + 1];
 
     let error = writer
@@ -145,4 +155,44 @@ async fn send_frame_rejects_oversized_payload() {
         .await
         .expect("in-memory duplex read cannot fail");
     assert_eq!(read, 0, "rejected payload must write no bytes");
+}
+
+#[tokio::test]
+async fn pump_frames_forwards_frames_both_ways() {
+    let (client, server) = duplex_pair(1024);
+    let (inbound_tx, mut inbound_rx) = mpsc::channel(4);
+    let (outbound_tx, outbound_rx) = mpsc::channel(4);
+
+    let pump = tokio::spawn(pump_frames(client, inbound_tx, outbound_rx));
+    let (mut server_reader, mut server_writer) = split_frames(server);
+
+    server_writer
+        .send_frame(b"from-peer")
+        .await
+        .expect("in-memory duplex write cannot fail");
+
+    let forwarded = inbound_rx
+        .recv()
+        .await
+        .expect("pump forwards the peer frame before closing");
+    assert_eq!(forwarded, frame(b"from-peer"));
+
+    outbound_tx
+        .send(b"to-peer".to_vec())
+        .await
+        .expect("pump keeps the outbound channel open");
+
+    let received = server_reader
+        .next_frame()
+        .await
+        .expect("in-memory duplex read cannot fail")
+        .expect("the pump wrote the outbound payload");
+    assert_eq!(received, frame(b"to-peer"));
+
+    drop(outbound_tx);
+    let outcome = pump.await.expect("pump task does not panic");
+    assert!(
+        matches!(outcome, Ok(())),
+        "pump returns Ok when the outbound channel closes"
+    );
 }

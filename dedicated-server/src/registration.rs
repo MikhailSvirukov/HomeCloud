@@ -14,14 +14,6 @@ type Result<T, E = RegistrationError> = core::result::Result<T, E>;
 /// Maximum accepted length of a login, in characters.
 pub(crate) const MAX_LOGIN_LENGTH: usize = 64;
 
-/// Punctuation characters allowed in a [`Login`] in addition to ASCII
-/// alphanumerics.
-const ALLOWED_LOGIN_SYMBOLS: [char; 3] = ['-', '_', '.'];
-
-/// Relative path components that name the current or parent namespace and are
-/// therefore never valid account logins.
-const RESERVED_LOGIN_NAMES: [&str; 2] = [".", ".."];
-
 /// A validated cluster-unique login.
 ///
 /// A login is a validated namespace component: the relative path components
@@ -41,7 +33,7 @@ impl Login {
         if let Some(character) = value.chars().find(|c| !is_allowed_login_character(*c)) {
             return Err(LoginError::InvalidCharacter(character));
         }
-        if RESERVED_LOGIN_NAMES.contains(&value) {
+        if matches!(value, "." | "..") {
             return Err(LoginError::Reserved);
         }
         Ok(Self(value.to_string()))
@@ -148,7 +140,7 @@ pub enum RegistrationError {
 
 /// Whether `character` is allowed in a [`Login`].
 fn is_allowed_login_character(character: char) -> bool {
-    character.is_ascii_alphanumeric() || ALLOWED_LOGIN_SYMBOLS.contains(&character)
+    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
 }
 
 #[cfg(test)]
