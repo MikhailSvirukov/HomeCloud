@@ -165,12 +165,22 @@ fn repeated_request_returns_the_outcome_and_different_content_conflicts() {
     let repeated = registry
         .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))
         .expect("repeated registration must succeed");
-    let conflict = registry
+    let conflict_keys = registry
         .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x42)))
-        .expect_err("different content must conflict");
+        .expect_err("different keys must conflict");
+    let conflict_password = registry
+        .register(request(FIRST_REQUEST, LOGIN, WRONG_PASSWORD, first_keys))
+        .expect_err("different password must conflict");
 
     assert_eq!(repeated, first);
-    assert!(matches!(conflict, RegistrationError::RequestIdConflict));
+    assert!(matches!(
+        conflict_keys,
+        RegistrationError::RequestIdConflict
+    ));
+    assert!(matches!(
+        conflict_password,
+        RegistrationError::RequestIdConflict
+    ));
     assert_eq!(
         registry
             .account(&login(LOGIN))
