@@ -10,6 +10,9 @@ use thiserror::Error;
 
 use crate::config::{ConfigError, ServerConfig};
 use crate::identity::{IdentityError, ServerIdentity};
+use crate::registration::{
+    AccountRegistry, RegistrationError, RegistrationOutcome, RegistrationRequest,
+};
 
 /// Result of loading a [`Startup`].
 type Result<T> = core::result::Result<T, StartupError>;
@@ -18,6 +21,7 @@ type Result<T> = core::result::Result<T, StartupError>;
 pub struct Startup {
     config: ServerConfig,
     identity: ServerIdentity,
+    accounts: AccountRegistry,
 }
 
 impl Startup {
@@ -38,7 +42,21 @@ impl Startup {
             source,
         })?;
 
-        Ok(Self { config, identity })
+        let accounts = AccountRegistry::new(config.password.params());
+
+        Ok(Self {
+            config,
+            identity,
+            accounts,
+        })
+    }
+
+    /// Register a login or an additional installation with the configured parameters.
+    pub fn register(
+        &mut self,
+        request: RegistrationRequest,
+    ) -> core::result::Result<RegistrationOutcome, RegistrationError> {
+        self.accounts.register(request)
     }
 
     /// One-line summary of the configuration and identity the server started with.

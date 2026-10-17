@@ -17,5 +17,8 @@ pub use config::{ConfigError, ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
-pub use registration::{Account, AccountRegistry, Login, LoginError, RegistrationError};
+pub use registration::{
+    Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,
+    RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
+};
 pub use report::{Startup, StartupError};

@@ -1,13 +1,19 @@
 //! In-memory account registration for the dedicated server.
 //!
-//! This module validates logins and keeps the account table; it does no I/O or
-//! cryptography and treats verifier and client key bytes as opaque.
+//! A registration creates an account with its first installation or adds a
+//! further installation to an existing account after checking its password.
+//! Replaying a request identifier is idempotent while conflicting content is
+//! rejected. Verifiers are derived and checked by the password module; this
+//! module performs no I/O.
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fmt;
 
 use thiserror::Error;
+use uuid::Uuid;
+
+use crate::password::{Argon2Params, PasswordError, PasswordVerifier};
 
 type Result<T, E = RegistrationError> = core::result::Result<T, E>;
 
@@ -68,74 +74,187 @@ pub enum LoginError {
     Reserved,
 }
 
-/// A registered account: its login, password verifier and client encryption key.
-pub struct Account {
-    pub login: Login,
-    pub password_verifier: Vec<u8>,
-    pub client_encryption_public_key: Vec<u8>,
-}
+/// Identifier a client puts on a registration request (16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RequestId([u8; 16]);
 
-impl Account {
-    /// Build an account, rejecting empty verifier or client key material.
-    pub fn new(
-        login: Login,
-        password_verifier: Vec<u8>,
-        client_encryption_public_key: Vec<u8>,
-    ) -> Result<Self> {
-        if password_verifier.is_empty() {
-            return Err(RegistrationError::EmptyPasswordVerifier);
-        }
-        if client_encryption_public_key.is_empty() {
-            return Err(RegistrationError::EmptyClientEncryptionPublicKey);
-        }
-        Ok(Self {
-            login,
-            password_verifier,
-            client_encryption_public_key,
-        })
+impl RequestId {
+    /// Wrap the wire bytes of a registration request identifier.
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// The identifier as wire bytes.
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
     }
 }
 
-/// In-memory account table keyed by cluster-unique login.
-#[derive(Default)]
+/// Identifier of one client installation (UUIDv4, 16 bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InstallationId([u8; 16]);
+
+impl InstallationId {
+    /// Generate a random UUIDv4 installation identifier.
+    pub fn generate() -> Self {
+        Self(*Uuid::new_v4().as_bytes())
+    }
+
+    /// Wrap the wire bytes of an installation identifier.
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// The identifier as wire bytes.
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+/// Public keys of one client installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstallationKeys {
+    /// X25519 public key used for encrypted answers.
+    pub encryption_public_key: [u8; 32],
+    /// Ed25519 public key used to sign the installation's messages.
+    pub signing_public_key: [u8; 32],
+}
+
+/// One registered client installation.
+pub struct Installation {
+    pub id: InstallationId,
+    pub keys: InstallationKeys,
+}
+
+/// A registration request for a login and one installation.
+pub struct RegistrationRequest {
+    pub request_id: RequestId,
+    pub login: Login,
+    pub password: String,
+    pub keys: InstallationKeys,
+}
+
+/// What a successful registration produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationOutcome {
+    /// A new account was created with its first installation.
+    AccountCreated { installation_id: InstallationId },
+    /// A further installation was added to an existing account.
+    InstallationAdded { installation_id: InstallationId },
+}
+
+/// A registered account: its login, verifier and installations.
+pub struct Account {
+    pub login: Login,
+    pub verifier: PasswordVerifier,
+    pub installations: BTreeMap<InstallationId, Installation>,
+}
+
+/// A previous registration kept for idempotent replays.
+struct RecordedRequest {
+    login: Login,
+    keys: InstallationKeys,
+    outcome: RegistrationOutcome,
+}
+
+/// In-memory account table with idempotent registration.
 pub struct AccountRegistry {
+    params: Argon2Params,
     accounts: BTreeMap<Login, Account>,
+    requests: BTreeMap<RequestId, RecordedRequest>,
 }
 
 impl AccountRegistry {
-    /// Register a new account, rejecting an already-registered login.
-    pub fn register(&mut self, account: Account) -> Result<&Account> {
-        match self.accounts.entry(account.login.clone()) {
-            Entry::Occupied(entry) => Err(RegistrationError::LoginAlreadyRegistered(
-                entry.key().clone(),
-            )),
-            Entry::Vacant(entry) => Ok(entry.insert(account)),
+    /// Build an empty registry that derives verifiers with `params`.
+    pub fn new(params: Argon2Params) -> Self {
+        Self {
+            params,
+            accounts: BTreeMap::new(),
+            requests: BTreeMap::new(),
         }
     }
 
-    /// Look up an account.
-    pub fn get(&self, login: &Login) -> Option<&Account> {
-        self.accounts.get(login)
+    /// Register a login or an additional installation of an existing login.
+    pub fn register(&mut self, request: RegistrationRequest) -> Result<RegistrationOutcome> {
+        if let Some(recorded) = self.requests.get(&request.request_id) {
+            let matches = recorded.login == request.login
+                && recorded.keys == request.keys
+                && match self.accounts.get(&recorded.login) {
+                    Some(account) => account.verifier.verify(&request.password)?,
+                    None => false,
+                };
+            return if matches {
+                Ok(recorded.outcome)
+            } else {
+                Err(RegistrationError::RequestIdConflict)
+            };
+        }
+
+        let outcome = match self.accounts.entry(request.login.clone()) {
+            Entry::Occupied(mut entry) => {
+                let account = entry.get_mut();
+                if !account.verifier.verify(&request.password)? {
+                    return Err(RegistrationError::PasswordRejected);
+                }
+                let installation_id = InstallationId::generate();
+                account.installations.insert(
+                    installation_id,
+                    Installation {
+                        id: installation_id,
+                        keys: request.keys,
+                    },
+                );
+                RegistrationOutcome::InstallationAdded { installation_id }
+            }
+            Entry::Vacant(entry) => {
+                let verifier = PasswordVerifier::derive(&request.password, self.params)?;
+                let installation_id = InstallationId::generate();
+                let mut installations = BTreeMap::new();
+                installations.insert(
+                    installation_id,
+                    Installation {
+                        id: installation_id,
+                        keys: request.keys,
+                    },
+                );
+                entry.insert(Account {
+                    login: request.login.clone(),
+                    verifier,
+                    installations,
+                });
+                RegistrationOutcome::AccountCreated { installation_id }
+            }
+        };
+
+        self.requests.insert(
+            request.request_id,
+            RecordedRequest {
+                login: request.login,
+                keys: request.keys,
+                outcome,
+            },
+        );
+        Ok(outcome)
     }
 
-    /// All accounts in login order.
-    pub fn accounts(&self) -> impl Iterator<Item = &Account> {
-        self.accounts.values()
+    /// Look up an account.
+    pub fn account(&self, login: &Login) -> Option<&Account> {
+        self.accounts.get(login)
     }
 }
 
 /// Errors produced by registration.
 #[derive(Debug, Error)]
 pub enum RegistrationError {
-    /// The password verifier was empty.
-    #[error("password verifier must not be empty")]
-    EmptyPasswordVerifier,
-    /// The client encryption public key was empty.
-    #[error("client encryption public key must not be empty")]
-    EmptyClientEncryptionPublicKey,
-    /// The login already names a registered account.
-    #[error("login '{0}' is already registered")]
-    LoginAlreadyRegistered(Login),
+    /// The request identifier was already recorded with different content.
+    #[error("registration request was already used with different content")]
+    RequestIdConflict,
+    /// The password did not match the existing account.
+    #[error("the password does not match the registered account")]
+    PasswordRejected,
+    /// Deriving or checking a password verifier failed.
+    #[error(transparent)]
+    Password(#[from] PasswordError),
 }
 
 /// Whether `character` is allowed in a [`Login`].
@@ -145,19 +264,76 @@ fn is_allowed_login_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::num::{NonZeroU32, NonZeroUsize};
+
     use super::*;
 
     const LOGIN: &str = "user-1.2_x";
-    const VERIFIER: &[u8] = &[0x01, 0x02, 0x03];
-    const CLIENT_KEY: &[u8] = &[0x04, 0x05, 0x06];
+    const OTHER_LOGIN: &str = "other_user";
+    const PASSWORD: &str = "correct horse battery staple";
+    const WRONG_PASSWORD: &str = "correct horse battery stapler";
+    const MEMORY_KIB: u32 = 8;
+    const ITERATIONS: u32 = 1;
+    const PARALLELISM: u32 = 1;
+    const SALT_LENGTH_BYTES: usize = 16;
+    const FIRST_REQUEST: [u8; 16] = [0x01; 16];
+    const SECOND_REQUEST: [u8; 16] = [0x02; 16];
+
+    fn non_zero(value: u32) -> NonZeroU32 {
+        NonZeroU32::new(value).expect("test values must be non-zero")
+    }
+
+    fn params(memory_kib: u32, iterations: u32, parallelism: u32) -> Argon2Params {
+        Argon2Params {
+            memory_kib: non_zero(memory_kib),
+            iterations: non_zero(iterations),
+            parallelism: non_zero(parallelism),
+            salt_length_bytes: NonZeroUsize::new(SALT_LENGTH_BYTES)
+                .expect("test salt length must be non-zero"),
+        }
+    }
+
+    fn fast_params() -> Argon2Params {
+        params(MEMORY_KIB, ITERATIONS, PARALLELISM)
+    }
 
     fn login(value: &str) -> Login {
         Login::parse(value).expect("test login must be valid")
     }
 
-    fn account(name: &str) -> Account {
-        Account::new(login(name), VERIFIER.to_vec(), CLIENT_KEY.to_vec())
-            .expect("test account must be valid")
+    fn keys(seed: u8) -> InstallationKeys {
+        InstallationKeys {
+            encryption_public_key: [seed; 32],
+            signing_public_key: [seed.wrapping_add(1); 32],
+        }
+    }
+
+    fn request(
+        request_id: [u8; 16],
+        login_name: &str,
+        password: &str,
+        keys: InstallationKeys,
+    ) -> RegistrationRequest {
+        RegistrationRequest {
+            request_id: RequestId::from_bytes(request_id),
+            login: login(login_name),
+            password: password.to_owned(),
+            keys,
+        }
+    }
+
+    fn created(outcome: RegistrationOutcome) -> InstallationId {
+        match outcome {
+            RegistrationOutcome::AccountCreated { installation_id } => installation_id,
+            other => panic!("expected a created account, got {other:?}"),
+        }
+    }
+
+    fn added(outcome: RegistrationOutcome) -> InstallationId {
+        match outcome {
+            RegistrationOutcome::InstallationAdded { installation_id } => installation_id,
+            other => panic!("expected an added installation, got {other:?}"),
+        }
     }
 
     #[test]
@@ -197,66 +373,238 @@ mod tests {
     }
 
     #[test]
-    fn account_new_holds_login_and_bytes_and_rejects_empty_material() {
-        let account = Account::new(login(LOGIN), VERIFIER.to_vec(), CLIENT_KEY.to_vec())
-            .expect("valid material must build an account");
+    fn unknown_login_creates_one_installation_with_a_uuid_v4_identifier() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let keys = keys(0x11);
 
-        assert_eq!(account.login.as_str(), LOGIN);
-        assert_eq!(account.password_verifier, VERIFIER);
-        assert_eq!(account.client_encryption_public_key, CLIENT_KEY);
+        let outcome = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys))
+            .expect("first registration must succeed");
 
-        let empty_verifier = Account::new(login(LOGIN), Vec::new(), CLIENT_KEY.to_vec());
-        let empty_client_key = Account::new(login(LOGIN), VERIFIER.to_vec(), Vec::new());
+        let installation_id = created(outcome);
+        let account = registry.account(&login(LOGIN)).expect("account must exist");
+        let installation = account
+            .installations
+            .get(&installation_id)
+            .expect("installation must exist");
+        let bytes = installation_id.as_bytes();
 
-        assert!(matches!(
-            empty_verifier,
-            Err(RegistrationError::EmptyPasswordVerifier)
-        ));
-        assert!(matches!(
-            empty_client_key,
-            Err(RegistrationError::EmptyClientEncryptionPublicKey)
-        ));
+        assert_eq!(account.installations.len(), 1);
+        assert_eq!(installation.id, installation_id);
+        assert_eq!(installation.keys, keys);
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(bytes[6] >> 4, 4);
+        assert_eq!(bytes[8] >> 6, 0b10);
     }
 
     #[test]
-    fn register_rejects_duplicate_login_and_keeps_original_account() {
-        let mut registry = AccountRegistry::default();
-        registry
-            .register(account(LOGIN))
+    fn created_installation_is_reachable_through_its_login() {
+        let mut registry = AccountRegistry::new(fast_params());
+
+        let installation_id = created(
+            registry
+                .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x21)))
+                .expect("first registration must succeed"),
+        );
+        let account = registry.account(&login(LOGIN)).expect("account must exist");
+
+        assert_eq!(account.login, login(LOGIN));
+        assert!(account.installations.contains_key(&installation_id));
+        assert!(registry.account(&login(OTHER_LOGIN)).is_none());
+    }
+
+    #[test]
+    fn second_registration_with_correct_password_adds_installation_and_keeps_first() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let first_keys = keys(0x31);
+        let first_id = created(
+            registry
+                .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))
+                .expect("first registration must succeed"),
+        );
+        let second_keys = keys(0x32);
+
+        let second_id = added(
+            registry
+                .register(request(SECOND_REQUEST, LOGIN, PASSWORD, second_keys))
+                .expect("second registration must succeed"),
+        );
+
+        let account = registry.account(&login(LOGIN)).expect("account must exist");
+
+        assert_ne!(first_id, second_id);
+        assert_eq!(account.installations.len(), 2);
+        assert_eq!(
+            account
+                .installations
+                .get(&first_id)
+                .expect("first installation must remain")
+                .keys,
+            first_keys
+        );
+        assert_eq!(
+            account
+                .installations
+                .get(&second_id)
+                .expect("second installation must exist")
+                .keys,
+            second_keys
+        );
+    }
+
+    #[test]
+    fn second_registration_with_wrong_password_is_rejected_without_changes() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let first_keys = keys(0x41);
+        let first_id = created(
+            registry
+                .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))
+                .expect("first registration must succeed"),
+        );
+        let verifier_before = registry
+            .account(&login(LOGIN))
+            .expect("account must exist")
+            .verifier
+            .as_str()
+            .to_owned();
+
+        let error = registry
+            .register(request(SECOND_REQUEST, LOGIN, WRONG_PASSWORD, keys(0x42)))
+            .expect_err("wrong password must be rejected");
+
+        let account = registry
+            .account(&login(LOGIN))
+            .expect("account must remain");
+        assert!(matches!(error, RegistrationError::PasswordRejected));
+        assert_eq!(account.installations.len(), 1);
+        assert_eq!(
+            account
+                .installations
+                .get(&first_id)
+                .expect("first installation must remain")
+                .keys,
+            first_keys
+        );
+        assert_eq!(account.verifier.as_str(), verifier_before);
+    }
+
+    #[test]
+    fn repeating_a_request_returns_the_recorded_outcome_without_a_new_installation() {
+        let mut registry = AccountRegistry::new(fast_params());
+        let keys = keys(0x51);
+        let first = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys))
             .expect("first registration must succeed");
 
-        let replacement = Account::new(login(LOGIN), vec![0x09], vec![0x08])
-            .expect("replacement account must be valid");
-        let error = match registry.register(replacement) {
-            Ok(_) => panic!("duplicate login must fail"),
-            Err(error) => error,
-        };
+        let repeated = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys))
+            .expect("repeated registration must succeed");
+
+        assert_eq!(repeated, first);
+        assert_eq!(
+            registry
+                .account(&login(LOGIN))
+                .expect("account must exist")
+                .installations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn reusing_a_request_id_with_different_keys_is_rejected() {
+        let mut registry = AccountRegistry::new(fast_params());
+        registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x61)))
+            .expect("first registration must succeed");
+
+        let error = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x62)))
+            .expect_err("different keys must conflict");
+
+        assert!(matches!(error, RegistrationError::RequestIdConflict));
+        assert_eq!(
+            registry
+                .account(&login(LOGIN))
+                .expect("account must exist")
+                .installations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn reusing_a_request_id_with_a_different_login_is_rejected() {
+        let mut registry = AccountRegistry::new(fast_params());
+        registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x71)))
+            .expect("first registration must succeed");
+
+        let error = registry
+            .register(request(FIRST_REQUEST, OTHER_LOGIN, PASSWORD, keys(0x71)))
+            .expect_err("different login must conflict");
+
+        assert!(matches!(error, RegistrationError::RequestIdConflict));
+        assert!(registry.account(&login(OTHER_LOGIN)).is_none());
+        assert_eq!(
+            registry
+                .account(&login(LOGIN))
+                .expect("account must exist")
+                .installations
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn new_account_verifier_records_the_registry_parameters() {
+        let mut registry = AccountRegistry::new(params(16, 2, 1));
+        registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x81)))
+            .expect("registration must succeed");
+
+        let verifier = registry
+            .account(&login(LOGIN))
+            .expect("account must exist")
+            .verifier
+            .as_str();
+
+        assert!(
+            verifier.starts_with("$argon2id$v=19$m=16,t=2,p=1$"),
+            "verifier: {verifier}"
+        );
+    }
+
+    #[test]
+    fn registering_twice_for_one_login_keeps_a_single_account() {
+        let mut registry = AccountRegistry::new(fast_params());
+        registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x91)))
+            .expect("first registration must succeed");
+        registry
+            .register(request(SECOND_REQUEST, LOGIN, PASSWORD, keys(0x92)))
+            .expect("second registration must succeed");
+
+        let account = registry.account(&login(LOGIN)).expect("account must exist");
+
+        assert_eq!(registry.accounts.len(), 1);
+        assert_eq!(account.login, login(LOGIN));
+        assert_eq!(account.installations.len(), 2);
+    }
+
+    #[test]
+    fn derivation_failure_is_reported_without_recording_anything() {
+        let mut registry = AccountRegistry::new(params(1, 1, 1));
+
+        let error = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0xa1)))
+            .expect_err("invalid derivation parameters must fail");
 
         assert!(matches!(
             error,
-            RegistrationError::LoginAlreadyRegistered(ref login) if login.as_str() == LOGIN
+            RegistrationError::Password(PasswordError::Parameters(_))
         ));
-
-        let stored = registry.get(&login(LOGIN)).expect("account must remain");
-        assert_eq!(stored.password_verifier, VERIFIER);
-        assert_eq!(stored.client_encryption_public_key, CLIENT_KEY);
-        assert_eq!(registry.accounts().count(), 1);
-    }
-
-    #[test]
-    fn accounts_yields_every_account_in_login_order() {
-        let mut registry = AccountRegistry::default();
-        for name in ["carol", "alice", "bob"] {
-            registry
-                .register(account(name))
-                .expect("registration must succeed");
-        }
-
-        let logins: Vec<&str> = registry
-            .accounts()
-            .map(|account| account.login.as_str())
-            .collect();
-
-        assert_eq!(logins, ["alice", "bob", "carol"]);
+        assert!(registry.account(&login(LOGIN)).is_none());
+        assert!(registry.requests.is_empty());
     }
 }

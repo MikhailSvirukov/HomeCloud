@@ -45,11 +45,15 @@ root. Consumers therefore use `dedicated_server::` paths (for example
 ## Configuration schema
 
 - Top level: `listen` (socket address string), `[identity]`, `[heartbeat]`,
-  `[[cluster.nodes]]`.
+  `[password]`, `[[cluster.nodes]]`.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
 - `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
   (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
   value is rejected while the configuration is parsed, not by a later check.
+- `password`: `memory_kib`, `iterations` and `parallelism` are non-zero
+  (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
+  (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
+  password verifiers are configured here.
 - `cluster.nodes[]`: `label` (non-empty, unique), `address` (unique socket
   address), `encryption_public_key`, `signing_public_key` (non-empty strings).
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
@@ -68,6 +72,12 @@ signing_private_key = "/etc/homecloud/dedicated/signing.key"
 interval_ms = 1000
 timeout_ms = 500
 miss_threshold = 3
+
+[password]
+memory_kib = 8
+iterations = 1
+parallelism = 1
+salt_length_bytes = 16
 
 [[cluster.nodes]]
 label = "storage-1"
