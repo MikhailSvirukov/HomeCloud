@@ -113,6 +113,7 @@ impl BollardClusterRuntime {
         let options = CreateContainerOptionsBuilder::new().name(&name).build();
         let body = ContainerCreateBody {
             image: Some(container.image.clone()),
+            cmd: (!container.command.is_empty()).then(|| container.command.clone()),
             hostname: Some(container.hostname.clone()),
             env: Some(
                 container
@@ -244,6 +245,7 @@ fn host_config(plan: &ClusterPlan, container: &ContainerPlan) -> HostConfig {
         .map(|path| vec![format!("{}-data:{path}", container_name(plan, container))]);
     HostConfig {
         binds,
+        cap_add: (!container.cap_add.is_empty()).then(|| container.cap_add.clone()),
         ..Default::default()
     }
 }

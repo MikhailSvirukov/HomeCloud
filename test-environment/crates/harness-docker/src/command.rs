@@ -19,6 +19,7 @@ const NAME: &str = "--name";
 const HOSTNAME: &str = "--hostname";
 const NETWORK_FLAG: &str = "--network";
 const NETWORK_ALIAS: &str = "--network-alias";
+const CAP_ADD: &str = "--cap-add";
 const VOLUME: &str = "--volume";
 const ENV: &str = "-e";
 const STOP: &str = "stop";
@@ -89,6 +90,10 @@ pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
         NETWORK_ALIAS.to_string(),
         container.hostname.clone(),
     ];
+    for capability in &container.cap_add {
+        args.push(CAP_ADD.to_string());
+        args.push(capability.clone());
+    }
     if let Some(path) = &container.data_volume_path {
         args.push(VOLUME.to_string());
         args.push(format!("{name}-data:{path}"));
@@ -98,6 +103,7 @@ pub fn container_run(plan: &ClusterPlan, container: &ContainerPlan) -> Command {
         args.push(format!("{key}={value}"));
     }
     args.push(container.image.clone());
+    args.extend(container.command.iter().cloned());
     Command::new(DOCKER, args)
 }
 
