@@ -60,7 +60,7 @@ internal object CaptureTimeResolver {
             return ZoneOffset.UTC
         }
         val match = OFFSET_PATTERN.matchEntire(candidate) ?: return null
-        val (_, sign, hoursText, minutesText) = match.destructured
+        val (sign, hoursText, minutesText) = match.destructured
         val hours = hoursText.toInt()
         val minutes = minutesText.toInt()
         if (minutes >= MINUTES_PER_HOUR) {
