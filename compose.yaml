@@ -90,6 +90,8 @@ services:
       - gradle-cache-distributed:/home/opencode/.gradle
       - android-cache-distributed:/home/opencode/.android
       - general-cache-distributed:/home/opencode/.cache
+    security_opt:
+      - seccomp=unconfined
 
   dedicated-server:
     <<: *agent
