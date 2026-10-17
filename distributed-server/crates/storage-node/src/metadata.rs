@@ -23,7 +23,7 @@ pub const CONTENT_HASH_LEN: usize = 32;
 type Result<T> = core::result::Result<T, MetadataError>;
 
 /// Stable per-version upload identifier transmitted as 16 raw bytes (`INT-NET-011 / 1`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UploadId([u8; UPLOAD_ID_LEN]);
 
 impl UploadId {
@@ -189,6 +189,13 @@ impl UploadLedger {
     /// Returns the record stored for `upload_id`, if any.
     pub fn get(&self, upload_id: &UploadId) -> Option<&UploadRecord> {
         self.records.get(upload_id)
+    }
+
+    /// Returns every recorded version ordered by ascending `upload_id`.
+    pub fn catalog(&self) -> Vec<&UploadRecord> {
+        let mut records: Vec<&UploadRecord> = self.records.values().collect();
+        records.sort_by_key(|record| record.upload_id);
+        records
     }
 
     /// Number of distinct upload ids recorded.

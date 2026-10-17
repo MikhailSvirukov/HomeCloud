@@ -1,7 +1,8 @@
 //! Integration tests exercising only the public `storage_node` upload ledger API.
 //!
 //! Covers `INT-NET-011 / 1`: an upload identifier is a 16-byte value transmitted
-//! as raw bytes and rendered as 32 lowercase hex characters.
+//! as raw bytes and rendered as 32 lowercase hex characters. Also covers
+//! `FR-CAT-007 / 1`: the catalog lists versions in ascending `upload_id` order.
 
 use storage_node::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
@@ -101,4 +102,44 @@ fn ledger_get_unknown_id_returns_none() {
 
     assert!(!ledger.is_empty());
     assert_eq!(ledger.get(&unknown), None);
+}
+
+#[test]
+fn catalog_returns_versions_in_ascending_upload_id_order() {
+    let mut ledger = UploadLedger::new();
+    for (seed, login, original_name, size_bytes, hash_byte, accepted_at_ms) in [
+        (0x03, "carol", "c.txt", 30, 0x33, 3_000),
+        (0x01, "alice", "a.txt", 10, 0x11, 1_000),
+        (0x02, "bob", "b.txt", 20, 0x22, 2_000),
+    ] {
+        let record = UploadRecord::new(
+            upload_id(seed),
+            login,
+            original_name,
+            size_bytes,
+            content_hash(hash_byte),
+            accepted_at_ms,
+        )
+        .expect("record with non-blank fields is valid");
+        assert_eq!(ledger.record(record), RecordOutcome::Recorded);
+    }
+
+    let catalog = ledger.catalog();
+    assert_eq!(catalog.len(), 3);
+    assert_eq!(
+        catalog
+            .iter()
+            .map(|record| record.upload_id)
+            .collect::<Vec<_>>(),
+        vec![upload_id(0x01), upload_id(0x02), upload_id(0x03)]
+    );
+
+    let repeated_catalog = ledger.catalog();
+    assert_eq!(
+        repeated_catalog
+            .iter()
+            .map(|record| record.upload_id)
+            .collect::<Vec<_>>(),
+        vec![upload_id(0x01), upload_id(0x02), upload_id(0x03)]
+    );
 }
