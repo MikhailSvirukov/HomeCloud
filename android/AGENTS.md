@@ -46,7 +46,7 @@ Run the area-local check before handing off:
 bash android/ci/check.sh
 ```
 
-It bootstraps the pinned Gradle distribution and runs `:app:assembleDebug`, `:app:testDebugUnitTest`, `:app:lintDebug` and `:app:ktlintCheck`.
+It bootstraps the pinned Gradle distribution and runs `:app:assembleDebug`, `:app:assembleRelease`, `:app:testDebugUnitTest`, `:app:lintDebug` and `:app:ktlintCheck`.
 
 ## Pinned tool versions
 
