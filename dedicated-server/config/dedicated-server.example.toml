@@ -1,6 +1,7 @@
 # Example configuration for the dedicated-server runtime image.
-# Copy to dedicated-server.toml next to this file and place the two private
-# keys under keys/. Node identifiers and public keys below are synthetic.
+# Copy it to <DEDICATED_SERVER_CONFIG_DIR>/dedicated-server.toml and keep the
+# two key files in that external directory, never in this checkout.
+# Node identifiers and public keys below are synthetic.
 
 listen = "0.0.0.0:7000"
 max_label_bytes = 64

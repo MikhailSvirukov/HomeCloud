@@ -130,7 +130,7 @@ services:
       - no-new-privileges:true
     restart: "no"
     volumes:
-      - ${DEDICATED_SERVER_CONFIG_DIR:-./dedicated-server/config}:/etc/homecloud:ro
+      - ${DEDICATED_SERVER_CONFIG_DIR:?set DEDICATED_SERVER_CONFIG_DIR to a directory outside this checkout}:/etc/homecloud:ro
     networks: [dedicated-server-net]
 
   test-environment:

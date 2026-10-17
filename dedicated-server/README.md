@@ -46,39 +46,56 @@ root. Consumers therefore use `dedicated_server::` paths (for example
 
 `Dockerfile` builds a multi-stage image with the repository root as the build
 context. The runtime stage contains only the release binary at
-`/usr/local/bin/dedicated-server` and runs it as a non-root user. The image reads
-the configuration file named by `HOMECLOUD_DEDICATED_SERVER_CONFIG`, which is set
-to `/etc/homecloud/dedicated-server.toml`; the configuration directory is
-expected to be mounted read-only at `/etc/homecloud`.
+`/usr/local/bin/dedicated-server` and runs it as a non-root user (uid/gid
+`10001`). The image reads the configuration file named by
+`HOMECLOUD_DEDICATED_SERVER_CONFIG`, which is set to
+`/etc/homecloud/dedicated-server.toml`; the configuration directory must be
+mounted read-only at `/etc/homecloud`.
 
-The `dedicated-server-runtime` Compose service mounts
-`${DEDICATED_SERVER_CONFIG_DIR:-./dedicated-server/config}` at that path. Copy
-the example configuration and generate placeholder keys before the first run:
+Private keys must stay outside the checkout. Keep the runtime configuration and
+keys in an external directory such as
+`${XDG_CONFIG_HOME:-$HOME/.config}/homecloud/dedicated-server`, and make the
+directory mode `700` and the key files mode `600`, owned by the container user
+`10001:10001` so only that user can read them; world-readable keys are not
+acceptable. Copy the example configuration and generate placeholder keys before
+the first run:
 
 ```bash
-mkdir -p dedicated-server/config/keys
+export DEDICATED_SERVER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/homecloud/dedicated-server"
+mkdir -p "$DEDICATED_SERVER_CONFIG_DIR/keys"
+chmod 700 "$DEDICATED_SERVER_CONFIG_DIR" "$DEDICATED_SERVER_CONFIG_DIR/keys"
 cp dedicated-server/config/dedicated-server.example.toml \
-  dedicated-server/config/dedicated-server.toml
-openssl rand -out dedicated-server/config/keys/encryption.key 32
-openssl rand -out dedicated-server/config/keys/signing.key 32
+  "$DEDICATED_SERVER_CONFIG_DIR/dedicated-server.toml"
+chmod 600 "$DEDICATED_SERVER_CONFIG_DIR/dedicated-server.toml"
+openssl rand -out "$DEDICATED_SERVER_CONFIG_DIR/keys/encryption.key" 32
+openssl rand -out "$DEDICATED_SERVER_CONFIG_DIR/keys/signing.key" 32
+chmod 600 "$DEDICATED_SERVER_CONFIG_DIR/keys/encryption.key" \
+  "$DEDICATED_SERVER_CONFIG_DIR/keys/signing.key"
+sudo chown -R 10001:10001 "$DEDICATED_SERVER_CONFIG_DIR"
 docker compose build dedicated-server-runtime
 docker compose up dedicated-server-runtime
 ```
+
+The `dedicated-server-runtime` service requires `DEDICATED_SERVER_CONFIG_DIR`
+and mounts it at `/etc/homecloud`. If you cannot change ownership, skip the
+`sudo chown`, keep the keys owned by your host user with the same modes, and add
+`--user "$(id -u):$(id -g)"` to the `docker run` command below.
 
 The equivalent without Compose:
 
 ```bash
 docker build -f dedicated-server/Dockerfile -t homecloud-dedicated-server:0.1.0 .
 docker run --rm --read-only \
-  -v "$PWD/dedicated-server/config:/etc/homecloud:ro" \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  -v "$DEDICATED_SERVER_CONFIG_DIR:/etc/homecloud:ro" \
   homecloud-dedicated-server:0.1.0
 ```
 
 The two key files named by `[identity]` must exist under the mounted directory,
-be non-empty, contain different material, and be readable by the container user.
-The process validates its configuration, writes JSON Lines events to stderr, and
-exits; it does not listen on `listen` and publishes no ports until the network
-layer exists.
+be non-empty and contain different material. The process validates its
+configuration, writes JSON Lines events to stderr, and exits; it does not listen
+on `listen` and publishes no ports until the network layer exists.
 
 ## Logging
 
