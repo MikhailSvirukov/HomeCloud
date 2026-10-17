@@ -15,7 +15,8 @@ mod topology;
 
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
-    ConfigError, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+    ConfigError, NodeField, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV,
+    DEFAULT_CONFIG_FILE_NAME,
 };
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};

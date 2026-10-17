@@ -43,6 +43,8 @@ type Result<T> = core::result::Result<T, ConfigError>;
 pub struct ServerConfig {
     /// Address the control plane listens on.
     pub(crate) listen: SocketAddr,
+    /// Maximum length of any node or identity label in UTF-8 bytes.
+    pub(crate) max_label_bytes: NonZeroUsize,
     /// Key identity of this dedicated server.
     pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
@@ -121,7 +123,7 @@ pub(crate) struct ClusterNode {
 pub struct NodeId([u8; NODE_ID_BYTES]);
 
 /// A 32-byte public key from the static manifest (X25519 or Ed25519).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PublicKey([u8; PUBLIC_KEY_BYTES]);
 
 impl NodeId {
@@ -197,6 +199,8 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 /// Field of a [`ClusterNode`] that a configuration rule rejected.
 #[derive(Debug)]
 pub enum NodeField {
+    /// The node's identifier.
+    SenderId,
     /// The node's human-readable label.
     Label,
     /// The node's address.
@@ -206,6 +210,7 @@ pub enum NodeField {
 impl fmt::Display for NodeField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
+            Self::SenderId => "sender_id",
             Self::Label => "label",
             Self::Address => "address",
         };
@@ -232,12 +237,18 @@ pub enum ConfigError {
     /// [`IdentityConfig::label`] is empty.
     #[error("identity.label must not be empty")]
     EmptyIdentityLabel,
+    /// A label exceeds [`ServerConfig::max_label_bytes`] in UTF-8 bytes.
+    #[error("label must not exceed {max_bytes} UTF-8 bytes")]
+    LabelTooLong { max_bytes: usize },
     /// [`ClusterConfig::nodes`] is empty.
     #[error("cluster.nodes must not be empty")]
     EmptyCluster,
     /// A required [`ClusterNode`] field is empty.
     #[error("cluster.nodes[{index}].{field} must not be empty")]
     EmptyNodeField { index: usize, field: NodeField },
+    /// A [`ClusterNode::address`] uses port zero.
+    #[error("cluster.nodes[{index}].address port must be in 1..=65535")]
+    ZeroNodePort { index: usize },
     /// Two [`ClusterNode`] entries share a value for the same field.
     #[error("cluster.nodes {field} values must be unique")]
     DuplicateNodeField { field: NodeField },
@@ -287,33 +298,49 @@ impl ServerConfig {
 
     /// Apply every structural validation rule to the parsed configuration.
     fn validate(&self) -> Result<()> {
-        validate_identity(&self.identity).and_then(|()| validate_cluster(&self.cluster))
+        validate_identity(&self.identity, self.max_label_bytes)
+            .and_then(|()| validate_cluster(&self.cluster, self.max_label_bytes))
     }
 }
 
-fn validate_identity(identity: &IdentityConfig) -> Result<()> {
+fn validate_identity(identity: &IdentityConfig, max_label_bytes: NonZeroUsize) -> Result<()> {
     if identity.label.is_empty() {
         return Err(ConfigError::EmptyIdentityLabel);
     }
-    Ok(())
+    validate_label_length(&identity.label, max_label_bytes)
 }
 
-fn validate_cluster(cluster: &ClusterConfig) -> Result<()> {
+fn validate_label_length(label: &str, max_label_bytes: NonZeroUsize) -> Result<()> {
+    if label.len() > max_label_bytes.get() {
+        Err(ConfigError::LabelTooLong {
+            max_bytes: max_label_bytes.get(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_cluster(cluster: &ClusterConfig, max_label_bytes: NonZeroUsize) -> Result<()> {
     (!cluster.nodes.is_empty())
         .then_some(())
         .ok_or(ConfigError::EmptyCluster)
-        .and_then(|()| validate_node_fields(&cluster.nodes))
+        .and_then(|()| validate_node_fields(&cluster.nodes, max_label_bytes))
         .and_then(|()| validate_unique_node_labels(&cluster.nodes))
         .and_then(|()| validate_unique_node_addresses(&cluster.nodes))
+        .and_then(|()| validate_unique_node_sender_ids(&cluster.nodes))
 }
 
-fn validate_node_fields(nodes: &[ClusterNode]) -> Result<()> {
+fn validate_node_fields(nodes: &[ClusterNode], max_label_bytes: NonZeroUsize) -> Result<()> {
     for (index, node) in nodes.iter().enumerate() {
         if node.label.is_empty() {
             return Err(ConfigError::EmptyNodeField {
                 index,
                 field: NodeField::Label,
             });
+        }
+        validate_label_length(&node.label, max_label_bytes)?;
+        if node.address.port() == 0 {
+            return Err(ConfigError::ZeroNodePort { index });
         }
     }
     Ok(())
@@ -341,6 +368,17 @@ fn validate_unique_node_addresses(nodes: &[ClusterNode]) -> Result<()> {
     }
 }
 
+fn validate_unique_node_sender_ids(nodes: &[ClusterNode]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    if nodes.iter().all(|node| seen.insert(node.sender_id)) {
+        Ok(())
+    } else {
+        Err(ConfigError::DuplicateNodeField {
+            field: NodeField::SenderId,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,9 +394,25 @@ mod tests {
         include_str!("../tests/fixtures/invalid/duplicate_node_address.toml");
     const INVALID_NODE_KEY_HEX: &str =
         include_str!("../tests/fixtures/invalid/invalid_node_key_hex.toml");
+    const INVALID_NODE_KEY_NON_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_key_non_hex.toml");
+    const INVALID_NODE_ID_HEX: &str =
+        include_str!("../tests/fixtures/invalid/invalid_node_id_hex.toml");
+    const LABEL_TOO_LONG: &str = include_str!("../tests/fixtures/invalid/label_too_long.toml");
+    const DUPLICATE_NODE_SENDER_ID: &str =
+        include_str!("../tests/fixtures/invalid/duplicate_node_sender_id.toml");
+    const ZERO_NODE_PORT: &str = include_str!("../tests/fixtures/invalid/zero_node_port.toml");
     const ZERO_INTERVAL: &str = include_str!("../tests/fixtures/invalid/zero_interval.toml");
     const ZERO_PASSWORD_MEMORY: &str =
         include_str!("../tests/fixtures/invalid/zero_password_memory.toml");
+
+    fn parse_error(input: &str) -> toml::de::Error {
+        match ServerConfig::from_toml_str(input) {
+            Err(ConfigError::Parse { source }) => source,
+            Err(error) => panic!("expected a parse error, got {error}"),
+            Ok(_) => panic!("configuration must be rejected"),
+        }
+    }
 
     #[test]
     fn parses_valid_fixture_with_expected_meaningful_values() {
@@ -368,6 +422,7 @@ mod tests {
             config.listen,
             "10.0.0.1:7000".parse().expect("valid listen address")
         );
+        assert_eq!(config.max_label_bytes.get(), 64);
         assert_eq!(config.identity.label, "dedicated-1");
         assert_eq!(config.heartbeat.interval().as_millis(), 1000);
         assert_eq!(config.heartbeat.timeout().as_millis(), 500);
@@ -434,9 +489,30 @@ mod tests {
 
     #[test]
     fn rejects_malformed_node_key_hex_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_KEY_HEX)
+            .to_string()
+            .contains("expected 64 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_non_hexadecimal_node_key_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_KEY_NON_HEX)
+            .to_string()
+            .contains("expected 64 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_wrong_length_node_id_as_parse_error() {
+        assert!(parse_error(INVALID_NODE_ID_HEX)
+            .to_string()
+            .contains("expected 32 hexadecimal characters"));
+    }
+
+    #[test]
+    fn rejects_label_longer_than_maximum() {
         assert!(matches!(
-            ServerConfig::from_toml_str(INVALID_NODE_KEY_HEX),
-            Err(ConfigError::Parse { .. })
+            ServerConfig::from_toml_str(LABEL_TOO_LONG),
+            Err(ConfigError::LabelTooLong { max_bytes: 8 })
         ));
     }
 
@@ -453,6 +529,24 @@ mod tests {
             Err(ConfigError::DuplicateNodeField {
                 field: NodeField::Address
             })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_node_sender_id() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(DUPLICATE_NODE_SENDER_ID),
+            Err(ConfigError::DuplicateNodeField {
+                field: NodeField::SenderId
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_node_port() {
+        assert!(matches!(
+            ServerConfig::from_toml_str(ZERO_NODE_PORT),
+            Err(ConfigError::ZeroNodePort { index: 0 })
         ));
     }
 

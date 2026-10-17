@@ -1,15 +1,14 @@
 //! Client-facing topology of the fixed storage cluster.
 //!
-//! The topology is a projection of the static manifest: it keeps manifest order
-//! and ignores heartbeat availability, so every client sees the same nodes
-//! regardless of which storage nodes are currently reachable.
+//! The topology is a projection of the static manifest only: it keeps manifest
+//! order and reads no heartbeat or clock state, so it cannot depend on which
+//! storage nodes are currently reachable.
 
 use std::net::SocketAddr;
 
 use crate::config::{ClusterConfig, NodeId, PublicKey};
 
 /// One storage node as clients receive it.
-#[derive(PartialEq, Eq)]
 pub struct TopologyNode {
     /// Identifier of the node in the static manifest.
     pub sender_id: NodeId,
@@ -50,23 +49,22 @@ impl Topology {
 
 #[cfg(test)]
 mod tests {
-    use std::num::{NonZeroU32, NonZeroU64};
-    use std::time::{Duration, Instant};
-
     use serde::de::value::{BorrowedStrDeserializer, Error as ValueError};
     use serde::Deserialize;
 
     use super::*;
     use crate::config::ClusterNode;
-    use crate::heartbeat::{HeartbeatTiming, HeartbeatTracker};
-
-    const TIMEOUT_MS: u64 = 400;
-    const TIMEOUT: Duration = Duration::from_millis(TIMEOUT_MS);
 
     fn node_id(index: u8) -> NodeId {
         let hex = format!("{index:032x}");
         NodeId::deserialize(BorrowedStrDeserializer::<ValueError>::new(&hex))
             .expect("test node identifiers are 32 hexadecimal characters")
+    }
+
+    fn id_bytes(index: u8) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        bytes[15] = index;
+        bytes
     }
 
     fn public_key(byte: u8) -> PublicKey {
@@ -79,22 +77,22 @@ mod tests {
         ClusterConfig {
             nodes: vec![
                 ClusterNode {
-                    sender_id: node_id(1),
-                    label: "storage-1".to_string(),
+                    sender_id: node_id(3),
+                    label: "zeta".to_string(),
                     address: SocketAddr::from(([127, 0, 0, 1], 8001)),
                     encryption_public_key: public_key(0x11),
                     signing_public_key: public_key(0x22),
                 },
                 ClusterNode {
                     sender_id: node_id(2),
-                    label: "storage-2".to_string(),
+                    label: "alpha".to_string(),
                     address: SocketAddr::from(([127, 0, 0, 1], 8002)),
                     encryption_public_key: public_key(0x33),
                     signing_public_key: public_key(0x44),
                 },
                 ClusterNode {
-                    sender_id: node_id(3),
-                    label: "storage-3".to_string(),
+                    sender_id: node_id(1),
+                    label: "mu".to_string(),
                     address: SocketAddr::from(([127, 0, 0, 1], 8003)),
                     encryption_public_key: public_key(0x55),
                     signing_public_key: public_key(0x66),
@@ -109,11 +107,20 @@ mod tests {
 
         let topology = Topology::from_manifest(&cluster);
 
-        assert_eq!(topology.nodes.len(), cluster.nodes.len());
-        for (topology_node, manifest_node) in topology.nodes.iter().zip(&cluster.nodes) {
-            assert_eq!(topology_node.sender_id, manifest_node.sender_id);
-            assert_eq!(topology_node.label, manifest_node.label);
-        }
+        let entries = topology
+            .nodes
+            .iter()
+            .map(|node| (node.label.as_str(), *node.sender_id.as_bytes()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![
+                ("zeta", id_bytes(3)),
+                ("alpha", id_bytes(2)),
+                ("mu", id_bytes(1)),
+            ]
+        );
     }
 
     #[test]
@@ -125,34 +132,8 @@ mod tests {
         assert_eq!(topology.nodes.len(), cluster.nodes.len());
         let first = &topology.nodes[0];
         assert_eq!(first.address, SocketAddr::from(([127, 0, 0, 1], 8001)));
-        assert_eq!(first.label, "storage-1");
+        assert_eq!(first.label, "zeta");
         assert_eq!(first.encryption_public_key.as_bytes(), &[0x11; 32]);
         assert_eq!(first.signing_public_key.as_bytes(), &[0x22; 32]);
-    }
-
-    #[test]
-    fn topology_is_independent_of_heartbeat_availability() {
-        let cluster = manifest();
-        let before = Topology::from_manifest(&cluster);
-        let labels = cluster
-            .nodes
-            .iter()
-            .map(|node| node.label.as_str())
-            .collect::<Vec<_>>();
-        let timing = HeartbeatTiming {
-            interval_ms: NonZeroU64::new(1000).expect("interval is non-zero"),
-            timeout_ms: NonZeroU64::new(TIMEOUT_MS).expect("timeout is non-zero"),
-            miss_threshold: NonZeroU32::new(1).expect("miss threshold is non-zero"),
-        };
-        let start = Instant::now();
-        let mut tracker =
-            HeartbeatTracker::new(&labels, timing, start).expect("labels are non-empty and unique");
-        tracker.poll(start);
-        tracker.poll(start + TIMEOUT);
-        assert_eq!(tracker.unavailable(), labels);
-
-        let after = Topology::from_manifest(&cluster);
-
-        assert!(before.nodes == after.nodes);
     }
 }

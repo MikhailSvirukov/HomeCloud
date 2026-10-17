@@ -44,8 +44,10 @@ root. Consumers therefore use `dedicated_server::` paths (for example
 
 ## Configuration schema
 
-- Top level: `listen` (socket address string), `[identity]`, `[heartbeat]`,
-  `[password]`, `[[cluster.nodes]]`.
+- Top level: `listen` (socket address string), `max_label_bytes`, `[identity]`,
+  `[heartbeat]`, `[password]`, `[[cluster.nodes]]`.
+- `max_label_bytes`: the maximum length of any node or identity label in UTF-8
+  bytes (`NonZeroUsize`). It has no default.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
 - `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
   (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
@@ -54,16 +56,17 @@ root. Consumers therefore use `dedicated_server::` paths (for example
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
   (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
-- `cluster.nodes[]`: `sender_id` (16-byte node identifier), `label` (non-empty,
-  unique), `address` (unique socket address), `encryption_public_key`,
-  `signing_public_key`. Node identifiers and public keys are 16- and 32-byte
-  values written in hexadecimal.
+- `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
+  (non-empty, unique), `address` (unique socket address),
+  `encryption_public_key`, `signing_public_key`. Node identifiers and public
+  keys are 16- and 32-byte values written in hexadecimal.
 - Empty `cluster.nodes` is invalid; unknown keys are rejected.
 
 Example, matching `tests/fixtures/valid_server.toml`:
 
 ```toml
 listen = "10.0.0.1:7000"
+max_label_bytes = 64
 
 [identity]
 label = "dedicated-1"
