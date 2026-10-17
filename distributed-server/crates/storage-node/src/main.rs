@@ -1,13 +1,14 @@
 //! `storage-node` binary entry point.
 //!
 //! Reads and validates the node configuration from environment variables,
+//! prepares the accounts and raft directories under the configured data root,
 //! emits a structured startup log, binds the listen address, and serves frame
 //! connections until it receives a Ctrl-C shutdown signal. The `io_uring` disk
 //! thread is a later increment.
 
 use std::process::ExitCode;
 
-use storage_node::{serve, Listener, NodeConfig, PROTOCOL_VERSION};
+use storage_node::{serve, Listener, NodeConfig, StorageLayout, PROTOCOL_VERSION};
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -45,7 +46,7 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
-/// Loads and validates configuration, then serves until stopped.
+/// Loads and validates configuration, prepares the data layout, then serves until stopped.
 ///
 /// A missing environment variable is treated as an empty value so validation
 /// reports a missing key instead of aborting.
@@ -78,6 +79,13 @@ async fn run() -> ExitCode {
         peers = config.peers.len(),
         "storage node starting"
     );
+
+    let layout = StorageLayout::new(config.data_dir.clone());
+    if let Err(error) = layout.ensure_dirs() {
+        tracing::error!(error = %error, "failed to prepare the data layout");
+        return ExitCode::FAILURE;
+    }
+    tracing::debug!(root = %layout.root.display(), "data layout ready");
 
     let listener = match Listener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
