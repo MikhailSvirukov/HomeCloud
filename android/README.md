@@ -17,7 +17,8 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - Classifying raw media rows into backup candidates, dropping everything that is not a photo or video (`media/MediaCatalog`).
 - The per-API-level read permission policy that selects the permissions needed to read photos and videos (`permissions/MediaPermissionPolicy`).
 - The permission request decision: which required permissions are still missing and whether asking for them is still possible (`permissions/MediaPermissionRequestPolicy`).
-- Planning that enqueues newly discovered media under a stable upload id (`backup/MediaBackupPlanner`, `backup/UploadIdFactory`).
+- The version identity the SRS defines - content hash, original name and tracked time - with SHA-256 over the original bytes and the contract’s random UUIDv4 upload id (`media/MediaContentHasher`, `media/MediaVersionIdentity`).
+- Planning driven by that identity: candidates are scanned with their identity and only untracked versions are queued, each with a new upload id, while a tracked version keeps its id (`media/MediaVersionCandidate`, `media/MediaVersionScanner`, `backup/MediaBackupPlanner`).
 - The in-memory upload queue with its retry bookkeeping (`queue/InMemoryUploadQueue`, `queue/UploadQueue`).
 - The persisted queue snapshot that survives a restart (`queue/FileUploadQueueStore`, `queue/UploadQueueStore`).
 - The runner that sequences restore → plan → persist for one cycle (`backup/BackupCycleRunner`).
@@ -25,7 +26,7 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - The launched activity's media-read permission surface, which shows the current permission status, requests the media-read permissions in one runtime operation (including the partial-access permission from Android 14), reports limited coverage when the user allows only some photos and videos, and opens the application's settings page when access was permanently refused (`permissions/MediaPermissionRequestContent`, `permissions/MediaPermissionPrompt`).
 - The media-library summary shown once access is granted, reporting the combined number of photos and videos available to back up, with a loading line while the library is read and a failure line when it cannot be read (`media/MediaLibrarySummaryContent`, `media/MediaLibrarySummary`).
 
-Not yet implemented: background scheduling (WorkManager), networking/protocol, the change detection that would recognise new or modified media, and the client versioning rule, which is still an open decision.
+Not yet implemented: background scheduling (WorkManager), networking/protocol, and the media scanner that reads the store, hashes each candidate and resolves its capture time.
 
 ## Declared permissions
 
@@ -74,8 +75,7 @@ android/
         ├── main/kotlin/dev/homecloud/android/
         │   ├── MainActivity.kt   Compose entry point
         │   ├── backup/           planning discovered media into the queue
-        │   │   ├── MediaBackupPlanner.kt   enqueues new candidates under a stable upload id
-        │   │   ├── UploadIdFactory.kt      supplies the stable upload id
+        │   │   ├── MediaBackupPlanner.kt   enqueues untracked versions from a scanner
         │   │   └── BackupCycleRunner.kt    sequences restore → plan → persist for one cycle
         │   ├── log/              structured per-cycle logging
         │   │   ├── BackupCycleLog.kt         structured cycle log and its no-op default
