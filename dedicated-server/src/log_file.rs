@@ -149,7 +149,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
             rotated.push(RotatedFile {
                 path: entry.path(),
                 size: metadata.len(),
-                modified: metadata.modified().map(millis_since_epoch)?,
+                modified: metadata.modified()?,
                 rotated_millis,
             });
         }
@@ -169,7 +169,7 @@ impl<C: Fn() -> u64> RotatingFile<C> {
         let retention = duration_millis(self.limits.retention);
 
         for file in rotated {
-            let expired = current.saturating_sub(file.modified) > retention;
+            let expired = current.saturating_sub(millis_since_epoch(file.modified)) > retention;
             if !expired && total_size <= self.limits.max_total_size {
                 break;
             }
@@ -241,7 +241,7 @@ impl<C: Fn() -> u64> Write for RotatingFile<C> {
 struct RotatedFile {
     path: PathBuf,
     size: u64,
-    modified: u64,
+    modified: SystemTime,
     rotated_millis: u64,
 }
 
