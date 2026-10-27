@@ -444,6 +444,13 @@ mod tests {
             Some(&content_hash)
         );
 
+        drop(target);
+        let reopened = MemStore::open(target_path.clone()).expect("the installed state reopens");
+        assert_eq!(
+            reopened.committed_versions().await.get(&upload_id),
+            Some(&content_hash)
+        );
+
         std::fs::remove_file(source_path).expect("the source state file can be removed");
         std::fs::remove_file(target_path).expect("the target state file can be removed");
     }

@@ -95,11 +95,11 @@ pub enum RaftError {
     #[error("the persistent Raft state could not be read or written")]
     Storage(#[from] openraft::StorageError<NodeId>),
     #[error("the Raft data directory could not be created")]
-    DataDir,
+    DataDir(#[source] std::io::Error),
     #[error("the cluster was already bootstrapped")]
     AlreadyBootstrapped,
-    #[error("the bootstrap marker could not be persisted")]
-    BootstrapMarker,
+    #[error("the bootstrap marker could not be written")]
+    BootstrapMarker(#[source] std::io::Error),
     #[error("the cluster initialization was rejected")]
     Initialize(#[from] openraft::error::InitializeError<NodeId, BasicNode>),
     #[error("the client write was rejected")]
@@ -165,7 +165,7 @@ impl RaftNode {
         };
         let config = config.validate().map_err(|_| RaftError::InvalidTiming)?;
 
-        std::fs::create_dir_all(&raft_dir).map_err(|_| RaftError::DataDir)?;
+        std::fs::create_dir_all(&raft_dir).map_err(RaftError::DataDir)?;
         let store = store::MemStore::open(raft_dir.join(STATE_FILE_NAME))?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
         let raft = Raft::new(
@@ -267,7 +267,7 @@ fn persist_bootstrap_marker(raft_dir: &Path) -> Result<(), RaftError> {
         .and_then(|file| file.sync_all())
         .and_then(|()| std::fs::rename(&temporary, &marker))
         .and_then(|()| std::fs::File::open(raft_dir)?.sync_all())
-        .map_err(|_| RaftError::BootstrapMarker)
+        .map_err(RaftError::BootstrapMarker)
 }
 
 impl fmt::Debug for RaftNode {

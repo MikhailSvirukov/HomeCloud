@@ -158,6 +158,24 @@ async fn wait_for_committed_version(
     }
 }
 
+/// Waits until the node reports an applied log index of at least `minimum`.
+async fn wait_for_applied(node: &RaftNode, minimum: u64, budget: Duration) {
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        if node
+            .last_applied_index()
+            .is_some_and(|index| index >= minimum)
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the node did not apply log index {minimum} in time"
+        );
+        tokio::time::sleep(CATALOG_POLL_INTERVAL).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn elects_a_leader_and_replicates_a_committed_version() {
     let (nodes, _dirs) = start_cluster().await;
@@ -268,20 +286,21 @@ async fn restores_state_and_rejects_repeat_bootstrap_after_restart() {
         .await
         .expect("the leader commits the version");
     assert_eq!(response.upload_id, Some(upload_id));
+    wait_for_applied(&node, 1, ELECTION_BUDGET).await;
+    let applied_before = node
+        .last_applied_index()
+        .expect("the committed write is applied before shutdown");
     node.shutdown().await.expect("the node shuts down");
 
     let restarted = RaftNode::start(1, NoopTransport, RaftTiming::default(), state_dir)
         .await
         .expect("the restarted node reopens the persisted state");
+    wait_for_applied(&restarted, applied_before, ELECTION_BUDGET).await;
     let versions = restarted.committed_versions().await;
     assert_eq!(
         versions.get(&upload_id),
         Some(&content_hash),
         "the restarted node restores the committed catalog"
-    );
-    assert!(
-        restarted.last_applied_index().is_some(),
-        "the restarted node restores the last applied log index"
     );
 
     let repeated = restarted
