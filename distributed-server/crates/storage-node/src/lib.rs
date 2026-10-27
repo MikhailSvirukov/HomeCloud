@@ -22,7 +22,8 @@
 //! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
 //! commits version metadata to a catalog state machine, exchanges CBOR-encoded
-//! RPCs over [`RaftTransport`], and keeps a durable bootstrap marker. The
+//! RPCs inside the type-3 inter-server envelope over [`RaftTransport`], and
+//! keeps a durable bootstrap marker. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API.

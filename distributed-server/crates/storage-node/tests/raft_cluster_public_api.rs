@@ -1,16 +1,18 @@
 //! Public API integration tests for the local OpenRaft runtime.
 //!
 //! Three in-process nodes exchange CBOR-encoded RPCs through a test-local
-//! [`ChannelTransport`], so leader election, a quorum commit of version
-//! metadata, the RPC handling path, and catalog distribution are exercised
-//! through the public [`RaftNode`] surface.
+//! [`ChannelTransport`] that asserts every outbound request is wrapped in the
+//! inter-server `[3, [rpc_bytes]]` envelope, so leader election, a quorum commit
+//! of version metadata, the RPC handling path, and catalog distribution are
+//! exercised through the public [`RaftNode`] surface.
 //!
 //! Restart recovery is covered separately with a single-voter cluster: the
 //! persisted catalog is restored from the node's data directory and a repeated
 //! bootstrap command is rejected.
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
-//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `NFR-MAINT-006 / 1`.
+//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `INT-NET-074 / 2`,
+//! `NFR-MAINT-006 / 1`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -55,6 +57,8 @@ struct ChannelTransport {
 
 impl RaftTransport for ChannelTransport {
     async fn send(&self, target: u64, request: Vec<u8>) -> Result<Vec<u8>, RaftTransportError> {
+        let _ = storage_node::decode_raft_rpc(&request)
+            .expect("every Raft RPC is carried in the message_type 3 envelope");
         let sender = self
             .senders
             .get(&target)

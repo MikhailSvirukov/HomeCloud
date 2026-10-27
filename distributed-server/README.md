@@ -1,9 +1,10 @@
 # Distributed storage nodes
 
 Fixed multi-node cluster of Rust storage nodes. Metadata/journal consistency runs over
-a direct encrypted node-to-node Raft channel, while file blobs are replicated on a
-separate data plane. The dedicated server is only a bootstrap/control-plane entry point
-for clients; it does not relay Raft or blob traffic.
+a direct encrypted node-to-node Raft channel, where each Raft RPC is carried in the
+inter-server `[3, [rpc_bytes]]` envelope, while file blobs are replicated on a separate
+data plane. The dedicated server is only a bootstrap/control-plane entry point for
+clients; it does not relay Raft or blob traffic.
 
 ## Execution model
 
