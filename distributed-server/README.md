@@ -36,8 +36,9 @@ for clients; it does not relay Raft or blob traffic.
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
   worker threads), `src/node.rs` (node runtime: serves frame connections on
   a bound listener until shutdown), `src/storage_layout.rs` (on-disk
-  layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), and
-  `src/signing.rs` (Ed25519 message signing/verification with a redacted
+  layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), `src/raft/`
+  (local OpenRaft runtime, CBOR RPC adapter, in-memory catalog state machine),
+  and `src/signing.rs` (Ed25519 message signing/verification with a redacted
   signing key).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
@@ -47,7 +48,8 @@ for clients; it does not relay Raft or blob traffic.
   `upload_ledger_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
-  `storage_layout_public_api.rs`, `signing_public_api.rs`,
+  `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
+  `signing_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status

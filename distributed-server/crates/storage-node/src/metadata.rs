@@ -25,7 +25,9 @@ pub const CONTENT_HASH_LEN: usize = 32;
 type Result<T> = core::result::Result<T, MetadataError>;
 
 /// Stable per-version upload identifier transmitted as 16 raw bytes (`INT-NET-011 / 1`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct UploadId([u8; UPLOAD_ID_LEN]);
 
 impl UploadId {
@@ -50,7 +52,7 @@ impl fmt::Display for UploadId {
 }
 
 /// SHA-256 digest of the original uncompressed file bytes (`INT-NET-031 / 1`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContentHash([u8; CONTENT_HASH_LEN]);
 
 impl ContentHash {
