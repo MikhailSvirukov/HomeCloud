@@ -40,8 +40,10 @@ clients; it does not relay Raft or blob traffic.
   layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, catalog state machine with
   file-backed persistence), `src/message.rs` (inter-server `[message_type,
-  args]` envelope with `message_type = 3` for Raft RPCs), and `src/signing.rs`
-  (Ed25519 message signing/verification with a redacted signing key).
+  args]` envelope with `message_type = 3` for Raft RPCs), `src/signing.rs`
+  (Ed25519 message signing/verification with a redacted signing key), and
+  `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
+  and AES-256-GCM).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
@@ -51,7 +53,7 @@ clients; it does not relay Raft or blob traffic.
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
-  `signing_public_api.rs`, `message_public_api.rs`,
+  `signing_public_api.rs`, `sealing_public_api.rs`, `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
