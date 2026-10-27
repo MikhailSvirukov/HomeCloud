@@ -75,7 +75,8 @@ emits with a level configured through `RUST_LOG`. The local OpenRaft state
 (`state.cbor`) and the bootstrap marker are persisted under the configured node
 data directory, so a restarted node restores its applied catalog and rejects a
 repeated bootstrap command; `raft_cluster_public_api.rs` also covers restart
-recovery. The connection actors and `io_uring` are not implemented yet.
+recovery and a returning node catching up committed entries. The connection
+actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
