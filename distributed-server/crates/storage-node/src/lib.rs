@@ -96,7 +96,8 @@ pub use raft::{
 };
 pub use response::{ResponseError, UploadStatus};
 pub use sealing::{
-    open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, X25519_KEY_LEN,
+    open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, ENCAPSULATED_KEY_LEN,
+    X25519_KEY_LEN,
 };
 pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,

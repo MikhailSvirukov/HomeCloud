@@ -16,16 +16,21 @@ type Aead = AesGcm256;
 
 /// Length of an X25519 public or private key in bytes.
 pub const X25519_KEY_LEN: usize = 32;
+/// Length of an HPKE encapsulated key in bytes.
+pub const ENCAPSULATED_KEY_LEN: usize = 32;
 
 /// Failure modes when sealing or opening a message.
 #[derive(Debug, thiserror::Error)]
 pub enum SealingError {
-    /// The bytes are not a valid X25519 public key.
+    /// The X25519 public key encoding is invalid.
     #[error("the X25519 public key is invalid")]
     InvalidPublicKey,
-    /// The bytes are not a valid X25519 private key.
+    /// The X25519 private key encoding is invalid.
     #[error("the X25519 private key is invalid")]
     InvalidPrivateKey,
+    /// The X25519 key does not have the required length.
+    #[error("the X25519 key must be 32 bytes")]
+    InvalidLength,
     /// The sealed message does not contain an encapsulated key.
     #[error("the sealed message is shorter than the encapsulated key")]
     Truncated,
@@ -45,8 +50,11 @@ pub struct RecipientPublicKey(<Kem as KemTrait>::PublicKey);
 
 impl RecipientPublicKey {
     /// Parses the 32 public-key bytes.
-    pub fn from_bytes(bytes: [u8; X25519_KEY_LEN]) -> Result<Self> {
-        <Kem as KemTrait>::PublicKey::from_bytes(&bytes)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != X25519_KEY_LEN {
+            return Err(SealingError::InvalidLength);
+        }
+        <Kem as KemTrait>::PublicKey::from_bytes(bytes)
             .map(Self)
             .map_err(|_| SealingError::InvalidPublicKey)
     }
@@ -74,8 +82,11 @@ pub struct RecipientPrivateKey(<Kem as KemTrait>::PrivateKey);
 
 impl RecipientPrivateKey {
     /// Parses the 32 private-key bytes.
-    pub fn from_bytes(bytes: [u8; X25519_KEY_LEN]) -> Result<Self> {
-        <Kem as KemTrait>::PrivateKey::from_bytes(&bytes)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != X25519_KEY_LEN {
+            return Err(SealingError::InvalidLength);
+        }
+        <Kem as KemTrait>::PrivateKey::from_bytes(bytes)
             .map(Self)
             .map_err(|_| SealingError::InvalidPrivateKey)
     }
@@ -105,7 +116,7 @@ pub fn seal(
     let ciphertext = context
         .seal(plaintext, aad)
         .map_err(|_| SealingError::Seal)?;
-    let mut sealed = Vec::with_capacity(X25519_KEY_LEN + ciphertext.len());
+    let mut sealed = Vec::with_capacity(ENCAPSULATED_KEY_LEN + ciphertext.len());
     sealed.extend_from_slice(&encapsulated_key.to_bytes());
     sealed.extend_from_slice(&ciphertext);
     Ok(sealed)
@@ -118,10 +129,10 @@ pub fn open(
     aad: &[u8],
     sealed: &[u8],
 ) -> Result<Vec<u8>> {
-    if sealed.len() < X25519_KEY_LEN {
+    if sealed.len() < ENCAPSULATED_KEY_LEN {
         return Err(SealingError::Truncated);
     }
-    let (encapsulated_key, ciphertext) = sealed.split_at(X25519_KEY_LEN);
+    let (encapsulated_key, ciphertext) = sealed.split_at(ENCAPSULATED_KEY_LEN);
     let encapsulated_key = <Kem as KemTrait>::EncappedKey::from_bytes(encapsulated_key)
         .map_err(|_| SealingError::Open)?;
     let mut context =
@@ -139,7 +150,7 @@ mod tests {
     #[test]
     fn recipient_private_key_debug_redacts_key_bytes() {
         let bytes = [0xAB; X25519_KEY_LEN];
-        let key = RecipientPrivateKey::from_bytes(bytes).expect("full-length key is valid");
+        let key = RecipientPrivateKey::from_bytes(&bytes).expect("full-length key is valid");
         let rendered = format!("{key:?}");
         let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
 

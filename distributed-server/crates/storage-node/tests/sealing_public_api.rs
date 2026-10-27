@@ -17,11 +17,12 @@ const OTHER_INFO: &[u8] = b"homecloud-v2";
 const AAD: &[u8] = b"header";
 const OTHER_AAD: &[u8] = b"other-header";
 const MESSAGE: &[u8] = b"inter-server payload";
+const AES_GCM_TAG_LEN: usize = 16;
 const PRIMARY_KEY_BYTES: [u8; X25519_KEY_LEN] = [0x11; X25519_KEY_LEN];
 const ALTERNATE_KEY_BYTES: [u8; X25519_KEY_LEN] = [0x22; X25519_KEY_LEN];
 
 fn private_key(bytes: [u8; X25519_KEY_LEN]) -> RecipientPrivateKey {
-    RecipientPrivateKey::from_bytes(bytes).expect("a 32-byte private key is valid")
+    RecipientPrivateKey::from_bytes(&bytes).expect("a 32-byte private key is valid")
 }
 
 fn seal_message(recipient: &RecipientPublicKey, plaintext: &[u8]) -> Vec<u8> {
@@ -33,7 +34,10 @@ fn seals_and_opens_a_message() {
     let private = private_key(PRIMARY_KEY_BYTES);
     let sealed = seal_message(&private.public_key(), MESSAGE);
 
-    assert!(sealed.len() > X25519_KEY_LEN);
+    assert_eq!(
+        sealed.len(),
+        X25519_KEY_LEN + MESSAGE.len() + AES_GCM_TAG_LEN
+    );
 
     let opened = open(&private, INFO, AAD, &sealed).expect("the sealed message opens");
 
@@ -62,13 +66,24 @@ fn rejects_a_wrong_recipient_key() {
 }
 
 #[test]
-fn rejects_a_modified_ciphertext() {
+fn rejects_a_modified_authentication_tag() {
     let private = private_key(PRIMARY_KEY_BYTES);
     let mut sealed = seal_message(&private.public_key(), MESSAGE);
     let last = sealed
         .last_mut()
-        .expect("a sealed message has a ciphertext");
+        .expect("a sealed message has an authentication tag");
     *last ^= 0xff;
+
+    let opened = open(&private, INFO, AAD, &sealed);
+
+    assert!(matches!(opened, Err(SealingError::Open)));
+}
+
+#[test]
+fn rejects_a_modified_ciphertext_body() {
+    let private = private_key(PRIMARY_KEY_BYTES);
+    let mut sealed = seal_message(&private.public_key(), MESSAGE);
+    sealed[X25519_KEY_LEN] ^= 0xff;
 
     let opened = open(&private, INFO, AAD, &sealed);
 
@@ -114,7 +129,7 @@ fn uses_a_fresh_encapsulated_key_per_message() {
     let first = seal_message(&recipient, MESSAGE);
     let second = seal_message(&recipient, MESSAGE);
 
-    assert_ne!(first, second);
+    assert_ne!(&first[..X25519_KEY_LEN], &second[..X25519_KEY_LEN]);
 
     let first_opened = open(&private, INFO, AAD, &first).expect("the first message opens");
     let second_opened = open(&private, INFO, AAD, &second).expect("the second message opens");
@@ -128,8 +143,17 @@ fn exposes_the_recipient_public_key() {
     let private = private_key(PRIMARY_KEY_BYTES);
     let public = private.public_key();
 
-    let reparsed = RecipientPublicKey::from_bytes(public.as_bytes())
+    let reparsed = RecipientPublicKey::from_bytes(&public.as_bytes())
         .expect("bytes from a derived public key parse again");
 
     assert_eq!(reparsed.as_bytes(), public.as_bytes());
+}
+
+#[test]
+fn rejects_keys_of_the_wrong_length() {
+    let short_public = RecipientPublicKey::from_bytes(&[0u8; X25519_KEY_LEN - 1]);
+    let long_private = RecipientPrivateKey::from_bytes(&[0u8; X25519_KEY_LEN + 1]);
+
+    assert!(matches!(short_public, Err(SealingError::InvalidLength)));
+    assert!(matches!(long_private, Err(SealingError::InvalidLength)));
 }
