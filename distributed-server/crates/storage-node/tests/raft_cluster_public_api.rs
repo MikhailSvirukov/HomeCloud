@@ -6,15 +6,20 @@
 //! of version metadata, the RPC handling path, and catalog distribution are
 //! exercised through the public [`RaftNode`] surface.
 //!
+//! The cluster also covers a node returning to the unchanged membership: it is
+//! stopped, the remaining quorum commits another version, and the restarted node
+//! catches up the committed entries from its persisted state directory.
+//!
 //! Restart recovery is covered separately with a single-voter cluster: the
 //! persisted catalog is restored from the node's data directory and a repeated
 //! bootstrap command is rejected.
 //!
-//! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
-//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `INT-NET-074 / 2`,
-//! `NFR-MAINT-006 / 1`.
+//! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-012 / 2`, `FR-CL-016 / 1`,
+//! `FR-CL-020 / 1`, `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`,
+//! `INT-NET-074 / 2`, `NFR-MAINT-006 / 1`.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,6 +34,8 @@ use storage_node::UploadId;
 use storage_node::UPLOAD_ID_LEN;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
 /// Node ids of the fixed three-node test cluster.
 const CLUSTER_NODES: [u64; 3] = [1, 2, 3];
@@ -52,17 +59,38 @@ struct Call {
 /// In-process transport that routes encoded RPCs to the target node's queue.
 #[derive(Clone)]
 struct ChannelTransport {
-    senders: Arc<BTreeMap<u64, mpsc::Sender<Call>>>,
+    senders: Arc<RwLock<BTreeMap<u64, mpsc::Sender<Call>>>>,
+}
+
+impl ChannelTransport {
+    fn new() -> Self {
+        Self {
+            senders: Arc::new(RwLock::new(BTreeMap::new())),
+        }
+    }
+
+    /// Makes `node_id` reachable through its serving task.
+    async fn register(&self, node_id: u64, sender: mpsc::Sender<Call>) {
+        let _ = self.senders.write().await.insert(node_id, sender);
+    }
+
+    /// Stops routing RPCs to `node_id`.
+    async fn remove(&self, node_id: u64) {
+        let _ = self.senders.write().await.remove(&node_id);
+    }
 }
 
 impl RaftTransport for ChannelTransport {
     async fn send(&self, target: u64, request: Vec<u8>) -> Result<Vec<u8>, RaftTransportError> {
         let _ = storage_node::decode_raft_rpc(&request)
             .expect("every Raft RPC is carried in the message_type 3 envelope");
-        let sender = self
-            .senders
-            .get(&target)
-            .ok_or(RaftTransportError::Unreachable { target })?;
+        let sender = {
+            let senders = self.senders.read().await;
+            senders
+                .get(&target)
+                .cloned()
+                .ok_or(RaftTransportError::Unreachable { target })?
+        };
         let (reply, response) = oneshot::channel();
         sender
             .send(Call { request, reply })
@@ -92,48 +120,61 @@ fn cluster_membership() -> BTreeMap<u64, String> {
         .collect()
 }
 
-/// Starts three nodes and one serving task per node.
-///
-/// The returned temporary directories keep each node's persisted Raft state
-/// alive until the test ends.
-async fn start_cluster() -> (BTreeMap<u64, Arc<RaftNode>>, Vec<tempfile::TempDir>) {
-    let mut senders = BTreeMap::new();
-    let mut receivers = BTreeMap::new();
-    for node_id in CLUSTER_NODES {
-        let (sender, receiver) = mpsc::channel(RPC_QUEUE_CAPACITY);
-        senders.insert(node_id, sender);
-        receivers.insert(node_id, receiver);
-    }
-    let transport = ChannelTransport {
-        senders: Arc::new(senders),
-    };
+/// A running cluster and the handles needed to stop and restart one node.
+struct Cluster {
+    nodes: BTreeMap<u64, Arc<RaftNode>>,
+    dirs: BTreeMap<u64, tempfile::TempDir>,
+    tasks: BTreeMap<u64, JoinHandle<()>>,
+    transport: ChannelTransport,
+}
 
-    let mut nodes = BTreeMap::new();
-    let mut dirs = Vec::new();
-    for (node_id, mut receiver) in receivers {
-        let dir = tempfile::tempdir().expect("a temporary Raft data directory is created");
-        let node = Arc::new(
-            RaftNode::start(
-                node_id,
-                transport.clone(),
-                RaftTiming::default(),
-                dir.path().to_path_buf(),
-            )
+/// Starts one node and the serving task that feeds it encoded RPCs.
+async fn start_node(
+    node_id: u64,
+    transport: &ChannelTransport,
+    dir: PathBuf,
+) -> (Arc<RaftNode>, JoinHandle<()>) {
+    let (sender, mut receiver) = mpsc::channel(RPC_QUEUE_CAPACITY);
+    transport.register(node_id, sender).await;
+    let node = Arc::new(
+        RaftNode::start(node_id, transport.clone(), RaftTiming::default(), dir)
             .await
             .expect("a local Raft node starts with a file-backed store"),
-        );
-        dirs.push(dir);
-        nodes.insert(node_id, Arc::clone(&node));
-        tokio::spawn(async move {
-            while let Some(call) = receiver.recv().await {
-                let Call { request, reply } = call;
-                let response = node.handle_rpc(&request).await.unwrap_or_default();
-                // The requesting Raft instance may have stopped waiting.
-                let _ = reply.send(response);
-            }
-        });
+    );
+    let serving = Arc::clone(&node);
+    let task = tokio::spawn(async move {
+        while let Some(call) = receiver.recv().await {
+            let Call { request, reply } = call;
+            let response = serving.handle_rpc(&request).await.unwrap_or_default();
+            // The requesting Raft instance may have stopped waiting.
+            let _ = reply.send(response);
+        }
+    });
+    (node, task)
+}
+
+/// Starts three nodes and one serving task per node.
+///
+/// The held temporary directories keep each node's persisted Raft state alive
+/// until the cluster is dropped.
+async fn start_cluster() -> Cluster {
+    let transport = ChannelTransport::new();
+    let mut nodes = BTreeMap::new();
+    let mut dirs = BTreeMap::new();
+    let mut tasks = BTreeMap::new();
+    for node_id in CLUSTER_NODES {
+        let dir = tempfile::tempdir().expect("a temporary Raft data directory is created");
+        let (node, task) = start_node(node_id, &transport, dir.path().to_path_buf()).await;
+        dirs.insert(node_id, dir);
+        nodes.insert(node_id, node);
+        tasks.insert(node_id, task);
     }
-    (nodes, dirs)
+    Cluster {
+        nodes,
+        dirs,
+        tasks,
+        transport,
+    }
 }
 
 /// Waits until every node's applied catalog contains the committed version.
@@ -182,8 +223,9 @@ async fn wait_for_applied(node: &RaftNode, minimum: u64, budget: Duration) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn elects_a_leader_and_replicates_a_committed_version() {
-    let (nodes, _dirs) = start_cluster().await;
-    let bootstrap = nodes
+    let cluster = start_cluster().await;
+    let bootstrap = cluster
+        .nodes
         .get(&BOOTSTRAP_NODE_ID)
         .expect("the bootstrap node is part of the cluster");
 
@@ -205,7 +247,8 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
         .copied()
         .find(|node_id| *node_id != leader)
         .expect("the cluster has a follower besides the leader");
-    let follower = nodes
+    let follower = cluster
+        .nodes
         .get(&follower_id)
         .expect("the follower belongs to the cluster");
     follower
@@ -228,7 +271,8 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
 
     let upload_id = UploadId::from_bytes([0x11; UPLOAD_ID_LEN]);
     let content_hash = ContentHash::digest(b"payload");
-    let leader_node = nodes
+    let leader_node = cluster
+        .nodes
         .get(&leader)
         .expect("the elected leader belongs to the cluster");
     let response = leader_node
@@ -240,13 +284,14 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
         .expect("the leader commits the version through a quorum");
     assert_eq!(response.upload_id, Some(upload_id));
 
-    wait_for_committed_version(&nodes, upload_id, content_hash).await;
+    wait_for_committed_version(&cluster.nodes, upload_id, content_hash).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejects_a_second_cluster_initialization() {
-    let (nodes, _dirs) = start_cluster().await;
-    let bootstrap = nodes
+    let cluster = start_cluster().await;
+    let bootstrap = cluster
+        .nodes
         .get(&BOOTSTRAP_NODE_ID)
         .expect("the bootstrap node is part of the cluster");
 
@@ -264,6 +309,101 @@ async fn rejects_a_second_cluster_initialization() {
         matches!(repeated, Err(RaftError::AlreadyBootstrapped)),
         "an initialized node rejects a second bootstrap command"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_returning_node_catches_up_committed_entries() {
+    let mut cluster = start_cluster().await;
+    let leader = {
+        let bootstrap = cluster
+            .nodes
+            .get(&BOOTSTRAP_NODE_ID)
+            .expect("the bootstrap node is part of the cluster");
+        bootstrap
+            .initialize(cluster_membership())
+            .await
+            .expect("the explicit bootstrap command initializes the cluster");
+        bootstrap
+            .wait_for_leader(ELECTION_BUDGET)
+            .await
+            .expect("a leader is elected within the election budget")
+    };
+    let leader_node = Arc::clone(
+        cluster
+            .nodes
+            .get(&leader)
+            .expect("the elected leader belongs to the cluster"),
+    );
+
+    let before_offline = UploadId::from_bytes([0x44; UPLOAD_ID_LEN]);
+    let before_offline_hash = ContentHash::digest(b"before-offline");
+    leader_node
+        .client_write(RaftRequest::CommitVersion {
+            upload_id: before_offline,
+            content_hash: before_offline_hash,
+        })
+        .await
+        .expect("the leader commits a version before the node goes offline");
+    wait_for_committed_version(&cluster.nodes, before_offline, before_offline_hash).await;
+
+    let offline_id = CLUSTER_NODES
+        .iter()
+        .copied()
+        .find(|node_id| *node_id != leader)
+        .expect("the cluster has a node besides the leader");
+    cluster.transport.remove(offline_id).await;
+    let task = cluster
+        .tasks
+        .remove(&offline_id)
+        .expect("the stopped node has a serving task");
+    task.abort();
+    let _ = task.await;
+    let offline = cluster
+        .nodes
+        .remove(&offline_id)
+        .expect("the stopped node belongs to the cluster");
+    let offline = Arc::try_unwrap(offline)
+        .expect("the aborted serving task was the only other owner of the node");
+    offline
+        .shutdown()
+        .await
+        .expect("the offline node shuts down");
+
+    let while_offline = UploadId::from_bytes([0x55; UPLOAD_ID_LEN]);
+    let while_offline_hash = ContentHash::digest(b"while-offline");
+    leader_node
+        .client_write(RaftRequest::CommitVersion {
+            upload_id: while_offline,
+            content_hash: while_offline_hash,
+        })
+        .await
+        .expect("the leader commits a version while the node is offline");
+    wait_for_committed_version(&cluster.nodes, while_offline, while_offline_hash).await;
+
+    let dir = cluster
+        .dirs
+        .get(&offline_id)
+        .expect("the stopped node keeps its data directory")
+        .path()
+        .to_path_buf();
+    let (restarted, task) = start_node(offline_id, &cluster.transport, dir).await;
+    cluster.nodes.insert(offline_id, Arc::clone(&restarted));
+    cluster.tasks.insert(offline_id, task);
+
+    let deadline = tokio::time::Instant::now() + REPLICATION_BUDGET;
+    loop {
+        let versions = restarted.committed_versions().await;
+        let caught_up = versions.get(&before_offline) == Some(&before_offline_hash)
+            && versions.get(&while_offline) == Some(&while_offline_hash);
+        if caught_up {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the returning node did not apply the committed versions {before_offline} and {while_offline} in time"
+        );
+        tokio::time::sleep(CATALOG_POLL_INTERVAL).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
