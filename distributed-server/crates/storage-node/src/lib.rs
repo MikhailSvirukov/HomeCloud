@@ -20,8 +20,9 @@
 //! private-key file loading ([`PrivateKey`], [`KeyError`]) from configured
 //! owner-only files, and Ed25519 message signing/verification
 //! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and the local
-//! OpenRaft runtime ([`RaftNode`]) that commits version metadata to an in-memory
-//! catalog state machine and exchanges CBOR-encoded RPCs over [`RaftTransport`].
+//! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
+//! commits version metadata to a catalog state machine, exchanges CBOR-encoded
+//! RPCs over [`RaftTransport`], and keeps a durable bootstrap marker.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
