@@ -22,7 +22,10 @@
 //! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
 //! commits version metadata to a catalog state machine, exchanges CBOR-encoded
-//! RPCs over [`RaftTransport`], and keeps a durable bootstrap marker.
+//! RPCs over [`RaftTransport`], and keeps a durable bootstrap marker. The
+//! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
+//! and its message-type registry ([`MessageType`], [`MessageError`]) are also
+//! part of the public wire API.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -52,6 +55,7 @@ mod frame_buffer;
 mod framing;
 mod keys;
 mod listener;
+mod message;
 mod metadata;
 mod node;
 mod payload;
@@ -75,6 +79,7 @@ pub use frame_buffer::FrameBuffer;
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
 pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
+pub use message::{decode_raft_rpc, encode_raft_rpc, MessageError, MessageType};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
     CONTENT_HASH_LEN, UPLOAD_ID_LEN,
