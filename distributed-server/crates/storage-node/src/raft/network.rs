@@ -79,6 +79,8 @@ impl<T: RaftTransport> Network<T> {
         Err: std::error::Error + serde::de::DeserializeOwned,
     {
         let request = encode(&rpc).map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
+        let request = crate::message::encode_raft_rpc(&request)
+            .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
         let reply =
             tokio::time::timeout(option.hard_ttl(), self.transport.send(self.target, request))
                 .await
@@ -88,6 +90,8 @@ impl<T: RaftTransport> Network<T> {
                     }))
                 })?
                 .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
+        let reply = crate::message::decode_raft_rpc(&reply)
+            .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
         let result: Result<Resp, Err> =
             decode(&reply).map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
         result.map_err(|error| RPCError::RemoteError(RemoteError::new(self.target, error)))

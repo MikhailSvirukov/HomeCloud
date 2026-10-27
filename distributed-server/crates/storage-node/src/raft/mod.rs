@@ -6,8 +6,8 @@
 //! `bootstrapped` marker, and later bootstrap commands are rejected.
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
-//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `NFR-MAINT-001 / 1`–
-//! `NFR-MAINT-006 / 1`.
+//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `INT-NET-074 / 2`,
+//! `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
 
 mod network;
 mod store;
@@ -112,6 +112,8 @@ pub enum RaftError {
     Decode,
     #[error("the RPC reply could not be encoded")]
     Encode,
+    #[error("the inter-server Raft RPC envelope is invalid")]
+    Envelope(#[from] crate::message::MessageError),
     #[error("the Raft node could not be shut down")]
     Shutdown,
 }
@@ -239,15 +241,17 @@ impl RaftNode {
 
     /// Handles one encoded Raft RPC by passing it to the local OpenRaft instance and returns the encoded reply.
     pub async fn handle_rpc(&self, bytes: &[u8]) -> Result<Vec<u8>, RaftError> {
-        match network::decode::<network::RaftRpc>(bytes)? {
+        let bytes = crate::message::decode_raft_rpc(bytes)?;
+        let reply = match network::decode::<network::RaftRpc>(&bytes)? {
             network::RaftRpc::AppendEntries(rpc) => {
-                network::encode(&self.raft.append_entries(rpc).await)
+                network::encode(&self.raft.append_entries(rpc).await)?
             }
-            network::RaftRpc::Vote(rpc) => network::encode(&self.raft.vote(rpc).await),
+            network::RaftRpc::Vote(rpc) => network::encode(&self.raft.vote(rpc).await)?,
             network::RaftRpc::InstallSnapshot(rpc) => {
-                network::encode(&self.raft.install_snapshot(rpc).await)
+                network::encode(&self.raft.install_snapshot(rpc).await)?
             }
-        }
+        };
+        crate::message::encode_raft_rpc(&reply).map_err(RaftError::from)
     }
 
     /// Stops the local OpenRaft instance.
