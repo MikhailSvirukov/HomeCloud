@@ -18,8 +18,10 @@
 //! worker threads, the on-disk storage layout ([`StorageLayout`]) with
 //! separate accounts and Raft roots and hex-encoded account/blob paths, and
 //! private-key file loading ([`PrivateKey`], [`KeyError`]) from configured
-//! owner-only files, and Ed25519 message signing/verification
-//! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and the local
+//! owner-only files, Ed25519 message signing/verification
+//! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and HPKE
+//! Base-mode message sealing ([`seal`], [`open`]) with X25519, HKDF-SHA-256, and
+//! AES-256-GCM, and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
 //! commits version metadata to a catalog state machine, exchanges CBOR-encoded
 //! RPCs inside the type-3 inter-server envelope over [`RaftTransport`], and
@@ -63,6 +65,7 @@ mod payload;
 mod payload_stream;
 mod raft;
 mod response;
+mod sealing;
 mod signing;
 mod storage_layout;
 
@@ -92,6 +95,10 @@ pub use raft::{
     RaftError, RaftNode, RaftRequest, RaftResponse, RaftTiming, RaftTransport, RaftTransportError,
 };
 pub use response::{ResponseError, UploadStatus};
+pub use sealing::{
+    open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, ENCAPSULATED_KEY_LEN,
+    X25519_KEY_LEN,
+};
 pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
 };

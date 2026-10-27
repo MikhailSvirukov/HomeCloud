@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 ciborium = "0.2"
 ed25519-dalek = "2"
+hpke = { version = "0.15", default-features = false, features = ["alloc", "getrandom", "x25519", "aes"] }
 num_enum = "0.7"
 openraft = { version = "=0.9.25", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
