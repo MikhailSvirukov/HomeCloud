@@ -1,7 +1,13 @@
 //! Local OpenRaft consensus runtime, catalog state machine, and CBOR RPC adapter.
 //!
-//! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-031 / 1`,
-//! `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
+//! Raft state is persisted in a `state.cbor` file inside the configured raft
+//! directory and restored when the node starts, so a restarted node does not
+//! create a new cluster. A successful initial bootstrap is recorded in a durable
+//! `bootstrapped` marker, and later bootstrap commands are rejected.
+//!
+//! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
+//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `NFR-MAINT-001 / 1`–
+//! `NFR-MAINT-006 / 1`.
 
 mod network;
 mod store;
@@ -10,6 +16,8 @@ use core::fmt;
 use core::num::NonZeroU64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -59,6 +67,9 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS: NonZeroU64 = non_zero_millis(500);
 const DEFAULT_ELECTION_TIMEOUT_MIN_MS: NonZeroU64 = non_zero_millis(1_500);
 const DEFAULT_ELECTION_TIMEOUT_MAX_MS: NonZeroU64 = non_zero_millis(3_000);
 const LEADER_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const STATE_FILE_NAME: &str = "state.cbor";
+const BOOTSTRAP_MARKER_FILE_NAME: &str = "bootstrapped";
+const BOOTSTRAP_MARKER_TEMP_FILE_NAME: &str = "bootstrapped.tmp";
 
 const fn non_zero_millis(value: u64) -> NonZeroU64 {
     match NonZeroU64::new(value) {
@@ -81,6 +92,14 @@ impl Default for RaftTiming {
 pub enum RaftError {
     #[error("the Raft node could not be started")]
     Start(#[from] openraft::error::Fatal<NodeId>),
+    #[error("the persistent Raft state could not be read or written")]
+    Storage(#[from] openraft::StorageError<NodeId>),
+    #[error("the Raft data directory could not be created")]
+    DataDir(#[source] std::io::Error),
+    #[error("the cluster was already bootstrapped")]
+    AlreadyBootstrapped,
+    #[error("the bootstrap marker could not be written")]
+    BootstrapMarker(#[source] std::io::Error),
     #[error("the cluster initialization was rejected")]
     Initialize(#[from] openraft::error::InitializeError<NodeId, BasicNode>),
     #[error("the client write was rejected")]
@@ -120,6 +139,7 @@ pub enum RaftTransportError {
 pub struct RaftNode {
     raft: Arc<Raft<RaftConfig>>,
     store: store::MemStore,
+    raft_dir: PathBuf,
 }
 
 #[expect(
@@ -132,6 +152,7 @@ impl RaftNode {
         node_id: NodeId,
         transport: T,
         timing: RaftTiming,
+        raft_dir: PathBuf,
     ) -> Result<Self, RaftError> {
         if timing.election_timeout_min_ms > timing.election_timeout_max_ms {
             return Err(RaftError::InvalidTiming);
@@ -144,7 +165,8 @@ impl RaftNode {
         };
         let config = config.validate().map_err(|_| RaftError::InvalidTiming)?;
 
-        let store = store::MemStore::default();
+        std::fs::create_dir_all(&raft_dir).map_err(RaftError::DataDir)?;
+        let store = store::MemStore::open(raft_dir.join(STATE_FILE_NAME))?;
         let (log_store, state_machine) = openraft::storage::Adaptor::new(store.clone());
         let raft = Raft::new(
             node_id,
@@ -158,17 +180,21 @@ impl RaftNode {
         Ok(Self {
             raft: Arc::new(raft),
             store,
+            raft_dir,
         })
     }
 
     /// Bootstraps the cluster with the given node addresses (explicit command, never automatic).
     pub async fn initialize(&self, members: BTreeMap<NodeId, String>) -> Result<(), RaftError> {
+        if self.raft_dir.join(BOOTSTRAP_MARKER_FILE_NAME).exists() {
+            return Err(RaftError::AlreadyBootstrapped);
+        }
         let members = members
             .into_iter()
             .map(|(node_id, address)| (node_id, BasicNode::new(address)))
             .collect::<BTreeMap<_, _>>();
         match self.raft.initialize(members).await {
-            Ok(()) => Ok(()),
+            Ok(()) => persist_bootstrap_marker(&self.raft_dir),
             Err(openraft::error::RaftError::APIError(error)) => Err(error.into()),
             Err(openraft::error::RaftError::Fatal(error)) => Err(error.into()),
         }
@@ -228,6 +254,20 @@ impl RaftNode {
     pub async fn shutdown(self) -> Result<(), RaftError> {
         self.raft.shutdown().await.map_err(|_| RaftError::Shutdown)
     }
+}
+
+#[expect(
+    clippy::result_large_err,
+    reason = "the marker helper returns the public error type unchanged"
+)]
+fn persist_bootstrap_marker(raft_dir: &Path) -> Result<(), RaftError> {
+    let temporary = raft_dir.join(BOOTSTRAP_MARKER_TEMP_FILE_NAME);
+    let marker = raft_dir.join(BOOTSTRAP_MARKER_FILE_NAME);
+    std::fs::File::create(&temporary)
+        .and_then(|file| file.sync_all())
+        .and_then(|()| std::fs::rename(&temporary, &marker))
+        .and_then(|()| std::fs::File::open(raft_dir)?.sync_all())
+        .map_err(RaftError::BootstrapMarker)
 }
 
 impl fmt::Debug for RaftNode {

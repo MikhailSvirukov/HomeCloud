@@ -37,9 +37,9 @@ for clients; it does not relay Raft or blob traffic.
   worker threads), `src/node.rs` (node runtime: serves frame connections on
   a bound listener until shutdown), `src/storage_layout.rs` (on-disk
   layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), `src/raft/`
-  (local OpenRaft runtime, CBOR RPC adapter, in-memory catalog state machine),
-  and `src/signing.rs` (Ed25519 message signing/verification with a redacted
-  signing key).
+  (local OpenRaft runtime, CBOR RPC adapter, catalog state machine with
+  file-backed persistence), and `src/signing.rs` (Ed25519 message
+  signing/verification with a redacted signing key).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
@@ -69,8 +69,11 @@ compression/crypto work off the Tokio worker threads, and the node runtime that
 serves those connections until shutdown; the `storage-node` binary now binds the
 configured listen address and serves connections. Tokio is now a dependency for
 the async connection halves, and `tracing` backs the structured logs the node
-emits with a level configured through `RUST_LOG`. The connection actors and
-`io_uring` are not implemented yet.
+emits with a level configured through `RUST_LOG`. The local OpenRaft state
+(`state.cbor`) and the bootstrap marker are persisted under the configured node
+data directory, so a restarted node restores its applied catalog and rejects a
+repeated bootstrap command; `raft_cluster_public_api.rs` also covers restart
+recovery. The connection actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 

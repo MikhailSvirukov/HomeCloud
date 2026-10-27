@@ -1,9 +1,12 @@
-//! In-memory Raft log, state machine, and snapshot store.
+//! File-backed Raft log, state machine, and snapshot store.
 
 use core::fmt;
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::io::Write;
 use std::ops::RangeBounds;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use openraft::storage::LogState;
@@ -29,13 +32,17 @@ use crate::metadata::UploadId;
 
 use super::{NodeId, RaftConfig, RaftRequest, RaftResponse};
 
-/// Cloneable handle to the in-memory Raft storage shared by the log and state machine.
+/// Cloneable handle to the Raft storage shared by the log and state machine.
+///
+/// Every mutation is written to the file at `path`. A store built with
+/// [`Default`] has no backing file and is only used by unit tests.
 #[derive(Clone, Default)]
 pub(super) struct MemStore {
     inner: Arc<RwLock<StoreInner>>,
+    path: PathBuf,
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct StoreInner {
     vote: Option<Vote<NodeId>>,
     committed: Option<LogId<NodeId>>,
@@ -48,6 +55,7 @@ struct StoreInner {
     snapshot_idx: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 struct StoredSnapshot {
     meta: SnapshotMeta<NodeId, BasicNode>,
     data: Vec<u8>,
@@ -60,10 +68,61 @@ struct StateMachineState {
     catalog: BTreeMap<UploadId, ContentHash>,
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "the store forwards openraft's storage error unchanged"
+)]
 impl MemStore {
+    /// Opens the store at `path`, restoring a previously persisted state when the file exists.
+    pub(super) fn open(path: PathBuf) -> Result<Self, StorageError<NodeId>> {
+        let inner: StoreInner = match std::fs::read(&path) {
+            Ok(bytes) => ciborium::de::from_reader(bytes.as_slice())
+                .map_err(|error| StorageIOError::read_state_machine(&error))?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreInner::default(),
+            Err(error) => return Err(StorageIOError::read_state_machine(&error).into()),
+        };
+        Ok(Self {
+            inner: Arc::new(RwLock::new(inner)),
+            path,
+        })
+    }
+
+    /// Writes `inner` to the backing file through a synced temporary file and atomic rename.
+    fn persist(&self, inner: &StoreInner) -> Result<(), StorageError<NodeId>> {
+        if self.path.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let mut data = Vec::new();
+        ciborium::ser::into_writer(inner, &mut data)
+            .map_err(|error| StorageIOError::write_state_machine(&error))?;
+        let temporary = self.temporary_path();
+        std::fs::File::create(&temporary)
+            .and_then(|mut file| {
+                file.write_all(&data)?;
+                file.sync_all()
+            })
+            .and_then(|()| std::fs::rename(&temporary, &self.path))
+            .and_then(|()| sync_parent(&self.path))
+            .map_err(|error| StorageIOError::write_state_machine(&error).into())
+    }
+
+    fn temporary_path(&self) -> PathBuf {
+        let mut path = self.path.clone().into_os_string();
+        path.push(".tmp");
+        PathBuf::from(path)
+    }
+
     /// Returns the applied version catalog.
     pub(super) async fn committed_versions(&self) -> BTreeMap<UploadId, ContentHash> {
         self.inner.read().await.catalog.clone()
+    }
+}
+
+/// Syncs the directory that contains `path` so a rename survives a crash.
+fn sync_parent(path: &Path) -> std::io::Result<()> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => std::fs::File::open(parent)?.sync_all(),
+        _ => Ok(()),
     }
 }
 
@@ -135,6 +194,7 @@ impl RaftSnapshotBuilder<RaftConfig> for MemStore {
             meta: meta.clone(),
             data: data.clone(),
         });
+        self.persist(&inner)?;
 
         Ok(Snapshot {
             meta,
@@ -148,8 +208,9 @@ impl RaftStorage<RaftConfig> for MemStore {
     type SnapshotBuilder = Self;
 
     async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
-        self.inner.write().await.vote = Some(*vote);
-        Ok(())
+        let mut inner = self.inner.write().await;
+        inner.vote = Some(*vote);
+        self.persist(&inner)
     }
 
     async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
@@ -160,8 +221,9 @@ impl RaftStorage<RaftConfig> for MemStore {
         &mut self,
         committed: Option<LogId<NodeId>>,
     ) -> Result<(), StorageError<NodeId>> {
-        self.inner.write().await.committed = committed;
-        Ok(())
+        let mut inner = self.inner.write().await;
+        inner.committed = committed;
+        self.persist(&inner)
     }
 
     async fn read_committed(&mut self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
@@ -194,7 +256,7 @@ impl RaftStorage<RaftConfig> for MemStore {
         for entry in entries {
             inner.log.insert(entry.log_id.index, entry);
         }
-        Ok(())
+        self.persist(&inner)
     }
 
     async fn delete_conflict_logs_since(
@@ -210,7 +272,7 @@ impl RaftStorage<RaftConfig> for MemStore {
         for index in indices {
             inner.log.remove(&index);
         }
-        Ok(())
+        self.persist(&inner)
     }
 
     async fn purge_logs_upto(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
@@ -226,7 +288,7 @@ impl RaftStorage<RaftConfig> for MemStore {
         for index in indices {
             inner.log.remove(&index);
         }
-        Ok(())
+        self.persist(&inner)
     }
 
     async fn last_applied_state(
@@ -263,6 +325,7 @@ impl RaftStorage<RaftConfig> for MemStore {
                 }
             }
         }
+        self.persist(&inner)?;
         Ok(responses)
     }
 
@@ -292,7 +355,7 @@ impl RaftStorage<RaftConfig> for MemStore {
             meta: meta.clone(),
             data,
         });
-        Ok(())
+        self.persist(&inner)
     }
 
     async fn get_current_snapshot(
@@ -308,9 +371,22 @@ impl RaftStorage<RaftConfig> for MemStore {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use openraft::CommittedLeaderId;
 
     use super::*;
+    use crate::metadata::{CONTENT_HASH_LEN, UPLOAD_ID_LEN};
+
+    static NEXT_STATE_FILE: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_state_path(label: &str) -> PathBuf {
+        let unique = NEXT_STATE_FILE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "storage-node-raft-{}-{label}-{unique}.cbor",
+            std::process::id()
+        ))
+    }
 
     #[tokio::test]
     async fn blank_entry_advances_applied_log_without_a_catalog_version() {
@@ -332,5 +408,50 @@ mod tests {
             .expect("the state machine is readable");
         assert_eq!(last_applied, Some(log_id));
         assert!(store.committed_versions().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_installed_snapshot_restores_the_catalog() {
+        let source_path = temp_state_path("source");
+        let target_path = temp_state_path("target");
+        let mut source = MemStore::open(source_path.clone()).expect("the source store opens");
+        let upload_id = UploadId::from_bytes([7; UPLOAD_ID_LEN]);
+        let content_hash = ContentHash::from_bytes([9; CONTENT_HASH_LEN]);
+
+        source
+            .apply_to_state_machine(&[Entry {
+                log_id: LogId::new(CommittedLeaderId::new(1, 1), 1),
+                payload: EntryPayload::Normal(RaftRequest::CommitVersion {
+                    upload_id,
+                    content_hash,
+                }),
+            }])
+            .await
+            .expect("the committed version applies");
+        let snapshot = source
+            .build_snapshot()
+            .await
+            .expect("the applied state builds a snapshot");
+
+        let mut target = MemStore::open(target_path.clone()).expect("the target store opens");
+        target
+            .install_snapshot(&snapshot.meta, snapshot.snapshot)
+            .await
+            .expect("the snapshot installs");
+
+        assert_eq!(
+            target.committed_versions().await.get(&upload_id),
+            Some(&content_hash)
+        );
+
+        drop(target);
+        let reopened = MemStore::open(target_path.clone()).expect("the installed state reopens");
+        assert_eq!(
+            reopened.committed_versions().await.get(&upload_id),
+            Some(&content_hash)
+        );
+
+        std::fs::remove_file(source_path).expect("the source state file can be removed");
+        std::fs::remove_file(target_path).expect("the target state file can be removed");
     }
 }
