@@ -27,7 +27,7 @@ use super::RaftError;
 use super::RaftTransport;
 
 /// One encoded Raft RPC carried inside the inter-server `rpc_bytes` payload.
-#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(super) enum RaftRpc {
     AppendEntries(AppendEntriesRequest<RaftConfig>),
     Vote(VoteRequest<NodeId>),
@@ -53,6 +53,13 @@ pub(super) struct Network<T> {
     target: NodeId,
 }
 
+/// The transport did not answer within the RPC hard deadline.
+#[derive(Debug, thiserror::Error)]
+#[error("the RPC to peer {target} timed out")]
+struct RpcTimeout {
+    target: NodeId,
+}
+
 impl<T: RaftTransport> Network<T> {
     pub(super) const fn new(transport: T) -> Self {
         Self {
@@ -65,17 +72,22 @@ impl<T: RaftTransport> Network<T> {
     async fn send_rpc<Resp, Err>(
         &self,
         rpc: RaftRpc,
+        option: RPCOption,
     ) -> Result<Resp, RPCError<NodeId, BasicNode, Err>>
     where
         Resp: serde::de::DeserializeOwned,
         Err: std::error::Error + serde::de::DeserializeOwned,
     {
         let request = encode(&rpc).map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
-        let reply = self
-            .transport
-            .send(self.target, request)
-            .await
-            .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
+        let reply =
+            tokio::time::timeout(option.hard_ttl(), self.transport.send(self.target, request))
+                .await
+                .map_err(|_| {
+                    RPCError::Network(NetworkError::new(&RpcTimeout {
+                        target: self.target,
+                    }))
+                })?
+                .map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
         let result: Result<Resp, Err> =
             decode(&reply).map_err(|error| RPCError::Network(NetworkError::new(&error)))?;
         result.map_err(|error| RPCError::RemoteError(RemoteError::new(self.target, error)))
@@ -97,29 +109,29 @@ impl<T: RaftTransport> RaftNetwork<RaftConfig> for Network<T> {
     async fn append_entries(
         &mut self,
         rpc: AppendEntriesRequest<RaftConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, BasicNode, OpenraftError<NodeId>>>
     {
-        self.send_rpc(RaftRpc::AppendEntries(rpc)).await
+        self.send_rpc(RaftRpc::AppendEntries(rpc), option).await
     }
 
     async fn vote(
         &mut self,
         rpc: VoteRequest<NodeId>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, BasicNode, OpenraftError<NodeId>>> {
-        self.send_rpc(RaftRpc::Vote(rpc)).await
+        self.send_rpc(RaftRpc::Vote(rpc), option).await
     }
 
     async fn install_snapshot(
         &mut self,
         rpc: InstallSnapshotRequest<RaftConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<
         InstallSnapshotResponse<NodeId>,
         RPCError<NodeId, BasicNode, OpenraftError<NodeId, InstallSnapshotError>>,
     > {
-        self.send_rpc(RaftRpc::InstallSnapshot(rpc)).await
+        self.send_rpc(RaftRpc::InstallSnapshot(rpc), option).await
     }
 }
 

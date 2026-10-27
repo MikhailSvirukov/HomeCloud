@@ -174,7 +174,7 @@ impl RaftNode {
         }
     }
 
-    /// Writes one application request through the current leader.
+    /// Writes one application request toward the current leader; a follower rejects it with `ClientWriteError::ForwardToLeader` and this layer neither redirects nor forwards.
     pub async fn client_write(&self, request: RaftRequest) -> Result<RaftResponse, RaftError> {
         match self.raft.client_write(request).await {
             Ok(response) => Ok(response.data),

@@ -153,6 +153,32 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
         "the elected leader is one of the configured storage nodes"
     );
 
+    let follower_id = CLUSTER_NODES
+        .iter()
+        .copied()
+        .find(|node_id| *node_id != leader)
+        .expect("the cluster has a follower besides the leader");
+    let follower = nodes
+        .get(&follower_id)
+        .expect("the follower belongs to the cluster");
+    follower
+        .wait_for_leader(ELECTION_BUDGET)
+        .await
+        .expect("the follower learns the elected leader within the election budget");
+    let rejected = follower
+        .client_write(RaftRequest::CommitVersion {
+            upload_id: UploadId::from_bytes([0x22; UPLOAD_ID_LEN]),
+            content_hash: ContentHash::digest(b"rejected payload"),
+        })
+        .await
+        .expect_err("a follower rejects a client write");
+    let RaftError::ClientWrite(openraft::error::ClientWriteError::ForwardToLeader(forward)) =
+        rejected
+    else {
+        panic!("the follower must signal the current leader");
+    };
+    assert_eq!(forward.leader_id, Some(leader));
+
     let upload_id = UploadId::from_bytes([0x11; UPLOAD_ID_LEN]);
     let content_hash = ContentHash::digest(b"payload");
     let leader_node = nodes
