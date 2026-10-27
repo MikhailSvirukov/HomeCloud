@@ -10,6 +10,8 @@ defined there, not in this file.
 
 ## Boundary
 
+- This process is a Raft voting node. Read the [storage-cluster SRS](../docs/specification-v1/storage-cluster.md), including `FR-CL-030/031` and `NFR-MAINT-001`–`NFR-MAINT-004`. The workstream owns the local OpenRaft consensus runtime, its direct peer RPC transport, persistent Raft state, and committed state-machine application. Planning and review must cover this executable integration in addition to storage and blob replication; the dedicated server does not run consensus for this node.
+
 - Read and modify only files under `distributed-server/`.
 - Do not inspect the Android, dedicated-server, or test-harness areas.
 - Shared protocol/interface changes go through issues/PRs for the owning workstream;
