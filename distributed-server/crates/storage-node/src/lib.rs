@@ -30,7 +30,9 @@
 //! over [`RaftTransport`], and keeps a durable bootstrap marker. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
-//! part of the public wire API.
+//! part of the public wire API, together with the catalog entry, page, and
+//! request CBOR codecs ([`CatalogEntry`], [`CatalogPage`], [`CatalogRequest`],
+//! [`encode_page`], [`decode_request`]).
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -52,6 +54,7 @@
 //!   `tokio-uring` is not used.
 
 mod buffer_pool;
+mod catalog;
 mod codec;
 mod config;
 mod connection;
@@ -74,6 +77,10 @@ mod storage_layout;
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
     DEFAULT_CLASS_CAPACITIES,
+};
+pub use catalog::{
+    decode_request, encode_page, CatalogEntry, CatalogError, CatalogPage, CatalogRequest,
+    CATALOG_TOKEN_LEN,
 };
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};

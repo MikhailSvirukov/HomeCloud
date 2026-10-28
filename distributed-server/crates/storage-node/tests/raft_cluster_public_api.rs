@@ -132,6 +132,7 @@ fn committed_version(upload_id: UploadId, payload: &[u8], replicas: &[u64]) -> C
             "alice",
             "photo.jpg",
             payload.len() as u64,
+            payload.len() as u64 / 2,
             ContentHash::digest(payload),
             1_690_000_000_000,
             1_700_000_000_000,

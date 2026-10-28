@@ -27,13 +27,14 @@ fn upload_id_carries_the_sixteen_wire_bytes() {
 }
 
 #[test]
-fn upload_record_new_trims_and_rejects_blank_fields() {
+fn upload_record_new_preserves_original_name_and_trims_login() {
     let hash = content_hash(0x2a);
     let record = UploadRecord::new(
         upload_id(1),
         "  alice  ",
         "  photo.jpg  ",
         4_096,
+        1_536,
         hash,
         1_650_000_000_000,
         1_700_000_000_000,
@@ -42,19 +43,20 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
 
     assert_eq!(record.upload_id, upload_id(1));
     assert_eq!(record.login, "alice");
-    assert_eq!(record.original_name, "photo.jpg");
+    assert_eq!(record.original_name, "  photo.jpg  ");
     assert_eq!(record.size_bytes, 4_096);
+    assert_eq!(record.compressed_size_bytes, 1_536);
     assert_eq!(record.content_hash, hash);
     assert_eq!(record.captured_at_ms, 1_650_000_000_000);
     assert_eq!(record.accepted_at_ms, 1_700_000_000_000);
     assert_ne!(record.captured_at_ms, record.accepted_at_ms);
 
     assert_eq!(
-        UploadRecord::new(upload_id(1), "   ", "photo.jpg", 1, hash, 0, 0),
+        UploadRecord::new(upload_id(1), "   ", "photo.jpg", 1, 0, hash, 0, 0),
         Err(MetadataError::EmptyLogin)
     );
     assert_eq!(
-        UploadRecord::new(upload_id(1), "alice", "   ", 1, hash, 0, 0),
+        UploadRecord::new(upload_id(1), "alice", "   ", 1, 0, hash, 0, 0),
         Err(MetadataError::EmptyOriginalName)
     );
 }
@@ -63,15 +65,33 @@ fn upload_record_new_trims_and_rejects_blank_fields() {
 fn ledger_records_first_upload_and_keeps_it_on_retry() {
     let mut ledger = UploadLedger::new();
     let first_hash = content_hash(0x11);
-    let first = UploadRecord::new(upload_id(1), "alice", "a.txt", 10, first_hash, 900, 1_000)
-        .expect("first record is valid");
+    let first = UploadRecord::new(
+        upload_id(1),
+        "alice",
+        "a.txt",
+        10,
+        4,
+        first_hash,
+        900,
+        1_000,
+    )
+    .expect("first record is valid");
 
     assert_eq!(ledger.record(first), RecordOutcome::Recorded);
     assert_eq!(ledger.len(), 1);
 
     let retry_hash = content_hash(0x22);
-    let retry = UploadRecord::new(upload_id(1), "bob", "b.txt", 99, retry_hash, 1_900, 2_000)
-        .expect("retry record is valid");
+    let retry = UploadRecord::new(
+        upload_id(1),
+        "bob",
+        "b.txt",
+        99,
+        30,
+        retry_hash,
+        1_900,
+        2_000,
+    )
+    .expect("retry record is valid");
 
     assert_eq!(ledger.record(retry), RecordOutcome::AlreadyPresent);
     assert_eq!(ledger.len(), 1);
@@ -80,6 +100,7 @@ fn ledger_records_first_upload_and_keeps_it_on_retry() {
     assert_eq!(stored.login, "alice");
     assert_eq!(stored.original_name, "a.txt");
     assert_eq!(stored.size_bytes, 10);
+    assert_eq!(stored.compressed_size_bytes, 4);
     assert_eq!(stored.content_hash, first_hash);
     assert_eq!(stored.captured_at_ms, 900);
     assert_eq!(stored.accepted_at_ms, 1_000);
@@ -98,6 +119,7 @@ fn ledger_get_unknown_id_returns_none() {
         "alice",
         "a.txt",
         10,
+        4,
         content_hash(0x33),
         900,
         1_000,
@@ -122,6 +144,7 @@ fn catalog_returns_versions_in_ascending_upload_id_order() {
             login,
             original_name,
             size_bytes,
+            size_bytes / 2,
             content_hash(hash_byte),
             captured_at_ms,
             accepted_at_ms,

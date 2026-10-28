@@ -32,7 +32,7 @@ use crate::metadata::UploadId;
 use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
 
 /// Version of the persisted `state.cbor` layout, written before the CBOR payload.
-const STATE_FORMAT_VERSION: u8 = 2;
+const STATE_FORMAT_VERSION: u8 = 3;
 
 /// Cloneable handle to the Raft storage shared by the log and state machine.
 ///
@@ -443,6 +443,7 @@ mod tests {
                 "alice",
                 "original.bin",
                 4_096,
+                1_024,
                 ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
                 1_700_000_000_000,
                 1_700_000_000_500,
