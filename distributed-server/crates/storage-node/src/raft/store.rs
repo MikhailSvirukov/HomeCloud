@@ -443,6 +443,7 @@ mod tests {
                 "alice",
                 "original.bin",
                 4_096,
+                1_024,
                 ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
                 1_700_000_000_000,
                 1_700_000_000_500,

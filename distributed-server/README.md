@@ -32,7 +32,10 @@ clients; it does not relay Raft or blob traffic.
   identity/configuration), `src/keys.rs` (private key material loaded from
   configured owner-only files), `src/response.rs` (typed upload outcomes / status
   codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
-  hash, upload record), `src/listener.rs` (binds the node's listen address
+  hash, upload record preserving the original source name exactly, with no
+  trimming or normalization, plus original and compressed sizes), `src/catalog.rs`
+  (catalog entry, page, and request CBOR codecs), `src/listener.rs` (binds
+  the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
   worker threads), `src/node.rs` (node runtime: serves frame connections on
@@ -50,7 +53,7 @@ clients; it does not relay Raft or blob traffic.
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
   `keys_public_api.rs`, `content_hash_public_api.rs`,
-  `upload_ledger_public_api.rs`,
+  `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
@@ -67,7 +70,8 @@ blocks, the logical payload chain with chunked streaming/backpressure, the
 payload streaming path that frames pooled chunks onto the connection writer, the
 node identity/configuration model, the idempotent upload ledger (upload id, content
 hash that computes a SHA-256 digest of the original uncompressed bytes, upload
-record), the typed upload outcomes (status codes), and the TCP
+record storing the original and compressed sizes), the catalog entry, page, and
+request CBOR codecs, the typed upload outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
 compression/crypto work off the Tokio worker threads, and the node runtime that
@@ -78,8 +82,9 @@ emits with a level configured through `RUST_LOG`. The local OpenRaft state
 (`state.cbor`) and the bootstrap marker are persisted under the configured node
 data directory, so a restarted node restores its applied catalog and rejects a
 repeated bootstrap command. The applied Raft catalog stores the full version
-metadata (upload id, login, original file name, byte size, SHA-256 of the
-original bytes, capture/creation time, and acceptance time) together with the
+metadata (upload id, login, original file name, original and compressed byte
+sizes, SHA-256 of the original bytes, capture/creation time, and acceptance
+time) together with the
 set of storage nodes that durably hold the blob. The persisted Raft state file
 records a format version. `raft_cluster_public_api.rs` covers restart recovery
 and a returning node catching up committed entries. The connection

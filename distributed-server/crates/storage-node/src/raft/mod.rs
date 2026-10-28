@@ -327,6 +327,7 @@ mod tests {
                 "secret-login",
                 "secret-name.bin",
                 4_096,
+                2_048,
                 ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
                 1_700_000_000_000,
                 1_700_000_000_500,
