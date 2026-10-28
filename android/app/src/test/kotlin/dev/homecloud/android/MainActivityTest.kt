@@ -11,15 +11,25 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import dev.homecloud.android.backup.BackupWorkScheduler
+import dev.homecloud.android.notifications.NotificationPermissionPolicy
 import dev.homecloud.android.permissions.MediaPermissionPolicy
 import dev.homecloud.android.testsupport.MediaTestData
 import dev.homecloud.android.testsupport.RecordingMediaContentProvider
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.ExternalResource
+import org.junit.rules.TestRule
+import org.junit.runner.Description
 import org.junit.runner.RunWith
+import org.junit.runners.model.Statement
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -33,8 +43,9 @@ import org.robolectric.annotation.ConscryptMode
  * package manager resolves.
  *
  * The Compose rule launches the activity before the test body runs, so the granted state is produced
- * through Robolectric's shadow application permissions and the lifecycle is driven back to resume,
- * where the surface recomputes, instead of recreating the activity. The activity schedules its
+ * through Robolectric's shadow application permissions: media access is granted or denied in the
+ * test body and the lifecycle is driven back to resume, while [NotificationPermissionRule] grants
+ * or denies the notification permission before the activity launches. The activity schedules its
  * periodic backup cycle on create, so a test WorkManager is installed by an outer rule before the
  * activity launches and no real work is executed.
  *
@@ -46,9 +57,12 @@ import org.robolectric.annotation.ConscryptMode
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class MainActivityTest {
     @get:Rule(order = 0)
-    val testWorkManagerRule = TestWorkManagerRule()
+    val notificationPermissionRule = NotificationPermissionRule()
 
     @get:Rule(order = 1)
+    val testWorkManagerRule = TestWorkManagerRule()
+
+    @get:Rule(order = 2)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
@@ -57,6 +71,60 @@ class MainActivityTest {
 
         composeRule.onNodeWithText(requestMessage()).assertIsDisplayed()
         composeRule.onNodeWithText(requestAction()).assertIsDisplayed()
+    }
+
+    @Test
+    fun `launch on api 33 with a denied notification permission requests it once and keeps the media request surface`() {
+        val activity = composeRule.activity
+        val requestedPermission =
+            requireNotNull(shadowOf(activity).lastRequestedPermission) {
+                "a fresh launch must request the denied notification permission"
+            }
+
+        assertArrayEquals(
+            arrayOf(NotificationPermissionPolicy.POST_NOTIFICATIONS),
+            requestedPermission.requestedPermissions,
+        )
+        resumeAgain()
+        assertSame(
+            "the permission must be requested on create, not again on resume",
+            requestedPermission,
+            shadowOf(activity).lastRequestedPermission,
+        )
+        composeRule.onNodeWithText(requestMessage()).assertIsDisplayed()
+        composeRule.onNodeWithText(requestAction()).assertIsDisplayed()
+    }
+
+    @Test
+    fun `launch on api 33 with a denied notification permission still enqueues the periodic backup cycle`() {
+        val workInfos =
+            WorkManager
+                .getInstance(composeRule.activity)
+                .getWorkInfosForUniqueWork(BackupWorkScheduler.PERIODIC_WORK_NAME)
+                .get()
+
+        assertTrue(
+            "FR-AND-036 forbids a denied notification permission from blocking backup",
+            workInfos.isNotEmpty(),
+        )
+    }
+
+    @Test
+    @NotificationPermissionGranted
+    fun `launch on api 33 with the notification permission granted records no permission request`() {
+        assertNull(
+            "a granted notification permission must not be requested",
+            shadowOf(composeRule.activity).lastRequestedPermission,
+        )
+    }
+
+    @Test
+    @Config(sdk = [LEGACY_SDK_INT])
+    fun `launch below api 33 records no notification permission request`() {
+        assertNull(
+            "the notification permission does not exist before api 33",
+            shadowOf(composeRule.activity).lastRequestedPermission,
+        )
     }
 
     @Test
@@ -191,12 +259,41 @@ class MainActivityTest {
 
     private companion object {
         const val PER_TYPE_PERMISSIONS_SDK_INT = 33
+        const val LEGACY_SDK_INT = 32
         const val IMAGE_ID = 7L
         const val VIDEO_ID = 8L
         const val DISPLAY_NAME_PREFIX = "item-"
         const val EXPECTED_MEDIA_COUNT = 2
         const val LIBRARY_TIMEOUT_MILLIS = 5_000L
     }
+}
+
+/** Marks a test that must launch the activity with the notification permission already granted. */
+@Retention(AnnotationRetention.RUNTIME)
+@Target(AnnotationTarget.FUNCTION)
+private annotation class NotificationPermissionGranted
+
+/**
+ * Applies the notification permission state before the Compose rule launches the activity, so the
+ * create-time request decision observes the platform state the test scenario describes. Tests
+ * without [NotificationPermissionGranted] see the permission denied.
+ */
+class NotificationPermissionRule : TestRule {
+    override fun apply(
+        base: Statement,
+        description: Description,
+    ): Statement =
+        object : Statement() {
+            override fun evaluate() {
+                val shadowApplication = shadowOf(RuntimeEnvironment.getApplication())
+                if (description.getAnnotation(NotificationPermissionGranted::class.java) == null) {
+                    shadowApplication.denyPermissions(NotificationPermissionPolicy.POST_NOTIFICATIONS)
+                } else {
+                    shadowApplication.grantPermissions(NotificationPermissionPolicy.POST_NOTIFICATIONS)
+                }
+                base.evaluate()
+            }
+        }
 }
 
 /**
