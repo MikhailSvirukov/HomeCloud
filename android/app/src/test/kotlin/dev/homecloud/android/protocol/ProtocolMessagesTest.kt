@@ -58,6 +58,36 @@ class ProtocolMessagesTest {
     }
 
     @Test
+    fun encodeRejectsNullSenderAndNullBootstrapSigningKey() {
+        val header =
+            ExternalFrameHeader(
+                senderId = null,
+                requestId = REQUEST_ID,
+                frameNumber = FRAME_NUMBER,
+                uploadId = null,
+                responderLabel = null,
+                bootstrapSigningPublicKey = null,
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.encode(header) }
+    }
+
+    @Test
+    fun encodeRejectsSenderAndBootstrapSigningKeyTogether() {
+        val header =
+            ExternalFrameHeader(
+                senderId = SENDER_ID,
+                requestId = REQUEST_ID,
+                frameNumber = FRAME_NUMBER,
+                uploadId = null,
+                responderLabel = null,
+                bootstrapSigningPublicKey = BOOTSTRAP_SIGNING_KEY,
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.encode(header) }
+    }
+
+    @Test
     fun decodeReadsOrdinaryHeaderSenderAndNullBootstrapSigningKey() {
         val header =
             ExternalFrameHeader(
@@ -149,6 +179,17 @@ class ProtocolMessagesTest {
     @Test
     fun decodeRejectsThirtyOneByteBootstrapSigningKey() {
         val encoded = externalHeaderArray(bootstrapSigningPublicKey = CborValue.Bytes(SHORT_BOOTSTRAP_SIGNING_KEY))
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsThirtyOneByteBootstrapSigningKeyWithNullSenderId() {
+        val encoded =
+            externalHeaderArray(
+                senderId = CborValue.Null,
+                bootstrapSigningPublicKey = CborValue.Bytes(SHORT_BOOTSTRAP_SIGNING_KEY),
+            )
 
         assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
     }

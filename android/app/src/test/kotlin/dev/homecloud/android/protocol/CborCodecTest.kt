@@ -196,8 +196,23 @@ class CborCodecTest {
     }
 
     @Test
+    fun decodeAcceptsUnsignedValueAtLongMax() {
+        assertEquals(CborValue.UInt(LONG_MAX), CborDecoder.decode(bytesOf(HEX_UNSIGNED_LONG_MAX)))
+    }
+
+    @Test
     fun decodeRejectsUnsignedValueAboveLongMax() {
         assertRejected(HEX_UNSIGNED_ABOVE_LONG_MAX)
+    }
+
+    @Test
+    fun decodeAcceptsNestingAtSixtyFourLevels() {
+        var nested: CborValue = CborValue.UInt(0)
+        repeat(NESTING_LEVELS_AT_LIMIT) {
+            nested = CborValue.Array(listOf(nested))
+        }
+
+        assertCborEquals(nested, CborDecoder.decode(CborEncoder.encode(nested)))
     }
 
     @Test
@@ -298,6 +313,9 @@ class CborCodecTest {
         const val HEX_NON_MINIMAL_EIGHT_BYTE_HEAD = "1B0000000000000017"
         const val HEX_TRUNCATED_ARRAY = "8201"
         const val HEX_UNSIGNED_ABOVE_LONG_MAX = "1BFFFFFFFFFFFFFFFF"
+        const val HEX_UNSIGNED_LONG_MAX = "1B7FFFFFFFFFFFFFFF"
+        const val LONG_MAX = Long.MAX_VALUE
+        const val NESTING_LEVELS_AT_LIMIT = 64
         const val NESTING_LEVELS_ABOVE_LIMIT = 65
     }
 }
