@@ -50,9 +50,9 @@ fn encodes_a_last_page_as_the_positional_golden_bytes() {
     let entry = CatalogEntry::new(
         upload_id(0x01),
         "a",
-        0,
-        0,
-        0,
+        -1,
+        2,
+        3,
         content_hash(0x02),
         MAX_SOURCE_NAME_LEN,
     )
@@ -69,7 +69,7 @@ fn encodes_a_last_page_as_the_positional_golden_bytes() {
     expected.extend(token(0x03));
     expected.extend([0xf6, 0x81, 0x86, 0x50]);
     expected.extend([0x01; UPLOAD_ID_LEN]);
-    expected.extend([0x61, 0x61, 0x00, 0x00, 0x00, 0x58, 0x20]);
+    expected.extend([0x61, 0x61, 0x20, 0x02, 0x03, 0x58, 0x20]);
     expected.extend([0x02; CONTENT_HASH_LEN]);
     assert_eq!(encoded, expected);
 }

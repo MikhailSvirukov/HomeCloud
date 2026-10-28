@@ -2,6 +2,8 @@
 //!
 //! SRS: `FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `FR-CAT-015 / 1`, `INT-NET-053 / 2`.
 
+use core::fmt;
+
 use ciborium::value::Value;
 
 use crate::metadata::{ContentHash, UploadId};
@@ -14,7 +16,7 @@ pub const CATALOG_TOKEN_LEN: usize = 16;
 type Result<T> = core::result::Result<T, CatalogError>;
 
 /// One catalog entry describing an accepted upload version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CatalogEntry {
     /// Identifier of the upload version.
     pub upload_id: UploadId,
@@ -31,7 +33,7 @@ pub struct CatalogEntry {
 }
 
 /// One page of catalog entries with its snapshot token and continuation cursor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CatalogPage {
     /// Snapshot token repeated on every page.
     pub snapshot_token: [u8; CATALOG_TOKEN_LEN],
@@ -71,6 +73,31 @@ pub enum CatalogError {
     /// The page could not be encoded.
     #[error("the catalog page could not be encoded")]
     Encode,
+}
+
+impl fmt::Debug for CatalogEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CatalogEntry")
+            .field("upload_id", &self.upload_id)
+            .field("source_name_len", &self.source_name.len())
+            .field("timestamp_ms", &self.timestamp_ms)
+            .field("original_size_bytes", &self.original_size_bytes)
+            .field("compressed_size_bytes", &self.compressed_size_bytes)
+            .field("sha256", &self.sha256)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CatalogPage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CatalogPage")
+            .field("entries", &self.entries.len())
+            .field("has_next_cursor", &self.next_cursor.is_some())
+            .field("snapshot_token_len", &CATALOG_TOKEN_LEN)
+            .finish()
+    }
 }
 
 impl CatalogEntry {

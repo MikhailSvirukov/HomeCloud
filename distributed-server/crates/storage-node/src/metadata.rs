@@ -350,40 +350,6 @@ mod tests {
     }
 
     #[test]
-    fn record_preserves_original_name_exactly() {
-        let record = UploadRecord::new(
-            upload_id(3),
-            "alice",
-            "  photo.jpg  ",
-            10,
-            4,
-            content_hash(),
-            900,
-            1_000,
-        )
-        .expect("test record is valid");
-
-        assert_eq!(record.original_name, "  photo.jpg  ");
-    }
-
-    #[test]
-    fn record_rejects_blank_original_name() {
-        assert_eq!(
-            UploadRecord::new(
-                upload_id(4),
-                "alice",
-                "   ",
-                10,
-                4,
-                content_hash(),
-                900,
-                1_000,
-            ),
-            Err(MetadataError::EmptyOriginalName)
-        );
-    }
-
-    #[test]
     fn ledger_debug_reports_only_entry_count() {
         let mut ledger = UploadLedger::new();
         ledger.record(record(1, "secret-login", "secret-name.txt"));

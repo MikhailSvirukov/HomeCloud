@@ -7,7 +7,7 @@
 //!
 //! The replicated catalog stores one [`CommittedVersion`] per accepted upload:
 //! the full [`crate::metadata::UploadRecord`] (upload id, login, original file
-//! name, byte size, SHA-256 of the original bytes, client-supplied
+//! name, original and compressed byte sizes, SHA-256 of the original bytes, client-supplied
 //! capture/creation time, and server acceptance time) together with the set of
 //! storage nodes that durably hold the blob. Committed entries and snapshots
 //! carry that whole value, so every node reconstructs the same metadata and
