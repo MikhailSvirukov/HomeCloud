@@ -114,7 +114,7 @@ impl fmt::Display for ContentHash {
 }
 
 /// Metadata recorded for one accepted upload version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct UploadRecord {
     pub upload_id: UploadId,
     pub login: String,

@@ -141,6 +141,8 @@ impl<T: RaftTransport> RaftNetwork<RaftConfig> for Network<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use openraft::CommittedLeaderId;
     use openraft::Entry;
     use openraft::EntryPayload;
@@ -152,8 +154,10 @@ mod tests {
     use super::*;
     use crate::metadata::ContentHash;
     use crate::metadata::UploadId;
+    use crate::metadata::UploadRecord;
     use crate::metadata::CONTENT_HASH_LEN;
     use crate::metadata::UPLOAD_ID_LEN;
+    use crate::raft::CommittedVersion;
     use crate::raft::RaftRequest;
     use crate::raft::RaftResponse;
 
@@ -169,6 +173,21 @@ mod tests {
         ContentHash::from_bytes([0xab; CONTENT_HASH_LEN])
     }
 
+    fn committed_version() -> CommittedVersion {
+        CommittedVersion {
+            record: UploadRecord::new(
+                upload_id(),
+                "alice",
+                "original.bin",
+                1_024,
+                content_hash(),
+                1_700_000_000_000,
+            )
+            .expect("the test record is valid"),
+            replicas: BTreeSet::from([1, 2]),
+        }
+    }
+
     #[test]
     fn append_entries_rpc_round_trips_through_cbor() {
         let request = RaftRpc::AppendEntries(AppendEntriesRequest {
@@ -176,10 +195,7 @@ mod tests {
             prev_log_id: Some(log_id()),
             entries: vec![Entry {
                 log_id: log_id(),
-                payload: EntryPayload::Normal(RaftRequest::CommitVersion {
-                    upload_id: upload_id(),
-                    content_hash: content_hash(),
-                }),
+                payload: EntryPayload::Normal(RaftRequest::CommitVersion(committed_version())),
             }],
             leader_commit: Some(log_id()),
         });
@@ -241,10 +257,18 @@ mod tests {
 
     #[test]
     fn application_request_and_response_round_trip_through_cbor() {
-        let request = RaftRequest::CommitVersion {
-            upload_id: upload_id(),
-            content_hash: content_hash(),
-        };
+        let request = RaftRequest::CommitVersion(CommittedVersion {
+            record: UploadRecord::new(
+                upload_id(),
+                "alice",
+                "original.bin",
+                1_024,
+                content_hash(),
+                1_700_000_000_000,
+            )
+            .expect("the test record is valid"),
+            replicas: BTreeSet::from([1, 2]),
+        });
         let decoded: RaftRequest =
             decode(&encode(&request).expect("the request encodes")).expect("the request decodes");
         assert_eq!(decoded, request);

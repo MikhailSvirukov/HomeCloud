@@ -5,9 +5,16 @@
 //! create a new cluster. A successful initial bootstrap is recorded in a durable
 //! `bootstrapped` marker, and later bootstrap commands are rejected.
 //!
+//! The replicated catalog stores one [`CommittedVersion`] per accepted upload:
+//! the full [`crate::metadata::UploadRecord`] (upload id, login, original file
+//! name, byte size, SHA-256 of the original bytes, and capture/acceptance time)
+//! together with the set of storage nodes that durably hold the blob. Committed
+//! entries and snapshots carry that whole value, so every node reconstructs the
+//! same metadata and replica state.
+//!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
-//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `INT-NET-074 / 2`,
-//! `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
+//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `FR-NODE-005 / 1`–
+//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
 
 mod network;
 mod store;
@@ -15,6 +22,7 @@ mod store;
 use core::fmt;
 use core::num::NonZeroU64;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
@@ -25,7 +33,6 @@ use openraft::BasicNode;
 use openraft::Config;
 use openraft::Raft;
 
-use crate::metadata::ContentHash;
 use crate::metadata::UploadId;
 
 /// Node identifier used by the storage-cluster Raft instance.
@@ -38,13 +45,19 @@ openraft::declare_raft_types!(
         R = RaftResponse,
 );
 
+/// A committed upload version and the storage nodes that durably hold its blob.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct CommittedVersion {
+    /// The accepted version metadata.
+    pub record: crate::metadata::UploadRecord,
+    /// Storage nodes that durably hold the blob.
+    pub replicas: BTreeSet<NodeId>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RaftRequest {
-    /// Records a committed upload version in the cluster catalog.
-    CommitVersion {
-        upload_id: UploadId,
-        content_hash: ContentHash,
-    },
+    /// Records a committed upload version with its blob replica set.
+    CommitVersion(CommittedVersion),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -235,7 +248,7 @@ impl RaftNode {
     }
 
     /// Returns the applied catalog on this node.
-    pub async fn committed_versions(&self) -> BTreeMap<UploadId, ContentHash> {
+    pub async fn committed_versions(&self) -> BTreeMap<UploadId, CommittedVersion> {
         self.store.committed_versions().await
     }
 

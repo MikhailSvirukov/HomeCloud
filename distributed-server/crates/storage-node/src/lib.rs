@@ -23,9 +23,10 @@
 //! Base-mode message sealing ([`seal`], [`open`]) with X25519, HKDF-SHA-256, and
 //! AES-256-GCM, and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
-//! commits version metadata to a catalog state machine, exchanges CBOR-encoded
-//! RPCs inside the type-3 inter-server envelope over [`RaftTransport`], and
-//! keeps a durable bootstrap marker. The
+//! commits full upload version metadata, including the SHA-256 and capture time,
+//! together with blob replica state to a catalog state machine, exchanges
+//! CBOR-encoded RPCs inside the type-3 inter-server envelope over
+//! [`RaftTransport`], and keeps a durable bootstrap marker. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API.
@@ -92,7 +93,8 @@ pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use raft::{
-    RaftError, RaftNode, RaftRequest, RaftResponse, RaftTiming, RaftTransport, RaftTransportError,
+    CommittedVersion, RaftError, RaftNode, RaftRequest, RaftResponse, RaftTiming, RaftTransport,
+    RaftTransportError,
 };
 pub use response::{ResponseError, UploadStatus};
 pub use sealing::{
