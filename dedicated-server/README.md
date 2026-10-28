@@ -9,12 +9,13 @@ addresses, labels, and public keys here, then send files straight to storage.
 ## Current status
 
 Configuration loading and validation, key-identity loading for the server's own
-key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
-account registration model are implemented. The binary loads the configuration,
-installs the configured structured log file, loads the key identity, logs
-startup and shutdown events, and exits. Network I/O, the wire protocol,
-registration over the network, cluster replication, and topology responses are
-not implemented yet.
+key pair, internal heartbeat tracking for the fixed cluster, availability
+observability for the tracked nodes and quorum, and the in-memory account
+registration model are implemented. The binary loads the configuration, installs
+the configured structured log file, loads the key identity, logs startup and
+shutdown events, and exits. Network I/O, the wire protocol, registration over
+the network, cluster replication, and topology responses are not implemented
+yet.
 
 ## Build and run
 
@@ -159,6 +160,29 @@ followed by one `shutdown` event with `outcome` set to `success` and the message
 `identity_error`, and a fixed stage-specific `message`; the failure event is the
 last record. Records never contain file paths or names, logins, cryptographic
 keys, verifiers, payloads or other user metadata.
+
+### Runtime events
+
+While the server runs, only significant state changes and failures are
+recorded; a successful periodic heartbeat and each internal step of a request
+produce no record (`NFR-OBS-002`). `AvailabilityMonitor` in
+`src/availability.rs` owns the heartbeat tracker and reports each transition
+exactly once, in the configured cluster order:
+
+- a storage node becoming unavailable is one `availability` event with the
+  node label in `peer_id`, `outcome` set to `unavailable` and level `WARN`;
+- a node that was unavailable and responds again is one `availability` event
+  with `outcome` set to `available` and level `INFO`;
+- losing or regaining a quorum is one `quorum` event with `outcome` set to
+  `lost` or `restored` and a message carrying only the available and total
+  counts. A quorum requires a strict majority of the configured nodes
+  (`available * 2 > total`), the narrowest reading of the SRS.
+
+A rejected heartbeat response is one `heartbeat` event with `outcome` set to
+`failure`, the `heartbeat_error` code, the node label in `peer_id` when the
+error names one, and a fixed message. The monitor logs these errors itself and
+returns them to the caller. Wiring the monitor into the request loop and the
+wire layer is part of the networking work.
 
 ### Two-phase start and the non-blocking writer
 

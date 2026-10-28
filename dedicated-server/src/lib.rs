@@ -4,6 +4,7 @@
 //! derivation and checking, heartbeat tracking, account registration, and key
 //! identity loading; networking and the wire protocol are still to come.
 
+mod availability;
 mod clock;
 mod config;
 mod heartbeat;
@@ -15,6 +16,7 @@ mod registration;
 mod report;
 mod topology;
 
+pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
     ConfigError, LoggingConfig, NodeField, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV,
