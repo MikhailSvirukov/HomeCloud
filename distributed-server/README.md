@@ -120,12 +120,19 @@ at startup:
   `max_frame_len` key).
 - `QUEUE_CAPACITY` — per-connection inter-actor queue capacity; must be non-zero (maps
   to the `queue_capacity` key).
+- `CATALOG_PAGE_SIZE` — maximum number of catalog entries per page; must be non-zero
+  (maps to the `catalog_page_size` key).
+- `CATALOG_SNAPSHOT_TTL_MS` — catalog snapshot lifetime in milliseconds; must be non-zero
+  (maps to the `catalog_snapshot_ttl_ms` key).
+- `MAX_SOURCE_NAME_LEN` — maximum `source_name` length in UTF-8 bytes; must be non-zero
+  (maps to the `max_source_name_len` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
-`encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`, and `peers`
-keys; an absent or empty value for any required key is reported as missing, and unknown
-keys are ignored.
+`encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
+`catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`, and `peers` keys;
+an absent or empty value for any required key is reported as missing, and unknown keys are
+ignored.
 Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
 value it encodes is checked against the configured maximum before the frame is buffered,
 and a larger value is rejected.
