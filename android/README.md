@@ -32,8 +32,9 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - Queue capacity from configuration (1..1 000 000 versions, default 10 000): planning stops at the limit, keeps every accepted entry and reports the rejected count through the cycle log (`backup/MediaBackupPlanner`, `log/BackupCycleLog`).
 - Restoring the queue requeues an upload that was in flight when the process stopped (`queue/InMemoryUploadQueue`).
 - Background execution through WorkManager: a worker runs one cycle, a factory builds the real graph, and a scheduler enqueues an idempotent six-hour periodic cycle and an on-demand one without charging, battery or network constraints (`backup/BackupWorker`, `backup/BackupWorkerFactory`, `backup/BackupCycleComposition`, `backup/BackupWorkScheduler`, `HomeCloudApplication`).
+- The v1 protocol serialization layer: the deterministic CBOR subset codec, the external and client logical headers, the result envelope, the topology codec, and the length-prefixed frame codec that applies the configured payload limit (`protocol/CborValue`, `protocol/ProtocolMessages`, `protocol/FrameCodec`).
 
-Not yet implemented: networking/protocol client, the foreground `dataSync` transfer service and upload notifications, and the setup and main screens.
+Not yet implemented: the network client itself (the `protocol/` package only serializes and parses messages and is not connected to a socket), the foreground `dataSync` transfer service and upload notifications, and the setup and main screens.
 
 ## Declared permissions
 
@@ -98,6 +99,10 @@ android/
         │   │   ├── MediaPermissionRequestPolicy.kt     missing permissions and whether to ask
         │   │   ├── MediaPermissionPrompt.kt            message and action for a permission state
         │   │   └── MediaPermissionRequestContent.kt    permission surface that requests or opens settings
+        │   ├── protocol/         v1 wire serialization
+        │   │   ├── CborValue.kt          deterministic CBOR subset codec
+        │   │   ├── ProtocolMessages.kt   external and logical headers, result envelope, topology codec
+        │   │   └── FrameCodec.kt         length-prefixed frame codec with the configured limit
         │   └── queue/            upload queue and its persisted snapshot
         │       ├── UploadQueue.kt           queue model and retry bookkeeping
         │       ├── InMemoryUploadQueue.kt   in-memory implementation
