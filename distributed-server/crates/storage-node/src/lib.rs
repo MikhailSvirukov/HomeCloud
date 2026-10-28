@@ -33,7 +33,9 @@
 //! part of the public wire API, together with the catalog entry, page, and
 //! request CBOR codecs ([`CatalogEntry`], [`CatalogPage`], [`CatalogRequest`],
 //! [`encode_page`], [`decode_request`]), and CSPRNG-backed catalog pagination
-//! snapshots ([`CatalogPager`], [`CatalogPagerError`]).
+//! snapshots ([`CatalogPager`], [`CatalogPagerError`]), and the catalog service
+//! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
+//! entries and serves paginated catalog pages.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -57,6 +59,7 @@
 mod buffer_pool;
 mod catalog;
 mod catalog_pager;
+mod catalog_service;
 mod codec;
 mod config;
 mod connection;
@@ -85,6 +88,7 @@ pub use catalog::{
     CATALOG_TOKEN_LEN,
 };
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
+pub use catalog_service::{CatalogService, CatalogServiceError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use connection::{
