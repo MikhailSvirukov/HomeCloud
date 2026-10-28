@@ -660,6 +660,51 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_zero_frame_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 0");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_missing_frame_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576\n", "");
+
+        assert!(parse_error(&document)
+            .to_string()
+            .contains("missing field `max_frame_bytes`"));
+    }
+
+    #[test]
+    fn the_configured_frame_limit_is_the_receive_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 4");
+        let config = ServerConfig::from_toml_str(&document).expect("the document must parse");
+
+        let mut encoded = Vec::new();
+        crate::frame::write_frame(&mut encoded, b"abcd").expect("the frame must be written");
+        let mut reader = std::io::Cursor::new(encoded);
+        assert_eq!(
+            crate::frame::read_frame(&mut reader, config.max_frame_bytes())
+                .expect("a frame at the configured limit must be accepted"),
+            b"abcd"
+        );
+
+        let mut encoded = Vec::new();
+        crate::frame::write_frame(&mut encoded, b"abcde").expect("the frame must be written");
+        let mut reader = std::io::Cursor::new(encoded);
+        assert!(matches!(
+            crate::frame::read_frame(&mut reader, config.max_frame_bytes()),
+            Err(crate::frame::FrameError::TooLarge {
+                announced: 5,
+                max: 4
+            })
+        ));
+    }
+
+    #[test]
     fn rejects_zero_heartbeat_interval_as_parse_error() {
         assert!(matches!(
             ServerConfig::from_toml_str(ZERO_INTERVAL),

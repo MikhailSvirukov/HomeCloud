@@ -34,8 +34,8 @@ pub enum FrameError {
         /// Actual payload length.
         bytes: usize,
     },
-    /// The stream ended or failed while reading a frame.
-    #[error("failed to read a frame: {0}")]
+    /// The stream failed while reading or writing a frame.
+    #[error("frame stream operation failed: {0}")]
     Io(#[from] io::Error),
 }
 
