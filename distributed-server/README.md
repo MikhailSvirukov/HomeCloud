@@ -39,6 +39,8 @@ clients; it does not relay Raft or blob traffic.
   CSPRNG snapshot tokens and cursors), `src/catalog_service.rs` (maps the
   committed Raft catalog to catalog entries and paginated pages using the
   configured page size, snapshot lifetime, and source-name limit),
+  `src/catalog_error.rs` (maps catalog pager and service failures to the
+  `0x0004_0001`, `0x0004_0002`, and `0x0008_0001` protocol error codes),
   `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
@@ -60,6 +62,7 @@ clients; it does not relay Raft or blob traffic.
   `keys_public_api.rs`, `content_hash_public_api.rs`,
   `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
+  `catalog_error_codes_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
@@ -83,7 +86,9 @@ cursors that are only valid together with that token, with the page size and
 snapshot lifetime configured through the pager constructor and expired snapshots
 evicted when a new snapshot starts, the catalog service that maps the committed
 Raft catalog to paginated catalog pages using the configured page size, snapshot
-lifetime, and source-name limit, the typed upload
+lifetime, and source-name limit, the typed catalog error codes that map pager
+and service failures to the `0x0004_0001`, `0x0004_0002`, and `0x0008_0001`
+protocol table entries, the typed upload
 outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
