@@ -2,7 +2,8 @@
 //!
 //! Each accepted upload version is described by an [`UploadRecord`]: a stable
 //! [`UploadId`], the owning login, the original file name, the byte size, the
-//! caller-supplied SHA-256 [`ContentHash`], and the acceptance timestamp. The
+//! caller-supplied SHA-256 [`ContentHash`], the client-supplied capture/creation
+//! time, and the server acceptance time (`FR-NODE-008 / 1`). The
 //! [`UploadLedger`] maps an upload id to the first recorded version so retries
 //! are idempotent: a repeated upload id never creates a second version.
 //!
@@ -114,13 +115,16 @@ impl fmt::Display for ContentHash {
 }
 
 /// Metadata recorded for one accepted upload version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct UploadRecord {
     pub upload_id: UploadId,
     pub login: String,
     pub original_name: String,
     pub size_bytes: u64,
     pub content_hash: ContentHash,
+    /// Client-supplied capture/creation time in milliseconds (`FR-NODE-008 / 1`).
+    pub captured_at_ms: u64,
+    /// Server acceptance time in milliseconds.
     pub accepted_at_ms: u64,
 }
 
@@ -132,6 +136,7 @@ impl UploadRecord {
         original_name: &str,
         size_bytes: u64,
         content_hash: ContentHash,
+        captured_at_ms: u64,
         accepted_at_ms: u64,
     ) -> Result<Self> {
         let login = login.trim();
@@ -148,8 +153,22 @@ impl UploadRecord {
             original_name: original_name.to_owned(),
             size_bytes,
             content_hash,
+            captured_at_ms,
             accepted_at_ms,
         })
+    }
+}
+
+impl fmt::Debug for UploadRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UploadRecord")
+            .field("upload_id", &self.upload_id)
+            .field("size_bytes", &self.size_bytes)
+            .field("content_hash", &self.content_hash)
+            .field("captured_at_ms", &self.captured_at_ms)
+            .field("accepted_at_ms", &self.accepted_at_ms)
+            .finish()
     }
 }
 
@@ -252,7 +271,7 @@ mod tests {
     }
 
     fn record(id: u8, login: &str, name: &str) -> UploadRecord {
-        UploadRecord::new(upload_id(id), login, name, 10, content_hash(), 1_000)
+        UploadRecord::new(upload_id(id), login, name, 10, content_hash(), 900, 1_000)
             .expect("test record is valid")
     }
 
@@ -289,6 +308,23 @@ mod tests {
         assert_eq!(hash.to_string(), hex);
         assert_eq!(ContentHash::parse_hex(&hex), Ok(hash));
         assert_eq!(hash.as_bytes(), &[0xab; CONTENT_HASH_LEN]);
+    }
+
+    #[test]
+    fn record_retains_capture_and_acceptance_times() {
+        let record = UploadRecord::new(
+            upload_id(2),
+            "alice",
+            "photo.jpg",
+            10,
+            content_hash(),
+            1_699_999_999_000,
+            1_700_000_000_000,
+        )
+        .expect("test record is valid");
+
+        assert_eq!(record.captured_at_ms, 1_699_999_999_000);
+        assert_eq!(record.accepted_at_ms, 1_700_000_000_000);
     }
 
     #[test]

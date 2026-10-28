@@ -5,9 +5,17 @@
 //! create a new cluster. A successful initial bootstrap is recorded in a durable
 //! `bootstrapped` marker, and later bootstrap commands are rejected.
 //!
+//! The replicated catalog stores one [`CommittedVersion`] per accepted upload:
+//! the full [`crate::metadata::UploadRecord`] (upload id, login, original file
+//! name, byte size, SHA-256 of the original bytes, client-supplied
+//! capture/creation time, and server acceptance time) together with the set of
+//! storage nodes that durably hold the blob. Committed entries and snapshots
+//! carry that whole value, so every node reconstructs the same metadata and
+//! replica state. The capture/creation time is required by `FR-NODE-008 / 1`.
+//!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
-//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `INT-NET-074 / 2`,
-//! `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
+//! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `FR-NODE-005 / 1`–
+//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
 
 mod network;
 mod store;
@@ -15,6 +23,7 @@ mod store;
 use core::fmt;
 use core::num::NonZeroU64;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
@@ -25,7 +34,6 @@ use openraft::BasicNode;
 use openraft::Config;
 use openraft::Raft;
 
-use crate::metadata::ContentHash;
 use crate::metadata::UploadId;
 
 /// Node identifier used by the storage-cluster Raft instance.
@@ -38,13 +46,31 @@ openraft::declare_raft_types!(
         R = RaftResponse,
 );
 
+/// A committed upload version and the storage nodes that durably hold its blob.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
+pub struct CommittedVersion {
+    /// The accepted version metadata.
+    pub record: crate::metadata::UploadRecord,
+    /// Storage nodes that durably hold the blob.
+    pub replicas: BTreeSet<NodeId>,
+}
+
+impl fmt::Debug for CommittedVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CommittedVersion")
+            .field("upload_id", &self.record.upload_id)
+            .field("size_bytes", &self.record.size_bytes)
+            .field("content_hash", &self.record.content_hash)
+            .field("replicas", &self.replicas)
+            .finish()
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RaftRequest {
-    /// Records a committed upload version in the cluster catalog.
-    CommitVersion {
-        upload_id: UploadId,
-        content_hash: ContentHash,
-    },
+    /// Records a committed upload version with its blob replica set.
+    CommitVersion(CommittedVersion),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -235,7 +261,7 @@ impl RaftNode {
     }
 
     /// Returns the applied catalog on this node.
-    pub async fn committed_versions(&self) -> BTreeMap<UploadId, ContentHash> {
+    pub async fn committed_versions(&self) -> BTreeMap<UploadId, CommittedVersion> {
         self.store.committed_versions().await
     }
 
@@ -282,5 +308,37 @@ impl fmt::Debug for RaftNode {
             .field("node_id", &node_id)
             .field("last_applied", &self.last_applied_index())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{CommittedVersion, RaftRequest};
+    use crate::metadata::{ContentHash, UploadId, UploadRecord, CONTENT_HASH_LEN, UPLOAD_ID_LEN};
+
+    #[test]
+    fn commit_version_debug_redacts_login_and_original_name() {
+        let upload_id = UploadId::from_bytes([7; UPLOAD_ID_LEN]);
+        let request = RaftRequest::CommitVersion(CommittedVersion {
+            record: UploadRecord::new(
+                upload_id,
+                "secret-login",
+                "secret-name.bin",
+                4_096,
+                ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
+                1_700_000_000_000,
+                1_700_000_000_500,
+            )
+            .expect("test record is valid"),
+            replicas: BTreeSet::from([1, 2]),
+        });
+
+        let debug = format!("{request:?}");
+
+        assert!(debug.contains(&format!("{upload_id:?}")));
+        assert!(!debug.contains("secret-login"));
+        assert!(!debug.contains("secret-name.bin"));
     }
 }

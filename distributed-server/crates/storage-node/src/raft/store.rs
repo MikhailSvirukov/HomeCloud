@@ -27,10 +27,12 @@ use openraft::StoredMembership;
 use openraft::Vote;
 use tokio::sync::RwLock;
 
-use crate::metadata::ContentHash;
 use crate::metadata::UploadId;
 
-use super::{NodeId, RaftConfig, RaftRequest, RaftResponse};
+use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
+
+/// Version of the persisted `state.cbor` layout, written before the CBOR payload.
+const STATE_FORMAT_VERSION: u8 = 2;
 
 /// Cloneable handle to the Raft storage shared by the log and state machine.
 ///
@@ -50,7 +52,7 @@ struct StoreInner {
     log: BTreeMap<u64, Entry<RaftConfig>>,
     last_applied_log: Option<LogId<NodeId>>,
     last_membership: StoredMembership<NodeId, BasicNode>,
-    catalog: BTreeMap<UploadId, ContentHash>,
+    catalog: BTreeMap<UploadId, CommittedVersion>,
     snapshot: Option<StoredSnapshot>,
     snapshot_idx: u64,
 }
@@ -65,7 +67,14 @@ struct StoredSnapshot {
 struct StateMachineState {
     last_applied_log: Option<LogId<NodeId>>,
     last_membership: StoredMembership<NodeId, BasicNode>,
-    catalog: BTreeMap<UploadId, ContentHash>,
+    catalog: BTreeMap<UploadId, CommittedVersion>,
+}
+
+/// The persisted state file has an unsupported or missing format version.
+#[derive(Debug, thiserror::Error)]
+#[error("unsupported Raft state format version {found}")]
+struct StateFormatError {
+    found: u8,
 }
 
 #[expect(
@@ -76,8 +85,21 @@ impl MemStore {
     /// Opens the store at `path`, restoring a previously persisted state when the file exists.
     pub(super) fn open(path: PathBuf) -> Result<Self, StorageError<NodeId>> {
         let inner: StoreInner = match std::fs::read(&path) {
-            Ok(bytes) => ciborium::de::from_reader(bytes.as_slice())
-                .map_err(|error| StorageIOError::read_state_machine(&error))?,
+            Ok(bytes) => {
+                let Some((version, payload)) = bytes.split_first() else {
+                    return Err(
+                        StorageIOError::read_state_machine(&StateFormatError { found: 0 }).into(),
+                    );
+                };
+                if *version != STATE_FORMAT_VERSION {
+                    return Err(StorageIOError::read_state_machine(&StateFormatError {
+                        found: *version,
+                    })
+                    .into());
+                }
+                ciborium::de::from_reader(payload)
+                    .map_err(|error| StorageIOError::read_state_machine(&error))?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreInner::default(),
             Err(error) => return Err(StorageIOError::read_state_machine(&error).into()),
         };
@@ -92,7 +114,7 @@ impl MemStore {
         if self.path.as_os_str().is_empty() {
             return Ok(());
         }
-        let mut data = Vec::new();
+        let mut data = vec![STATE_FORMAT_VERSION];
         ciborium::ser::into_writer(inner, &mut data)
             .map_err(|error| StorageIOError::write_state_machine(&error))?;
         let temporary = self.temporary_path();
@@ -113,7 +135,7 @@ impl MemStore {
     }
 
     /// Returns the applied version catalog.
-    pub(super) async fn committed_versions(&self) -> BTreeMap<UploadId, ContentHash> {
+    pub(super) async fn committed_versions(&self) -> BTreeMap<UploadId, CommittedVersion> {
         self.inner.read().await.catalog.clone()
     }
 }
@@ -308,13 +330,11 @@ impl RaftStorage<RaftConfig> for MemStore {
         for entry in entries {
             inner.last_applied_log = Some(entry.log_id);
             match &entry.payload {
-                EntryPayload::Normal(RaftRequest::CommitVersion {
-                    upload_id,
-                    content_hash,
-                }) => {
-                    inner.catalog.insert(*upload_id, *content_hash);
+                EntryPayload::Normal(RaftRequest::CommitVersion(version)) => {
+                    let upload_id = version.record.upload_id;
+                    inner.catalog.insert(upload_id, version.clone());
                     responses.push(RaftResponse {
-                        upload_id: Some(*upload_id),
+                        upload_id: Some(upload_id),
                     });
                 }
                 EntryPayload::Blank => responses.push(RaftResponse { upload_id: None }),
@@ -371,12 +391,13 @@ impl RaftStorage<RaftConfig> for MemStore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use openraft::CommittedLeaderId;
 
     use super::*;
-    use crate::metadata::{CONTENT_HASH_LEN, UPLOAD_ID_LEN};
+    use crate::metadata::{ContentHash, UploadRecord, CONTENT_HASH_LEN, UPLOAD_ID_LEN};
 
     static NEXT_STATE_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -416,15 +437,24 @@ mod tests {
         let target_path = temp_state_path("target");
         let mut source = MemStore::open(source_path.clone()).expect("the source store opens");
         let upload_id = UploadId::from_bytes([7; UPLOAD_ID_LEN]);
-        let content_hash = ContentHash::from_bytes([9; CONTENT_HASH_LEN]);
+        let version = CommittedVersion {
+            record: UploadRecord::new(
+                upload_id,
+                "alice",
+                "original.bin",
+                4_096,
+                ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
+                1_700_000_000_000,
+                1_700_000_000_500,
+            )
+            .expect("the test record is valid"),
+            replicas: BTreeSet::from([1, 2, 3]),
+        };
 
         source
             .apply_to_state_machine(&[Entry {
                 log_id: LogId::new(CommittedLeaderId::new(1, 1), 1),
-                payload: EntryPayload::Normal(RaftRequest::CommitVersion {
-                    upload_id,
-                    content_hash,
-                }),
+                payload: EntryPayload::Normal(RaftRequest::CommitVersion(version.clone())),
             }])
             .await
             .expect("the committed version applies");
@@ -441,14 +471,14 @@ mod tests {
 
         assert_eq!(
             target.committed_versions().await.get(&upload_id),
-            Some(&content_hash)
+            Some(&version)
         );
 
         drop(target);
         let reopened = MemStore::open(target_path.clone()).expect("the installed state reopens");
         assert_eq!(
-            reopened.committed_versions().await.get(&upload_id),
-            Some(&content_hash)
+            reopened.committed_versions().await,
+            BTreeMap::from([(upload_id, version)])
         );
 
         std::fs::remove_file(source_path).expect("the source state file can be removed");

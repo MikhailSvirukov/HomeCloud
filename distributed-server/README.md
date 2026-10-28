@@ -38,8 +38,9 @@ clients; it does not relay Raft or blob traffic.
   worker threads), `src/node.rs` (node runtime: serves frame connections on
   a bound listener until shutdown), `src/storage_layout.rs` (on-disk
   layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), `src/raft/`
-  (local OpenRaft runtime, CBOR RPC adapter, catalog state machine with
-  file-backed persistence), `src/message.rs` (inter-server `[message_type,
+  (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
+  stores full version metadata and blob replica sets with file-backed
+  persistence), `src/message.rs` (inter-server `[message_type,
   args]` envelope with `message_type = 3` for Raft RPCs), `src/signing.rs`
   (Ed25519 message signing/verification with a redacted signing key), and
   `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
@@ -76,8 +77,12 @@ the async connection halves, and `tracing` backs the structured logs the node
 emits with a level configured through `RUST_LOG`. The local OpenRaft state
 (`state.cbor`) and the bootstrap marker are persisted under the configured node
 data directory, so a restarted node restores its applied catalog and rejects a
-repeated bootstrap command; `raft_cluster_public_api.rs` also covers restart
-recovery and a returning node catching up committed entries. The connection
+repeated bootstrap command. The applied Raft catalog stores the full version
+metadata (upload id, login, original file name, byte size, SHA-256 of the
+original bytes, capture/creation time, and acceptance time) together with the
+set of storage nodes that durably hold the blob. The persisted Raft state file
+records a format version. `raft_cluster_public_api.rs` covers restart recovery
+and a returning node catching up committed entries. The connection
 actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).

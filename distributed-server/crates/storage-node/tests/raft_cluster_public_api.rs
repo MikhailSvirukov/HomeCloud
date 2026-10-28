@@ -3,8 +3,9 @@
 //! Three in-process nodes exchange CBOR-encoded RPCs through a test-local
 //! [`ChannelTransport`] that asserts every outbound request is wrapped in the
 //! inter-server `[3, [rpc_bytes]]` envelope, so leader election, a quorum commit
-//! of version metadata, the RPC handling path, and catalog distribution are
-//! exercised through the public [`RaftNode`] surface.
+//! of full version metadata with its blob replica set, the RPC handling path,
+//! and catalog distribution are exercised through the public [`RaftNode`]
+//! surface.
 //!
 //! The cluster also covers a node returning to the unchanged membership: it is
 //! stopped, the remaining quorum commits another version, and the restarted node
@@ -16,13 +17,15 @@
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-012 / 2`, `FR-CL-016 / 1`,
 //! `FR-CL-020 / 1`, `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`,
-//! `INT-NET-074 / 2`, `NFR-MAINT-006 / 1`.
+//! `FR-NODE-005 / 1`–`FR-NODE-008 / 1`, `INT-NET-074 / 2`,
+//! `NFR-MAINT-006 / 1`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use storage_node::CommittedVersion;
 use storage_node::ContentHash;
 use storage_node::RaftError;
 use storage_node::RaftNode;
@@ -31,6 +34,7 @@ use storage_node::RaftTiming;
 use storage_node::RaftTransport;
 use storage_node::RaftTransportError;
 use storage_node::UploadId;
+use storage_node::UploadRecord;
 use storage_node::UPLOAD_ID_LEN;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -120,6 +124,23 @@ fn cluster_membership() -> BTreeMap<u64, String> {
         .collect()
 }
 
+/// Builds a full committed version for `upload_id` over `payload`.
+fn committed_version(upload_id: UploadId, payload: &[u8], replicas: &[u64]) -> CommittedVersion {
+    CommittedVersion {
+        record: UploadRecord::new(
+            upload_id,
+            "alice",
+            "photo.jpg",
+            payload.len() as u64,
+            ContentHash::digest(payload),
+            1_690_000_000_000,
+            1_700_000_000_000,
+        )
+        .expect("the test version metadata is valid"),
+        replicas: replicas.iter().copied().collect(),
+    }
+}
+
 /// A running cluster and the handles needed to stop and restart one node.
 struct Cluster {
     nodes: BTreeMap<u64, Arc<RaftNode>>,
@@ -180,15 +201,15 @@ async fn start_cluster() -> Cluster {
 /// Waits until every node's applied catalog contains the committed version.
 async fn wait_for_committed_version(
     nodes: &BTreeMap<u64, Arc<RaftNode>>,
-    upload_id: UploadId,
-    content_hash: ContentHash,
+    version: &CommittedVersion,
 ) {
+    let upload_id = version.record.upload_id;
     let deadline = tokio::time::Instant::now() + REPLICATION_BUDGET;
     loop {
         let mut replicated = true;
         for node in nodes.values() {
             let versions = node.committed_versions().await;
-            if versions.get(&upload_id) != Some(&content_hash) {
+            if versions.get(&upload_id) != Some(version) {
                 replicated = false;
             }
         }
@@ -255,11 +276,13 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
         .wait_for_leader(ELECTION_BUDGET)
         .await
         .expect("the follower learns the elected leader within the election budget");
+    let rejected_version = committed_version(
+        UploadId::from_bytes([0x22; UPLOAD_ID_LEN]),
+        b"rejected payload",
+        &[2, 3],
+    );
     let rejected = follower
-        .client_write(RaftRequest::CommitVersion {
-            upload_id: UploadId::from_bytes([0x22; UPLOAD_ID_LEN]),
-            content_hash: ContentHash::digest(b"rejected payload"),
-        })
+        .client_write(RaftRequest::CommitVersion(rejected_version))
         .await
         .expect_err("a follower rejects a client write");
     let RaftError::ClientWrite(openraft::error::ClientWriteError::ForwardToLeader(forward)) =
@@ -269,22 +292,22 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
     };
     assert_eq!(forward.leader_id, Some(leader));
 
-    let upload_id = UploadId::from_bytes([0x11; UPLOAD_ID_LEN]);
-    let content_hash = ContentHash::digest(b"payload");
+    let version = committed_version(
+        UploadId::from_bytes([0x11; UPLOAD_ID_LEN]),
+        b"payload",
+        &[2, 3],
+    );
     let leader_node = cluster
         .nodes
         .get(&leader)
         .expect("the elected leader belongs to the cluster");
     let response = leader_node
-        .client_write(RaftRequest::CommitVersion {
-            upload_id,
-            content_hash,
-        })
+        .client_write(RaftRequest::CommitVersion(version.clone()))
         .await
         .expect("the leader commits the version through a quorum");
-    assert_eq!(response.upload_id, Some(upload_id));
+    assert_eq!(response.upload_id, Some(version.record.upload_id));
 
-    wait_for_committed_version(&cluster.nodes, upload_id, content_hash).await;
+    wait_for_committed_version(&cluster.nodes, &version).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -335,16 +358,17 @@ async fn a_returning_node_catches_up_committed_entries() {
             .expect("the elected leader belongs to the cluster"),
     );
 
-    let before_offline = UploadId::from_bytes([0x44; UPLOAD_ID_LEN]);
-    let before_offline_hash = ContentHash::digest(b"before-offline");
-    leader_node
-        .client_write(RaftRequest::CommitVersion {
-            upload_id: before_offline,
-            content_hash: before_offline_hash,
-        })
+    let before_offline = committed_version(
+        UploadId::from_bytes([0x44; UPLOAD_ID_LEN]),
+        b"before-offline",
+        &[1, 2],
+    );
+    let response = leader_node
+        .client_write(RaftRequest::CommitVersion(before_offline.clone()))
         .await
         .expect("the leader commits a version before the node goes offline");
-    wait_for_committed_version(&cluster.nodes, before_offline, before_offline_hash).await;
+    assert_eq!(response.upload_id, Some(before_offline.record.upload_id));
+    wait_for_committed_version(&cluster.nodes, &before_offline).await;
 
     let offline_id = CLUSTER_NODES
         .iter()
@@ -369,16 +393,17 @@ async fn a_returning_node_catches_up_committed_entries() {
         .await
         .expect("the offline node shuts down");
 
-    let while_offline = UploadId::from_bytes([0x55; UPLOAD_ID_LEN]);
-    let while_offline_hash = ContentHash::digest(b"while-offline");
-    leader_node
-        .client_write(RaftRequest::CommitVersion {
-            upload_id: while_offline,
-            content_hash: while_offline_hash,
-        })
+    let while_offline = committed_version(
+        UploadId::from_bytes([0x55; UPLOAD_ID_LEN]),
+        b"while-offline",
+        &[2, 3],
+    );
+    let response = leader_node
+        .client_write(RaftRequest::CommitVersion(while_offline.clone()))
         .await
         .expect("the leader commits a version while the node is offline");
-    wait_for_committed_version(&cluster.nodes, while_offline, while_offline_hash).await;
+    assert_eq!(response.upload_id, Some(while_offline.record.upload_id));
+    wait_for_committed_version(&cluster.nodes, &while_offline).await;
 
     let dir = cluster
         .dirs
@@ -393,14 +418,16 @@ async fn a_returning_node_catches_up_committed_entries() {
     let deadline = tokio::time::Instant::now() + REPLICATION_BUDGET;
     loop {
         let versions = restarted.committed_versions().await;
-        let caught_up = versions.get(&before_offline) == Some(&before_offline_hash)
-            && versions.get(&while_offline) == Some(&while_offline_hash);
+        let caught_up = versions.get(&before_offline.record.upload_id) == Some(&before_offline)
+            && versions.get(&while_offline.record.upload_id) == Some(&while_offline);
         if caught_up {
             return;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "the returning node did not apply the committed versions {before_offline} and {while_offline} in time"
+            "the returning node did not apply the committed versions {} and {} in time",
+            before_offline.record.upload_id,
+            while_offline.record.upload_id
         );
         tokio::time::sleep(CATALOG_POLL_INTERVAL).await;
     }
@@ -410,8 +437,11 @@ async fn a_returning_node_catches_up_committed_entries() {
 async fn restores_state_and_rejects_repeat_bootstrap_after_restart() {
     let dir = tempfile::tempdir().expect("a temporary Raft data directory is created");
     let state_dir = dir.path().to_path_buf();
-    let upload_id = UploadId::from_bytes([0x33; UPLOAD_ID_LEN]);
-    let content_hash = ContentHash::digest(b"persisted");
+    let version = committed_version(
+        UploadId::from_bytes([0x33; UPLOAD_ID_LEN]),
+        b"persisted",
+        &[1],
+    );
 
     let node = RaftNode::start(1, NoopTransport, RaftTiming::default(), state_dir.clone())
         .await
@@ -423,13 +453,10 @@ async fn restores_state_and_rejects_repeat_bootstrap_after_restart() {
         .await
         .expect("the single voter becomes leader within the election budget");
     let response = node
-        .client_write(RaftRequest::CommitVersion {
-            upload_id,
-            content_hash,
-        })
+        .client_write(RaftRequest::CommitVersion(version.clone()))
         .await
         .expect("the leader commits the version");
-    assert_eq!(response.upload_id, Some(upload_id));
+    assert_eq!(response.upload_id, Some(version.record.upload_id));
     wait_for_applied(&node, 1, ELECTION_BUDGET).await;
     let applied_before = node
         .last_applied_index()
@@ -442,9 +469,9 @@ async fn restores_state_and_rejects_repeat_bootstrap_after_restart() {
     wait_for_applied(&restarted, applied_before, ELECTION_BUDGET).await;
     let versions = restarted.committed_versions().await;
     assert_eq!(
-        versions.get(&upload_id),
-        Some(&content_hash),
-        "the restarted node restores the committed catalog"
+        versions.get(&version.record.upload_id),
+        Some(&version),
+        "the restarted node restores the full committed catalog"
     );
 
     let repeated = restarted
