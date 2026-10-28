@@ -21,6 +21,7 @@ use storage_node::CatalogService;
 use storage_node::CatalogServiceError;
 use storage_node::CommittedVersion;
 use storage_node::ContentHash;
+use storage_node::NodeConfig;
 use storage_node::UploadId;
 use storage_node::UploadRecord;
 use storage_node::CATALOG_TOKEN_LEN;
@@ -133,6 +134,51 @@ fn rejects_a_source_name_over_the_configured_limit() {
 
     let error = service
         .first_page(&versions)
+        .expect_err("a source name over the configured limit is rejected");
+
+    assert!(matches!(
+        error,
+        CatalogServiceError::Entry(CatalogError::SourceNameTooLong)
+    ));
+}
+
+#[test]
+fn configured_node_builds_a_matching_catalog_service() {
+    let config = NodeConfig::from_pairs(&[
+        ("node_id", "node-1"),
+        ("listen_addr", "0.0.0.0:9000"),
+        ("data_dir", "/var/lib/storage-node"),
+        ("encryption_key_path", "/keys/encryption.key"),
+        ("signing_key_path", "/keys/signing.key"),
+        ("max_frame_len", "1048576"),
+        ("queue_capacity", "16"),
+        ("catalog_page_size", "2"),
+        ("catalog_snapshot_ttl_ms", "60000"),
+        ("max_source_name_len", "64"),
+    ])
+    .expect("valid pairs build a config");
+
+    let mut service = config.catalog_service();
+    let versions = catalog(&[1, 2, 3]);
+
+    let first = service
+        .first_page(&versions)
+        .expect("the committed catalog yields a first page");
+    assert_eq!(ids(&first.entries), [1, 2]);
+    let cursor = first
+        .next_cursor
+        .expect("the configured page size leaves a continuation");
+
+    let second = service
+        .next_page(first.snapshot_token, cursor)
+        .expect("the cursor belongs to the first page snapshot");
+    assert_eq!(ids(&second.entries), [3]);
+    assert_eq!(second.next_cursor, None);
+
+    let long_name = "a".repeat(config.max_source_name_len.get() + 1);
+    let over_limit = BTreeMap::from([(UploadId::from_bytes([4; 16]), version(4, &long_name))]);
+    let error = service
+        .first_page(&over_limit)
         .expect_err("a source name over the configured limit is rejected");
 
     assert!(matches!(

@@ -27,6 +27,12 @@ const ENV_SIGNING_KEY_PATH: &str = "SIGNING_KEY_PATH";
 const ENV_MAX_FRAME_LEN: &str = "MAX_FRAME_LEN";
 /// Environment variable carrying the per-connection queue capacity.
 const ENV_QUEUE_CAPACITY: &str = "QUEUE_CAPACITY";
+/// Environment variable carrying the catalog page size.
+const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
+/// Environment variable carrying the catalog snapshot lifetime in milliseconds.
+const ENV_CATALOG_SNAPSHOT_TTL_MS: &str = "CATALOG_SNAPSHOT_TTL_MS";
+/// Environment variable carrying the maximum source-name length in bytes.
+const ENV_MAX_SOURCE_NAME_LEN: &str = "MAX_SOURCE_NAME_LEN";
 /// Environment variable carrying the comma-separated peer list.
 const ENV_PEERS: &str = "PEERS";
 
@@ -44,6 +50,12 @@ const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// `from_pairs` key for the per-connection queue capacity.
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
+/// `from_pairs` key for the catalog page size.
+const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
+/// `from_pairs` key for the catalog snapshot lifetime in milliseconds.
+const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
+/// `from_pairs` key for the maximum source-name length in bytes.
+const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 
@@ -75,6 +87,9 @@ async fn run() -> ExitCode {
     let signing_key_path = env_value(ENV_SIGNING_KEY_PATH);
     let max_frame_len = env_value(ENV_MAX_FRAME_LEN);
     let queue_capacity = env_value(ENV_QUEUE_CAPACITY);
+    let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
+    let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
+    let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
     let peers = env_value(ENV_PEERS);
 
     let pairs = [
@@ -85,6 +100,12 @@ async fn run() -> ExitCode {
         (KEY_SIGNING_KEY_PATH, signing_key_path.as_str()),
         (KEY_MAX_FRAME_LEN, max_frame_len.as_str()),
         (KEY_QUEUE_CAPACITY, queue_capacity.as_str()),
+        (KEY_CATALOG_PAGE_SIZE, catalog_page_size.as_str()),
+        (
+            KEY_CATALOG_SNAPSHOT_TTL_MS,
+            catalog_snapshot_ttl_ms.as_str(),
+        ),
+        (KEY_MAX_SOURCE_NAME_LEN, max_source_name_len.as_str()),
         (KEY_PEERS, peers.as_str()),
     ];
 
@@ -116,6 +137,9 @@ async fn run() -> ExitCode {
         node_id = %config.node_id,
         listen_addr = %config.listen_addr,
         data_dir = %config.data_dir.display(),
+        catalog_page_size = config.catalog_page_size.get(),
+        catalog_snapshot_ttl_ms = config.catalog_snapshot_ttl_ms.get(),
+        max_source_name_len = config.max_source_name_len.get(),
         peers = config.peers.len(),
         "storage node starting"
     );
