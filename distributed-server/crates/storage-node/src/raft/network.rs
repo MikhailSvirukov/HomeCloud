@@ -277,6 +277,14 @@ mod tests {
             decode(&encode(&request).expect("the request encodes")).expect("the request decodes");
         assert_eq!(decoded, request);
 
+        let update = RaftRequest::UpdateReplicas {
+            upload_id: upload_id(),
+            replicas: BTreeSet::from([3, 5]),
+        };
+        let decoded: RaftRequest = decode(&encode(&update).expect("the replica update encodes"))
+            .expect("the replica update decodes");
+        assert_eq!(decoded, update);
+
         let response = RaftResponse {
             upload_id: Some(upload_id()),
         };

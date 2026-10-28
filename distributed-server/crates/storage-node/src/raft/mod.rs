@@ -11,7 +11,9 @@
 //! capture/creation time, and server acceptance time) together with the set of
 //! storage nodes that durably hold the blob. Committed entries and snapshots
 //! carry that whole value, so every node reconstructs the same metadata and
-//! replica state. The capture/creation time is required by `FR-NODE-008 / 1`.
+//! replica state. A separate [`RaftRequest::UpdateReplicas`] entry replaces the
+//! replica set in the log once blob replication changes which nodes durably hold
+//! the version. The capture/creation time is required by `FR-NODE-008 / 1`.
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
 //! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `FR-NODE-005 / 1`–
@@ -71,6 +73,11 @@ impl fmt::Debug for CommittedVersion {
 pub enum RaftRequest {
     /// Records a committed upload version with its blob replica set.
     CommitVersion(CommittedVersion),
+    /// Replaces the set of storage nodes that durably hold the version's blob.
+    UpdateReplicas {
+        upload_id: UploadId,
+        replicas: BTreeSet<NodeId>,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
