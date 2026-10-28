@@ -17,7 +17,7 @@ permission without such a link must be removed.
 | `android.permission.WAKE_LOCK` | CON-AND-001, FR-AND-032 | Lets WorkManager keep the device awake while a backup cycle runs; merged by `androidx.work`, not declared by this app | No |
 | `android.permission.ACCESS_NETWORK_STATE` | CON-AND-001 | Lets WorkManager observe connectivity for its own scheduling bookkeeping; merged by `androidx.work`, not declared by this app | No |
 | `android.permission.RECEIVE_BOOT_COMPLETED` | CON-AND-001 | Lets WorkManager restore persisted cycles after a device reboot; merged by `androidx.work`, not declared by this app | No |
-| `android.permission.FOREGROUND_SERVICE` | CON-AND-004, CON-AND-005 | Required by the foreground transfer service that shows a long upload and by the WorkManager foreground execution; merged by `androidx.work`, not declared by this app, and also serves `UploadTransferService` | No |
+| `android.permission.FOREGROUND_SERVICE` | CON-AND-004, CON-AND-005 | Lets `UploadTransferService` show a long upload and lets WorkManager run foreground work; declared by this app, and the `androidx.work` merge carries the same entry | No |
 
 The merged manifest also contains
 `dev.homecloud.android.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`, which this app does not declare.
