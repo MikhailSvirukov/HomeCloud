@@ -99,24 +99,23 @@ fn empty_catalog_has_a_token_and_no_cursor() {
 
 #[test]
 fn cursor_is_bound_to_its_snapshot() {
-    let mut pager_a = pager(1, LIVE_SNAPSHOT_TTL);
-    let mut pager_b = pager(1, LIVE_SNAPSHOT_TTL);
-    let page_a = pager_a
+    let mut pager = pager(1, LIVE_SNAPSHOT_TTL);
+    let page_a = pager
         .first_page(vec![entry(1), entry(2)])
         .expect("snapshot A is created");
-    let page_b = pager_b
+    let page_b = pager
         .first_page(vec![entry(3), entry(4)])
         .expect("snapshot B is created");
     let cursor_a = page_a
         .next_cursor
         .expect("snapshot A continues past its first entry");
 
-    let error = pager_b
+    let error = pager
         .next_page(page_b.snapshot_token, cursor_a)
         .expect_err("a cursor is rejected under another snapshot token");
     assert!(matches!(error, CatalogPagerError::CursorSnapshotMismatch));
 
-    pager_a
+    pager
         .next_page(page_a.snapshot_token, cursor_a)
         .expect("the cursor is accepted under its own snapshot token");
 }
@@ -156,6 +155,25 @@ fn expired_snapshot_is_rejected() {
         .next_page(page.snapshot_token, cursor)
         .expect_err("a zero snapshot lifetime expires continuations");
     assert!(matches!(error, CatalogPagerError::SnapshotExpired));
+}
+
+#[test]
+fn starting_a_new_snapshot_evicts_expired_snapshots() {
+    let mut pager = pager(1, Duration::ZERO);
+    let expired = pager
+        .first_page(vec![entry(1), entry(2)])
+        .expect("the first page is created before the snapshot expires");
+    let cursor = expired
+        .next_cursor
+        .expect("the first page of a two-entry catalog continues");
+
+    pager
+        .first_page(vec![entry(3)])
+        .expect("a new snapshot starts and evicts the expired one");
+    let error = pager
+        .next_page(expired.snapshot_token, cursor)
+        .expect_err("the evicted snapshot is no longer known");
+    assert!(matches!(error, CatalogPagerError::UnknownSnapshot));
 }
 
 #[test]

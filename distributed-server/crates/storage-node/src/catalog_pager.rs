@@ -86,11 +86,13 @@ impl CatalogPager {
         }
     }
 
-    /// Sorts the committed entries by upload id, starts a snapshot, and returns its first page.
+    /// Sorts the committed entries by upload id, evicts expired snapshots, starts a snapshot, and returns its first page.
     pub fn first_page(
         &mut self,
         mut entries: Vec<CatalogEntry>,
     ) -> Result<CatalogPage, CatalogPagerError> {
+        self.snapshots
+            .retain(|_, snapshot| snapshot.created_at.elapsed() < self.snapshot_ttl);
         entries.sort_by_key(|entry| entry.upload_id);
 
         let snapshot_token = generate_token(|token| self.snapshots.contains_key(token))?;

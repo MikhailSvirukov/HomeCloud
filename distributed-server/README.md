@@ -76,7 +76,8 @@ record storing the original and compressed sizes), the catalog entry, page, and
 request CBOR codecs, the catalog pager that returns entries in ascending upload-id
 order, keeps one CSPRNG snapshot token per catalog snapshot, and issues CSPRNG
 cursors that are only valid together with that token, with the page size and
-snapshot lifetime configured through the pager constructor, the typed upload
+snapshot lifetime configured through the pager constructor and expired snapshots
+evicted when a new snapshot starts, the typed upload
 outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
