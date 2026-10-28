@@ -79,9 +79,10 @@ emits with a level configured through `RUST_LOG`. The local OpenRaft state
 data directory, so a restarted node restores its applied catalog and rejects a
 repeated bootstrap command. The applied Raft catalog stores the full version
 metadata (upload id, login, original file name, byte size, SHA-256 of the
-original bytes, and acceptance time) together with the set of storage nodes
-that durably hold the blob. `raft_cluster_public_api.rs` also covers restart
-recovery and a returning node catching up committed entries. The connection
+original bytes, capture/creation time, and acceptance time) together with the
+set of storage nodes that durably hold the blob. The persisted Raft state file
+records a format version. `raft_cluster_public_api.rs` covers restart recovery
+and a returning node catching up committed entries. The connection
 actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).

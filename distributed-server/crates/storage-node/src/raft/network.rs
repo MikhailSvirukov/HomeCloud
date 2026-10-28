@@ -182,6 +182,7 @@ mod tests {
                 1_024,
                 content_hash(),
                 1_700_000_000_000,
+                1_700_000_000_500,
             )
             .expect("the test record is valid"),
             replicas: BTreeSet::from([1, 2]),
@@ -265,6 +266,7 @@ mod tests {
                 1_024,
                 content_hash(),
                 1_700_000_000_000,
+                1_700_000_000_500,
             )
             .expect("the test record is valid"),
             replicas: BTreeSet::from([1, 2]),

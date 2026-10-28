@@ -31,6 +31,9 @@ use crate::metadata::UploadId;
 
 use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
 
+/// Version of the persisted `state.cbor` layout, written before the CBOR payload.
+const STATE_FORMAT_VERSION: u8 = 2;
+
 /// Cloneable handle to the Raft storage shared by the log and state machine.
 ///
 /// Every mutation is written to the file at `path`. A store built with
@@ -67,6 +70,13 @@ struct StateMachineState {
     catalog: BTreeMap<UploadId, CommittedVersion>,
 }
 
+/// The persisted state file has an unsupported or missing format version.
+#[derive(Debug, thiserror::Error)]
+#[error("unsupported Raft state format version {found}")]
+struct StateFormatError {
+    found: u8,
+}
+
 #[expect(
     clippy::result_large_err,
     reason = "the store forwards openraft's storage error unchanged"
@@ -75,8 +85,21 @@ impl MemStore {
     /// Opens the store at `path`, restoring a previously persisted state when the file exists.
     pub(super) fn open(path: PathBuf) -> Result<Self, StorageError<NodeId>> {
         let inner: StoreInner = match std::fs::read(&path) {
-            Ok(bytes) => ciborium::de::from_reader(bytes.as_slice())
-                .map_err(|error| StorageIOError::read_state_machine(&error))?,
+            Ok(bytes) => {
+                let Some((version, payload)) = bytes.split_first() else {
+                    return Err(
+                        StorageIOError::read_state_machine(&StateFormatError { found: 0 }).into(),
+                    );
+                };
+                if *version != STATE_FORMAT_VERSION {
+                    return Err(StorageIOError::read_state_machine(&StateFormatError {
+                        found: *version,
+                    })
+                    .into());
+                }
+                ciborium::de::from_reader(payload)
+                    .map_err(|error| StorageIOError::read_state_machine(&error))?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreInner::default(),
             Err(error) => return Err(StorageIOError::read_state_machine(&error).into()),
         };
@@ -91,7 +114,7 @@ impl MemStore {
         if self.path.as_os_str().is_empty() {
             return Ok(());
         }
-        let mut data = Vec::new();
+        let mut data = vec![STATE_FORMAT_VERSION];
         ciborium::ser::into_writer(inner, &mut data)
             .map_err(|error| StorageIOError::write_state_machine(&error))?;
         let temporary = self.temporary_path();
@@ -422,6 +445,7 @@ mod tests {
                 4_096,
                 ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
                 1_700_000_000_000,
+                1_700_000_000_500,
             )
             .expect("the test record is valid"),
             replicas: BTreeSet::from([1, 2, 3]),

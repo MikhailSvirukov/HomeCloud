@@ -23,10 +23,11 @@
 //! Base-mode message sealing ([`seal`], [`open`]) with X25519, HKDF-SHA-256, and
 //! AES-256-GCM, and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
-//! commits full upload version metadata, including the SHA-256 and capture time,
-//! together with blob replica state to a catalog state machine, exchanges
-//! CBOR-encoded RPCs inside the type-3 inter-server envelope over
-//! [`RaftTransport`], and keeps a durable bootstrap marker. The
+//! commits the full upload version metadata, including the SHA-256, the
+//! client-supplied capture/creation time, and the server acceptance time
+//! (`FR-NODE-008 / 1`), together with the blob replica set to a catalog state
+//! machine, exchanges CBOR-encoded RPCs inside the type-3 inter-server envelope
+//! over [`RaftTransport`], and keeps a durable bootstrap marker. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API.
