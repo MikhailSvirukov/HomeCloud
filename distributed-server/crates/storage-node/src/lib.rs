@@ -35,7 +35,9 @@
 //! [`encode_page`], [`decode_request`]), and CSPRNG-backed catalog pagination
 //! snapshots ([`CatalogPager`], [`CatalogPagerError`]), and the catalog service
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
-//! entries and serves paginated catalog pages.
+//! entries and serves paginated catalog pages, and the catalog protocol error
+//! codes ([`CatalogErrorCode`]) for invalid cursors, expired snapshots, and
+//! internal failures.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -58,6 +60,7 @@
 
 mod buffer_pool;
 mod catalog;
+mod catalog_error;
 mod catalog_pager;
 mod catalog_service;
 mod codec;
@@ -87,6 +90,7 @@ pub use catalog::{
     decode_request, encode_page, CatalogEntry, CatalogError, CatalogPage, CatalogRequest,
     CATALOG_TOKEN_LEN,
 };
+pub use catalog_error::CatalogErrorCode;
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
 pub use catalog_service::{CatalogService, CatalogServiceError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
