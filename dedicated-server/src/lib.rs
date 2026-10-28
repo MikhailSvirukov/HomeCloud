@@ -7,6 +7,7 @@
 mod availability;
 mod clock;
 mod config;
+mod frame;
 mod heartbeat;
 mod identity;
 mod log_file;
@@ -22,6 +23,7 @@ pub use config::{
     ConfigError, LoggingConfig, NodeField, NodeId, PublicKey, ServerConfig, CONFIG_PATH_ENV,
     DEFAULT_CONFIG_FILE_NAME,
 };
+pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
 pub use logging::{

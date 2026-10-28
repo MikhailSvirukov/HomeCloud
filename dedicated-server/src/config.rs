@@ -45,6 +45,8 @@ pub struct ServerConfig {
     pub(crate) listen: SocketAddr,
     /// Maximum length of any node or identity label in UTF-8 bytes.
     pub(crate) max_label_bytes: NonZeroUsize,
+    /// Largest frame payload the server accepts from a peer, in bytes.
+    pub(crate) max_frame_bytes: NonZeroU32,
     /// Key identity of this dedicated server.
     pub(crate) identity: IdentityConfig,
     /// Heartbeat timing towards the storage cluster.
@@ -308,6 +310,14 @@ impl HeartbeatConfig {
 }
 
 impl ServerConfig {
+    /// Largest frame payload the server accepts from a peer, in bytes.
+    ///
+    /// The receive limit is checked against the announced frame length before
+    /// the payload buffer is allocated (`INT-NET-004`).
+    pub fn max_frame_bytes(&self) -> NonZeroU32 {
+        self.max_frame_bytes
+    }
+
     /// Parse and validate a configuration from TOML text.
     pub fn from_toml_str(input: &str) -> Result<Self> {
         let config: Self = toml::from_str(input).map_err(|source| ConfigError::Parse { source })?;
@@ -474,6 +484,7 @@ mod tests {
             "10.0.0.1:7000".parse().expect("valid listen address")
         );
         assert_eq!(config.max_label_bytes.get(), 64);
+        assert_eq!(config.max_frame_bytes.get(), 1_048_576);
         assert_eq!(config.identity.label, "dedicated-1");
         assert_eq!(config.heartbeat.interval().as_millis(), 1000);
         assert_eq!(config.heartbeat.timeout().as_millis(), 500);
@@ -644,6 +655,51 @@ mod tests {
             Err(ConfigError::LoggingTotalSizeBelowFileSize {
                 max_total_size_bytes: 104_857_599,
                 max_file_size_bytes: 104_857_600,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_zero_frame_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 0");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_missing_frame_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576\n", "");
+
+        assert!(parse_error(&document)
+            .to_string()
+            .contains("missing field `max_frame_bytes`"));
+    }
+
+    #[test]
+    fn the_configured_frame_limit_is_the_receive_limit() {
+        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 4");
+        let config = ServerConfig::from_toml_str(&document).expect("the document must parse");
+
+        let mut encoded = Vec::new();
+        crate::frame::write_frame(&mut encoded, b"abcd").expect("the frame must be written");
+        let mut reader = std::io::Cursor::new(encoded);
+        assert_eq!(
+            crate::frame::read_frame(&mut reader, config.max_frame_bytes())
+                .expect("a frame at the configured limit must be accepted"),
+            b"abcd"
+        );
+
+        let mut encoded = Vec::new();
+        crate::frame::write_frame(&mut encoded, b"abcde").expect("the frame must be written");
+        let mut reader = std::io::Cursor::new(encoded);
+        assert!(matches!(
+            crate::frame::read_frame(&mut reader, config.max_frame_bytes()),
+            Err(crate::frame::FrameError::TooLarge {
+                announced: 5,
+                max: 4
             })
         ));
     }
