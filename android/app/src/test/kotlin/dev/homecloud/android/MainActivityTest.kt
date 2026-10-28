@@ -1,5 +1,6 @@
 package dev.homecloud.android
 
+import android.content.Context
 import android.content.Intent
 import android.provider.MediaStore
 import androidx.compose.ui.test.assertCountEquals
@@ -9,12 +10,15 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ApplicationProvider
+import androidx.work.testing.WorkManagerTestInitHelper
 import dev.homecloud.android.permissions.MediaPermissionPolicy
 import dev.homecloud.android.testsupport.MediaTestData
 import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
@@ -30,7 +34,9 @@ import org.robolectric.annotation.ConscryptMode
  *
  * The Compose rule launches the activity before the test body runs, so the granted state is produced
  * through Robolectric's shadow application permissions and the lifecycle is driven back to resume,
- * where the surface recomputes, instead of recreating the activity.
+ * where the surface recomputes, instead of recreating the activity. The activity schedules its
+ * periodic backup cycle on create, so a test WorkManager is installed by an outer rule before the
+ * activity launches and no real work is executed.
  *
  * Conscrypt is turned off because this test never touches TLS and loading its native library is
  * impossible on a `noexec` temp filesystem.
@@ -39,7 +45,10 @@ import org.robolectric.annotation.ConscryptMode
 @Config(sdk = [MainActivityTest.PER_TYPE_PERMISSIONS_SDK_INT])
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class MainActivityTest {
-    @get:Rule
+    @get:Rule(order = 0)
+    val testWorkManagerRule = TestWorkManagerRule()
+
+    @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
@@ -187,5 +196,16 @@ class MainActivityTest {
         const val DISPLAY_NAME_PREFIX = "item-"
         const val EXPECTED_MEDIA_COUNT = 2
         const val LIBRARY_TIMEOUT_MILLIS = 5_000L
+    }
+}
+
+/**
+ * Installs a test [androidx.work.WorkManager] before the activity is launched, so the periodic
+ * cycle the activity schedules on create stays enqueued in the test scheduler instead of starting
+ * real background work.
+ */
+class TestWorkManagerRule : ExternalResource() {
+    override fun before() {
+        WorkManagerTestInitHelper.initializeTestWorkManager(ApplicationProvider.getApplicationContext<Context>())
     }
 }
