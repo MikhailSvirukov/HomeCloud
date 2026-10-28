@@ -36,7 +36,10 @@ clients; it does not relay Raft or blob traffic.
   trimming or normalization, plus original and compressed sizes), `src/catalog.rs`
   (catalog entry, page, and request CBOR codecs), `src/catalog_pager.rs`
   (snapshot pager that sorts entries by ascending upload id and pages them with
-  CSPRNG snapshot tokens and cursors), `src/listener.rs` (binds
+  CSPRNG snapshot tokens and cursors), `src/catalog_service.rs` (maps the
+  committed Raft catalog to catalog entries and paginated pages using the
+  configured page size, snapshot lifetime, and source-name limit),
+  `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
@@ -56,7 +59,8 @@ clients; it does not relay Raft or blob traffic.
   `payload_stream_public_api.rs`, `config_public_api.rs`,
   `keys_public_api.rs`, `content_hash_public_api.rs`,
   `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
-  `catalog_pager_public_api.rs`, `upload_outcomes_public_api.rs`,
+  `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
+  `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`, `message_public_api.rs`,
@@ -77,7 +81,9 @@ request CBOR codecs, the catalog pager that returns entries in ascending upload-
 order, keeps one CSPRNG snapshot token per catalog snapshot, and issues CSPRNG
 cursors that are only valid together with that token, with the page size and
 snapshot lifetime configured through the pager constructor and expired snapshots
-evicted when a new snapshot starts, the typed upload
+evicted when a new snapshot starts, the catalog service that maps the committed
+Raft catalog to paginated catalog pages using the configured page size, snapshot
+lifetime, and source-name limit, the typed upload
 outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
