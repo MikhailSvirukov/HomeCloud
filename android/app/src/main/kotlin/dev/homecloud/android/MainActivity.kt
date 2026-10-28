@@ -20,8 +20,8 @@ import dev.homecloud.android.permissions.MediaPermissionRequestContent
 
 /**
  * Main screen that ensures the repeating backup cycle is scheduled when the app starts
- * (`CON-AND-001 / 1`) and asks once for the notification permission when the platform requires it
- * (`FR-AND-035`) without blocking the media surface when it is refused (`FR-AND-036`).
+ * (`CON-AND-001 / 1`) and asks on a fresh launch for the notification permission when the platform
+ * requires it (`FR-AND-035`) without blocking the media surface when it is refused (`FR-AND-036`).
  */
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
@@ -29,7 +29,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermission()
+        if (savedInstanceState == null) {
+            requestNotificationPermission()
+        }
         BackupWorkScheduler(WorkManager.getInstance(this)).schedulePeriodic()
         enableEdgeToEdge()
         val mediaDiscovery = MediaDiscovery(MediaStoreMediaRowSource(contentResolver))

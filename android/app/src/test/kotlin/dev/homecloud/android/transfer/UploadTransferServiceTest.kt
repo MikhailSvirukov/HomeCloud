@@ -1,5 +1,6 @@
 package dev.homecloud.android.transfer
 
+import android.app.NotificationManager
 import android.app.Service
 import android.content.ComponentName
 import android.content.pm.ServiceInfo
@@ -21,8 +22,9 @@ import org.robolectric.annotation.ConscryptMode
  *
  * `ServiceController.startCommand` discards the command result, so the lifecycle is created through
  * Robolectric and the command is invoked on the created service to observe the returned value.
- * Robolectric's shadow service records the posted foreground notification, so no fallback assertion
- * on the channel is needed.
+ * Robolectric's shadow service records the posted foreground notification. The API 35 and API 28
+ * scenarios cover both `startForeground` overloads, and a separate scenario observes the channel
+ * registered on create.
  *
  * Conscrypt is turned off because this test never touches TLS and loading its native library is
  * impossible on a `noexec` temp filesystem.
@@ -33,6 +35,50 @@ import org.robolectric.annotation.ConscryptMode
 class UploadTransferServiceTest {
     @Test
     fun `start command returns not sticky and posts the transfer notification in the foreground`() {
+        assertStartCommandPostsTransferNotification()
+    }
+
+    @Test
+    @Config(sdk = [MODERN_SDK_INT])
+    fun `start command on api 35 returns not sticky and posts the transfer notification in the foreground`() {
+        assertStartCommandPostsTransferNotification()
+    }
+
+    @Test
+    @Config(sdk = [LEGACY_SDK_INT])
+    fun `start command on api 28 returns not sticky and posts the transfer notification in the foreground`() {
+        assertStartCommandPostsTransferNotification()
+    }
+
+    @Test
+    fun `create registers the upload transfer notification channel`() {
+        Robolectric.buildService(UploadTransferService::class.java).create().get()
+
+        val notificationManager =
+            RuntimeEnvironment.getApplication().getSystemService(NotificationManager::class.java)
+
+        assertNotNull(
+            "onCreate must register the channel before the start command posts a notification",
+            notificationManager.getNotificationChannel(UploadTransferNotification.CHANNEL_ID),
+        )
+    }
+
+    @Test
+    fun `manifest declares the service with the data sync foreground type`() {
+        val application = RuntimeEnvironment.getApplication()
+        val serviceInfo =
+            application.packageManager.getServiceInfo(
+                ComponentName(application, UploadTransferService::class.java),
+                0,
+            )
+
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            serviceInfo.foregroundServiceType,
+        )
+    }
+
+    private fun assertStartCommandPostsTransferNotification() {
         val service =
             Robolectric
                 .buildService(UploadTransferService::class.java)
@@ -53,22 +99,9 @@ class UploadTransferServiceTest {
         )
     }
 
-    @Test
-    fun `manifest declares the service with the data sync foreground type`() {
-        val application = RuntimeEnvironment.getApplication()
-        val serviceInfo =
-            application.packageManager.getServiceInfo(
-                ComponentName(application, UploadTransferService::class.java),
-                0,
-            )
-
-        assertEquals(
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            serviceInfo.foregroundServiceType,
-        )
-    }
-
     private companion object {
         const val SDK_INT = 29
+        const val MODERN_SDK_INT = 35
+        const val LEGACY_SDK_INT = 28
     }
 }

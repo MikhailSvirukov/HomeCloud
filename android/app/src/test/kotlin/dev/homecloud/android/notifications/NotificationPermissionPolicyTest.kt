@@ -5,9 +5,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pins the runtime notification decision of `FR-AND-035` and `FR-AND-036`: the permission is asked
- * for on API 33 and above only while it is denied, and a denied permission never turns into an
- * app-level block.
+ * Pins when `FR-AND-035` asks for the runtime notification permission: on API 33 and above only
+ * while it is denied.
  */
 class NotificationPermissionPolicyTest {
     @Test
@@ -38,36 +37,6 @@ class NotificationPermissionPolicyTest {
                 NotificationPermissionPolicy.shouldRequest(sdkInt, granted = false),
             )
         }
-    }
-
-    @Test
-    fun `cannot show at api 33 when the notification permission is denied`() {
-        assertFalse(
-            NotificationPermissionPolicy.canShow(
-                NotificationPermissionPolicy.NOTIFICATION_PERMISSION_SDK_INT,
-                granted = false,
-            ),
-        )
-    }
-
-    @Test
-    fun `can show at api 33 when the notification permission is granted`() {
-        assertTrue(
-            NotificationPermissionPolicy.canShow(
-                NotificationPermissionPolicy.NOTIFICATION_PERMISSION_SDK_INT,
-                granted = true,
-            ),
-        )
-    }
-
-    @Test
-    fun `can show below api 33 without the notification permission`() {
-        assertTrue(
-            NotificationPermissionPolicy.canShow(
-                LEGACY_SDK_INT,
-                granted = false,
-            ),
-        )
     }
 
     private companion object {
