@@ -22,6 +22,15 @@ class FrameCodecTest {
     }
 
     @Test
+    fun payloadExactlyAtLimitRoundTripsOnEncodeAndDecode() {
+        val payload = ByteArray(SMALL_LIMIT_BYTES) { index -> index.toByte() }
+
+        val frame = FrameCodec.encode(payload, SMALL_LIMIT_BYTES)
+
+        assertArrayEquals(payload, FrameCodec.decode(frame, SMALL_LIMIT_BYTES))
+    }
+
+    @Test
     fun encodeRejectsPayloadAboveLimit() {
         assertThrows(ProtocolEncodingException::class.java) {
             FrameCodec.encode(byteArrayOf(1, 2, 3, 4, 5), SMALL_LIMIT_BYTES)

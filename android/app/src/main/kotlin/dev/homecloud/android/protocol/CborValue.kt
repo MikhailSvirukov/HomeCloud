@@ -19,9 +19,17 @@ internal class ProtocolEncodingException(
  *
  * The subset contains unsigned and negative integers, byte strings, text strings, null and arrays.
  * Maps, tags, floating-point values, booleans and indefinite lengths are not part of it.
+ *
+ * Unsigned values are limited to [Long.MAX_VALUE] (63-bit) because the model carries them in a
+ * `Long`; larger CBOR unsigned values are rejected during decoding.
  */
 internal sealed interface CborValue {
-    /** A non-negative integer that is encoded in its shortest head form. */
+    /**
+     * A non-negative integer that is encoded in its shortest head form.
+     *
+     * The value ranges from `0` to [Long.MAX_VALUE] (63-bit); the `Long`-backed model cannot carry
+     * larger CBOR unsigned values, and the decoder rejects them.
+     */
     data class UInt(
         val value: Long,
     ) : CborValue
@@ -140,11 +148,14 @@ internal object CborEncoder {
  *
  * Only definite lengths and head forms with the shortest argument encoding are accepted. Input is
  * rejected when it is truncated, carries trailing bytes, or uses a CBOR type outside the subset.
+ * Unsigned values above [Long.MAX_VALUE] (63-bit) cannot be represented by the `Long`-backed model
+ * and are rejected, and array nesting deeper than [MAX_NESTING_DEPTH] levels is rejected instead of
+ * exhausting the stack.
  */
 internal object CborDecoder {
     fun decode(bytes: ByteArray): CborValue {
         val decoder = Decoder(bytes)
-        val value = decoder.readValue()
+        val value = decoder.readValue(INITIAL_NESTING_DEPTH)
         if (decoder.hasRemaining()) {
             throw ProtocolEncodingException("trailing bytes after the CBOR value")
         }
@@ -158,7 +169,7 @@ internal object CborDecoder {
 
         fun hasRemaining(): Boolean = position < bytes.size
 
-        fun readValue(): CborValue {
+        fun readValue(depth: Int): CborValue {
             val head = readHead()
             val majorType = (head ushr MAJOR_TYPE_SHIFT) and MAJOR_TYPE_MASK
             val additionalInformation = head and ADDITIONAL_MASK
@@ -171,7 +182,7 @@ internal object CborDecoder {
                 MAJOR_NEGATIVE -> readNegativeValue(argument)
                 MAJOR_BYTES -> CborValue.Bytes(readByteString(argument))
                 MAJOR_TEXT -> CborValue.Text(readText(argument))
-                MAJOR_ARRAY -> CborValue.Array(readArray(argument))
+                MAJOR_ARRAY -> CborValue.Array(readArray(argument, depth))
                 MAJOR_MAP -> throw ProtocolEncodingException("CBOR maps are not supported")
                 MAJOR_TAG -> throw ProtocolEncodingException("CBOR tags are not supported")
                 else -> throw ProtocolEncodingException("unsupported CBOR major type $majorType")
@@ -256,12 +267,18 @@ internal object CborDecoder {
             }
         }
 
-        private fun readArray(argument: Long): List<CborValue> {
+        private fun readArray(
+            argument: Long,
+            depth: Int,
+        ): List<CborValue> {
+            if (depth >= MAX_NESTING_DEPTH) {
+                throw ProtocolEncodingException("CBOR array nesting exceeds $MAX_NESTING_DEPTH levels")
+            }
             val length = checkedLength(argument)
             if (length > remainingBytes()) {
                 throw ProtocolEncodingException("truncated CBOR input")
             }
-            return List(length) { readValue() }
+            return List(length) { readValue(depth + 1) }
         }
 
         private fun readSimple(additionalInformation: Int): CborValue =
@@ -337,4 +354,6 @@ private const val BITS_PER_BYTE = 8
 private const val BYTE_MASK = 0xFFL
 private const val BYTE_MASK_INT = 0xFF
 private const val MAX_LENGTH = 2_147_483_647L
+private const val INITIAL_NESTING_DEPTH = 0
+private const val MAX_NESTING_DEPTH = 64
 private const val SIMPLE_NULL = 0xF6

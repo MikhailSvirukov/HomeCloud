@@ -7,8 +7,9 @@ import java.util.Locale
  * `INT-NET-049`, `INT-NET-050`).
  *
  * Every message carries all seven positional elements in contract order. Optional elements are
- * null in their own position, and the sender id is null only for primary registration before an
- * identifier is assigned.
+ * null in their own position. The header has exactly two shapes: primary registration carries a
+ * null sender id and the 32-byte bootstrap signing public key, and every other message carries the
+ * assigned sender id and a null bootstrap signing public key.
  */
 internal data class ExternalFrameHeader(
     val senderId: ByteArray?,
@@ -24,7 +25,9 @@ internal data class ExternalFrameHeader(
  * `INT-NET-047`, `INT-NET-049`, `INT-NET-050`).
  *
  * Only protocol version 1 is accepted. Byte strings are checked against the fixed contract lengths
- * and the frame number is restricted to the unsigned 32-bit range.
+ * and the frame number is restricted to the unsigned 32-bit range. The primary-registration null
+ * pair is enforced in both directions: a null sender id requires the bootstrap signing public key,
+ * and any present sender id requires that key to be null.
  */
 internal object ExternalFrameHeaderCodec {
     fun encode(header: ExternalFrameHeader): ByteArray {
@@ -37,6 +40,7 @@ internal object ExternalFrameHeaderCodec {
         header.bootstrapSigningPublicKey?.let {
             requireByteLength(it, BOOTSTRAP_SIGNING_PUBLIC_KEY_BYTES, BOOTSTRAP_SIGNING_PUBLIC_KEY_FIELD)
         }
+        requireRegistrationShape(header.senderId, header.bootstrapSigningPublicKey)
         val elements =
             listOf(
                 CborValue.UInt(PROTOCOL_VERSION),
@@ -61,17 +65,20 @@ internal object ExternalFrameHeaderCodec {
         if (version != PROTOCOL_VERSION) {
             throw ProtocolEncodingException("unsupported protocol version")
         }
+        val senderId = elements[1].optionalByteString(SENDER_ID_FIELD, SENDER_ID_BYTES)
+        val bootstrapSigningPublicKey =
+            elements[6].optionalByteString(
+                BOOTSTRAP_SIGNING_PUBLIC_KEY_FIELD,
+                BOOTSTRAP_SIGNING_PUBLIC_KEY_BYTES,
+            )
+        requireRegistrationShape(senderId, bootstrapSigningPublicKey)
         return ExternalFrameHeader(
-            senderId = elements[1].optionalByteString(SENDER_ID_FIELD, SENDER_ID_BYTES),
+            senderId = senderId,
             requestId = elements[2].byteString(REQUEST_ID_FIELD, REQUEST_ID_BYTES),
             frameNumber = elements[3].unsignedInteger(FRAME_NUMBER_FIELD, uint32Range),
             uploadId = elements[4].optionalByteString(UPLOAD_ID_FIELD, UPLOAD_ID_BYTES),
             responderLabel = elements[5].optionalText(RESPONDER_LABEL_FIELD),
-            bootstrapSigningPublicKey =
-                elements[6].optionalByteString(
-                    BOOTSTRAP_SIGNING_PUBLIC_KEY_FIELD,
-                    BOOTSTRAP_SIGNING_PUBLIC_KEY_BYTES,
-                ),
+            bootstrapSigningPublicKey = bootstrapSigningPublicKey,
         )
     }
 }
@@ -294,6 +301,22 @@ private fun requireByteLength(
 ) {
     if (value.size != expectedLength) {
         throw ProtocolEncodingException("$field must contain $expectedLength bytes")
+    }
+}
+
+private fun requireRegistrationShape(
+    senderId: ByteArray?,
+    bootstrapSigningPublicKey: ByteArray?,
+) {
+    if (senderId == null && bootstrapSigningPublicKey == null) {
+        throw ProtocolEncodingException(
+            "$SENDER_ID_FIELD and $BOOTSTRAP_SIGNING_PUBLIC_KEY_FIELD cannot both be null",
+        )
+    }
+    if (senderId != null && bootstrapSigningPublicKey != null) {
+        throw ProtocolEncodingException(
+            "$SENDER_ID_FIELD and $BOOTSTRAP_SIGNING_PUBLIC_KEY_FIELD cannot both be present",
+        )
     }
 }
 

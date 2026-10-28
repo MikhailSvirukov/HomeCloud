@@ -130,6 +130,96 @@ class CborCodecTest {
         assertRejected(HEX_MALFORMED_UTF8)
     }
 
+    @Test
+    fun decodeRejectsTag() {
+        assertRejected(HEX_TAG)
+    }
+
+    @Test
+    fun decodeRejectsHalfPrecisionFloat() {
+        assertRejected(HEX_HALF_FLOAT)
+    }
+
+    @Test
+    fun decodeRejectsSinglePrecisionFloat() {
+        assertRejected(HEX_SINGLE_FLOAT)
+    }
+
+    @Test
+    fun decodeRejectsDoublePrecisionFloat() {
+        assertRejected(HEX_DOUBLE_FLOAT)
+    }
+
+    @Test
+    fun decodeRejectsFalseSimpleValue() {
+        assertRejected(HEX_SIMPLE_FALSE)
+    }
+
+    @Test
+    fun decodeRejectsUnassignedSimpleValue() {
+        assertRejected(HEX_SIMPLE_UNASSIGNED)
+    }
+
+    @Test
+    fun decodeRejectsTwoByteSimpleValue() {
+        assertRejected(HEX_SIMPLE_TWO_BYTE)
+    }
+
+    @Test
+    fun decodeRejectsIndefiniteLengthByteString() {
+        assertRejected(HEX_INDEFINITE_BYTE_STRING)
+    }
+
+    @Test
+    fun decodeRejectsIndefiniteLengthTextString() {
+        assertRejected(HEX_INDEFINITE_TEXT_STRING)
+    }
+
+    @Test
+    fun decodeRejectsNonMinimalTwoByteHead() {
+        assertRejected(HEX_NON_MINIMAL_TWO_BYTE_HEAD)
+    }
+
+    @Test
+    fun decodeRejectsNonMinimalFourByteHead() {
+        assertRejected(HEX_NON_MINIMAL_FOUR_BYTE_HEAD)
+    }
+
+    @Test
+    fun decodeRejectsNonMinimalEightByteHead() {
+        assertRejected(HEX_NON_MINIMAL_EIGHT_BYTE_HEAD)
+    }
+
+    @Test
+    fun decodeRejectsTruncatedArray() {
+        assertRejected(HEX_TRUNCATED_ARRAY)
+    }
+
+    @Test
+    fun decodeRejectsUnsignedValueAboveLongMax() {
+        assertRejected(HEX_UNSIGNED_ABOVE_LONG_MAX)
+    }
+
+    @Test
+    fun decodeRejectsNestingDeeperThanSixtyFourLevels() {
+        var nested: CborValue = CborValue.UInt(0)
+        repeat(NESTING_LEVELS_ABOVE_LIMIT) {
+            nested = CborValue.Array(listOf(nested))
+        }
+
+        assertThrows(ProtocolEncodingException::class.java) { CborDecoder.decode(CborEncoder.encode(nested)) }
+    }
+
+    @Test
+    fun encodeRejectsNegativeUnsignedValue() {
+        assertThrows(ProtocolEncodingException::class.java) { CborEncoder.encode(CborValue.UInt(-1)) }
+    }
+
+    @Test
+    fun encodeRejectsNegativeIntegerAtZero() {
+        assertThrows(ProtocolEncodingException::class.java) { CborEncoder.encode(CborValue.NInt(0)) }
+    }
+
     private fun assertRejected(hex: String) {
         assertThrows(ProtocolEncodingException::class.java) { CborDecoder.decode(bytesOf(hex)) }
     }
@@ -193,5 +283,21 @@ class CborCodecTest {
         const val HEX_BOOLEAN_TRUE = "F5"
         const val HEX_TRUNCATED_BYTE_STRING = "430102"
         const val HEX_MALFORMED_UTF8 = "61FF"
+
+        const val HEX_TAG = "C100"
+        const val HEX_HALF_FLOAT = "F90000"
+        const val HEX_SINGLE_FLOAT = "FA00000000"
+        const val HEX_DOUBLE_FLOAT = "FB0000000000000000"
+        const val HEX_SIMPLE_FALSE = "F7"
+        const val HEX_SIMPLE_UNASSIGNED = "F0"
+        const val HEX_SIMPLE_TWO_BYTE = "F820"
+        const val HEX_INDEFINITE_BYTE_STRING = "5F4100FF"
+        const val HEX_INDEFINITE_TEXT_STRING = "7F6161FF"
+        const val HEX_NON_MINIMAL_TWO_BYTE_HEAD = "190017"
+        const val HEX_NON_MINIMAL_FOUR_BYTE_HEAD = "1A00000017"
+        const val HEX_NON_MINIMAL_EIGHT_BYTE_HEAD = "1B0000000000000017"
+        const val HEX_TRUNCATED_ARRAY = "8201"
+        const val HEX_UNSIGNED_ABOVE_LONG_MAX = "1BFFFFFFFFFFFFFFFF"
+        const val NESTING_LEVELS_ABOVE_LIMIT = 65
     }
 }

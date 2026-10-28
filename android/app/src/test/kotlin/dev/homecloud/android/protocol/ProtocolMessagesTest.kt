@@ -3,6 +3,7 @@ package dev.homecloud.android.protocol
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -54,6 +55,67 @@ class ProtocolMessagesTest {
         assertEquals(CborValue.Null, elements[4])
         assertEquals(CborValue.Null, elements[5])
         assertBytes(BOOTSTRAP_SIGNING_KEY, elements[6])
+    }
+
+    @Test
+    fun decodeReadsOrdinaryHeaderSenderAndNullBootstrapSigningKey() {
+        val header =
+            ExternalFrameHeader(
+                senderId = SENDER_ID,
+                requestId = REQUEST_ID,
+                frameNumber = FRAME_NUMBER,
+                uploadId = UPLOAD_ID,
+                responderLabel = LABEL,
+                bootstrapSigningPublicKey = null,
+            )
+
+        val decoded = ExternalFrameHeaderCodec.decode(ExternalFrameHeaderCodec.encode(header))
+
+        assertArrayEquals(SENDER_ID, decoded.senderId)
+        assertNull(decoded.bootstrapSigningPublicKey)
+    }
+
+    @Test
+    fun decodeRejectsNullSenderAndNullBootstrapSigningKey() {
+        val encoded =
+            externalHeaderArray(
+                senderId = CborValue.Null,
+                bootstrapSigningPublicKey = CborValue.Null,
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsSenderAndBootstrapSigningKeyTogether() {
+        val encoded =
+            externalHeaderArray(
+                senderId = CborValue.Bytes(SENDER_ID),
+                bootstrapSigningPublicKey = CborValue.Bytes(BOOTSTRAP_SIGNING_KEY),
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsFifteenByteSenderId() {
+        val encoded = externalHeaderArray(senderId = CborValue.Bytes(SHORT_BYTE_STRING))
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsFifteenByteUploadId() {
+        val encoded = externalHeaderArray(uploadId = CborValue.Bytes(SHORT_BYTE_STRING))
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsNullRequestId() {
+        val encoded = externalHeaderArray(requestId = CborValue.Null)
+
+        assertThrows(ProtocolEncodingException::class.java) { ExternalFrameHeaderCodec.decode(encoded) }
     }
 
     @Test
@@ -162,6 +224,27 @@ class ProtocolMessagesTest {
     }
 
     @Test
+    fun decodeRejectsNonTextLogin() {
+        val encoded = logicalHeaderArray(login = CborValue.UInt(NON_TEXT_VALUE))
+
+        assertThrows(ProtocolEncodingException::class.java) { ClientLogicalHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsNonTextPassword() {
+        val encoded = logicalHeaderArray(password = CborValue.UInt(NON_TEXT_VALUE))
+
+        assertThrows(ProtocolEncodingException::class.java) { ClientLogicalHeaderCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsNonArrayOperationArguments() {
+        val encoded = logicalHeaderArray(arguments = CborValue.Text(LOGIN))
+
+        assertThrows(ProtocolEncodingException::class.java) { ClientLogicalHeaderCodec.decode(encoded) }
+    }
+
+    @Test
     fun successResultEnvelopeEncodesZeroCodeAndEmptyArguments() {
         val elements = arrayItems(ResultEnvelopeCodec.encode(ResultEnvelope(ResultCodes.SUCCESS, emptyList())))
 
@@ -202,18 +285,40 @@ class ProtocolMessagesTest {
     }
 
     @Test
-    fun encodeRequestEqualsTopologyLogicalHeaderEncoding() {
-        val expected =
-            ClientLogicalHeaderCodec.encode(
-                ClientLogicalHeader(
-                    operation = OperationType.TOPOLOGY,
-                    login = LOGIN,
-                    password = PASSWORD,
-                    arguments = emptyList(),
+    fun decodeRejectsThreeElementResultEnvelope() {
+        val encoded =
+            CborEncoder.encode(
+                CborValue.Array(
+                    listOf(
+                        CborValue.UInt(ResultCodes.SUCCESS),
+                        CborValue.Array(emptyList()),
+                        CborValue.Null,
+                    ),
                 ),
             )
 
-        assertArrayEquals(expected, TopologyCodec.encodeRequest(LOGIN, PASSWORD))
+        assertThrows(ProtocolEncodingException::class.java) { ResultEnvelopeCodec.decode(encoded) }
+    }
+
+    @Test
+    fun decodeRejectsResultCodeAboveUint32() {
+        val encoded =
+            CborEncoder.encode(
+                CborValue.Array(listOf(CborValue.UInt(UINT32_OVERFLOW), CborValue.Array(emptyList()))),
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) { ResultEnvelopeCodec.decode(encoded) }
+    }
+
+    @Test
+    fun encodeRequestEncodesTopologyOperationWithCredentialsAndEmptyArguments() {
+        val elements = arrayItems(TopologyCodec.encodeRequest(LOGIN, PASSWORD))
+
+        assertEquals(CLIENT_LOGICAL_HEADER_ELEMENTS, elements.size)
+        assertEquals(CborValue.UInt(TOPOLOGY_CODE), elements[0])
+        assertEquals(CborValue.Text(LOGIN), elements[1])
+        assertEquals(CborValue.Text(PASSWORD), elements[2])
+        assertEquals(CborValue.Array(emptyList()), elements[3])
     }
 
     @Test
@@ -289,6 +394,29 @@ class ProtocolMessagesTest {
     }
 
     @Test
+    fun decodeAnswerRejectsPortOutsideRange() {
+        listOf(PORT_ZERO, PORT_ABOVE_RANGE).forEach { port ->
+            assertThrows(ProtocolEncodingException::class.java) {
+                TopologyCodec.decodeAnswer(topologyAnswer(node(port = port)))
+            }
+        }
+    }
+
+    @Test
+    fun decodeAnswerRejectsThirtyOneByteX25519PublicKey() {
+        assertThrows(ProtocolEncodingException::class.java) {
+            TopologyCodec.decodeAnswer(topologyAnswer(node(x25519PublicKey = SHORT_PUBLIC_KEY)))
+        }
+    }
+
+    @Test
+    fun decodeAnswerRejectsThirtyOneByteEd25519PublicKey() {
+        assertThrows(ProtocolEncodingException::class.java) {
+            TopologyCodec.decodeAnswer(topologyAnswer(node(ed25519PublicKey = SHORT_PUBLIC_KEY)))
+        }
+    }
+
+    @Test
     fun resultCodesMatchPublishedContractValues() {
         assertEquals(ResultCodes.SUCCESS, CONTRACT_SUCCESS)
         assertEquals(ResultCodes.UNKNOWN_OPERATION, CONTRACT_UNKNOWN_OPERATION)
@@ -334,6 +462,23 @@ class ProtocolMessagesTest {
             ),
         )
 
+    private fun logicalHeaderArray(
+        operation: Long = TOPOLOGY_CODE,
+        login: CborValue = CborValue.Text(LOGIN),
+        password: CborValue = CborValue.Text(PASSWORD),
+        arguments: CborValue = CborValue.Array(emptyList()),
+    ): ByteArray =
+        CborEncoder.encode(
+            CborValue.Array(
+                listOf(
+                    CborValue.UInt(operation),
+                    login,
+                    password,
+                    arguments,
+                ),
+            ),
+        )
+
     private fun node(
         senderId: ByteArray = SENDER_ID,
         label: String = LABEL,
@@ -375,6 +520,9 @@ class ProtocolMessagesTest {
         const val NON_CONTRACT_RESULT_CODE = 1L
         const val PORT = 8_443
         const val OTHER_PORT = 9_443
+        const val PORT_ZERO = 0
+        const val PORT_ABOVE_RANGE = 65_536
+        const val NON_TEXT_VALUE = 1L
         const val TWO_NODES = 2
         const val EXTERNAL_HEADER_ELEMENTS = 7
         const val SHORT_HEADER_ELEMENTS = 6
@@ -397,6 +545,7 @@ class ProtocolMessagesTest {
         val ED25519_PUBLIC_KEY = ByteArray(32) { index -> (index + 64).toByte() }
         val SHORT_BYTE_STRING = ByteArray(15)
         val SHORT_BOOTSTRAP_SIGNING_KEY = ByteArray(31)
+        val SHORT_PUBLIC_KEY = ByteArray(31)
 
         const val CONTRACT_SUCCESS = 0L
         const val CONTRACT_UNKNOWN_OPERATION = 0x0001_0001L
