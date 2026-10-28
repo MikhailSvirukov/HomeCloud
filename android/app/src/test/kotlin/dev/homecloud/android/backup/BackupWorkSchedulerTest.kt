@@ -2,6 +2,7 @@ package dev.homecloud.android.backup
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.WorkInfo
@@ -16,6 +17,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 
 /**
@@ -36,7 +38,14 @@ class BackupWorkSchedulerTest {
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        // A discarding executor keeps enqueued work pending, so the scheduler's requests can be
+        // inspected instead of being executed by the test harness.
+        val configuration =
+            Configuration
+                .Builder()
+                .setExecutor(Executor { })
+                .build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, configuration)
         workManager = WorkManager.getInstance(context)
         scheduler = BackupWorkScheduler(workManager)
     }
