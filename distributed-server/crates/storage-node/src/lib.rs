@@ -32,7 +32,8 @@
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API, together with the catalog entry, page, and
 //! request CBOR codecs ([`CatalogEntry`], [`CatalogPage`], [`CatalogRequest`],
-//! [`encode_page`], [`decode_request`]).
+//! [`encode_page`], [`decode_request`]), and CSPRNG-backed catalog pagination
+//! snapshots ([`CatalogPager`], [`CatalogPagerError`]).
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -55,6 +56,7 @@
 
 mod buffer_pool;
 mod catalog;
+mod catalog_pager;
 mod codec;
 mod config;
 mod connection;
@@ -82,6 +84,7 @@ pub use catalog::{
     decode_request, encode_page, CatalogEntry, CatalogError, CatalogPage, CatalogRequest,
     CATALOG_TOKEN_LEN,
 };
+pub use catalog_pager::{CatalogPager, CatalogPagerError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use connection::{
