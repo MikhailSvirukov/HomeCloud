@@ -213,10 +213,15 @@ for the whole process and flushes buffered records when dropped.
 
 ## Configuration schema
 
-- Top level: `listen` (socket address string), `max_label_bytes`, `[identity]`,
-  `[heartbeat]`, `[password]`, `[logging]`, `[[cluster.nodes]]`.
+- Top level: `listen` (socket address string), `max_label_bytes`,
+  `max_frame_bytes`, `[identity]`, `[heartbeat]`, `[password]`, `[logging]`,
+  `[[cluster.nodes]]`.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
+- `max_frame_bytes`: the largest frame payload the server accepts from a peer,
+  in bytes (`NonZeroU32`, no default). The receiver checks the announced
+  length against it before allocating the payload, so an oversized frame is
+  refused without reading its body.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
 - `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
   (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
@@ -246,6 +251,7 @@ Example:
 ```toml
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
+max_frame_bytes = 1048576
 
 [identity]
 label = "dedicated-1"
@@ -284,6 +290,19 @@ address = "10.0.0.12:7100"
 encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
+
+
+## Framing
+
+Every application message on the wire is a 4-byte unsigned big-endian length
+prefix followed by exactly that many payload bytes (`INT-NET-002`). The prefix
+counts only the bytes after itself (`INT-NET-003`), so a 100-byte payload starts
+with `00 00 00 64`. `src/frame.rs` provides the codec every TCP connection
+will use: the writer emits the prefix and then the payload, and the reader
+checks the announced length against the configured `max_frame_bytes` before
+allocating the payload buffer (`INT-NET-004`), refusing an oversized frame
+without reading its body. A zero-length frame is valid at this layer; the
+message layer decides whether an empty payload is meaningful.
 
 ## Key identity
 
