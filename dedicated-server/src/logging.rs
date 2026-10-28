@@ -33,6 +33,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::LoggingConfig;
+use crate::heartbeat::HeartbeatError;
 use crate::log_file::{LogLimits, RotatingFile};
 use crate::report::StartupError;
 
@@ -78,6 +79,45 @@ const MESSAGE_LOGGING: &str = "logging initialization failed";
 /// Static message for a normal shutdown.
 const MESSAGE_SHUTDOWN: &str = "server stopped";
 
+/// Event type for a storage-node availability change.
+const EVENT_AVAILABILITY: &str = "availability";
+
+/// Event type for a quorum availability change.
+const EVENT_QUORUM: &str = "quorum";
+
+/// Event type for a heartbeat exchange failure.
+const EVENT_HEARTBEAT: &str = "heartbeat";
+
+/// Outcome value for losing availability.
+const OUTCOME_UNAVAILABLE: &str = "unavailable";
+
+/// Outcome value for regaining availability.
+const OUTCOME_AVAILABLE: &str = "available";
+
+/// Outcome value for losing a quorum.
+const OUTCOME_QUORUM_LOST: &str = "lost";
+
+/// Outcome value for regaining a quorum.
+const OUTCOME_QUORUM_RESTORED: &str = "restored";
+
+/// Error code for a heartbeat exchange failure.
+const ERROR_CODE_HEARTBEAT: &str = "heartbeat_error";
+
+/// Static message for a storage node that stopped responding.
+const MESSAGE_NODE_UNAVAILABLE: &str = "storage node is unavailable";
+
+/// Static message for a storage node that responded again.
+const MESSAGE_NODE_AVAILABLE: &str = "storage node is available again";
+
+/// Static message for a heartbeat response naming an unknown node.
+const MESSAGE_HEARTBEAT_UNKNOWN_NODE: &str = "heartbeat response names an unknown storage node";
+
+/// Static message for a heartbeat response with no attempt in flight.
+const MESSAGE_HEARTBEAT_NO_ATTEMPT: &str = "heartbeat response without an attempt in flight";
+
+/// Static message for an invalid cluster node label.
+const MESSAGE_HEARTBEAT_INVALID_LABEL: &str = "cluster node label is empty or repeated";
+
 #[cfg(test)]
 const FIELD_TIMESTAMP: &str = "timestamp";
 #[cfg(test)]
@@ -110,7 +150,9 @@ pub struct LogEvent {
     pub operation: Option<String>,
     /// Peer identity when it has been established.
     pub peer_id: Option<String>,
-    /// Operation outcome, either `success` or `failure`.
+    /// Event-specific outcome: `success` or `failure` for startup and
+    /// shutdown, `available` or `unavailable` for a storage node, and `lost`
+    /// or `restored` for a quorum.
     pub outcome: Option<String>,
     /// Error code when the event reports a failure.
     pub error_code: Option<String>,
@@ -429,6 +471,88 @@ fn startup_failure(error: &StartupError) -> (&'static str, &'static str) {
     }
 }
 
+/// Log that a storage node became unavailable or is available again.
+pub fn node_availability(label: &str, available: bool) {
+    if available {
+        event!(
+            target: COMPONENT,
+            Level::INFO,
+            event = EVENT_AVAILABILITY,
+            peer_id = %label,
+            outcome = OUTCOME_AVAILABLE,
+            message = MESSAGE_NODE_AVAILABLE,
+        );
+    } else {
+        event!(
+            target: COMPONENT,
+            Level::WARN,
+            event = EVENT_AVAILABILITY,
+            peer_id = %label,
+            outcome = OUTCOME_UNAVAILABLE,
+            message = MESSAGE_NODE_UNAVAILABLE,
+        );
+    }
+}
+
+/// Log that the available nodes lost or regained a quorum.
+///
+/// The caller decides whether the counts form a quorum; the message carries
+/// only the available and total counts, never a node label or any other
+/// metadata.
+pub fn quorum_availability(quorum_available: bool, available: usize, total: usize) {
+    let counts = format!("{available} of {total} storage nodes available");
+    if quorum_available {
+        event!(
+            target: COMPONENT,
+            Level::INFO,
+            event = EVENT_QUORUM,
+            outcome = OUTCOME_QUORUM_RESTORED,
+            message = %counts,
+        );
+    } else {
+        event!(
+            target: COMPONENT,
+            Level::WARN,
+            event = EVENT_QUORUM,
+            outcome = OUTCOME_QUORUM_LOST,
+            message = %counts,
+        );
+    }
+}
+
+/// Log a heartbeat exchange failure.
+pub fn heartbeat_error(error: &HeartbeatError) {
+    let (message, peer_id) = heartbeat_failure(error);
+    if let Some(peer_id) = peer_id {
+        event!(
+            target: COMPONENT,
+            Level::WARN,
+            event = EVENT_HEARTBEAT,
+            peer_id = %peer_id,
+            outcome = OUTCOME_FAILURE,
+            error_code = ERROR_CODE_HEARTBEAT,
+            message = message,
+        );
+    } else {
+        event!(
+            target: COMPONENT,
+            Level::WARN,
+            event = EVENT_HEARTBEAT,
+            outcome = OUTCOME_FAILURE,
+            error_code = ERROR_CODE_HEARTBEAT,
+            message = message,
+        );
+    }
+}
+
+fn heartbeat_failure(error: &HeartbeatError) -> (&'static str, Option<&str>) {
+    match error {
+        HeartbeatError::UnknownNode(_) => (MESSAGE_HEARTBEAT_UNKNOWN_NODE, None),
+        HeartbeatError::NoAttemptInFlight(label) => (MESSAGE_HEARTBEAT_NO_ATTEMPT, Some(label)),
+        HeartbeatError::InvalidNodeLabel { .. } => (MESSAGE_HEARTBEAT_INVALID_LABEL, None),
+    }
+}
+
 /// Write one startup failure record directly to stderr.
 ///
 /// This is the bootstrap fallback used while the configured log file is still
@@ -517,14 +641,17 @@ where
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::num::NonZeroU64;
+    use std::num::{NonZeroU32, NonZeroU64};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 
-    use tracing_subscriber::fmt::MakeWriter;
+    use crate::availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
+    use crate::heartbeat::HeartbeatTiming;
 
     use super::*;
+
+    use tracing_subscriber::fmt::MakeWriter;
 
     const TEST_RETENTION_MS: u64 = 604_800_000;
     const TEST_MAX_FILE_AGE_MS: u64 = 86_400_000;
@@ -732,6 +859,198 @@ mod tests {
             .expect("timestamp must be a string");
         assert!(timestamp.ends_with('Z'));
         assert_eq!(timestamp.len(), timestamp_length());
+    }
+
+    #[test]
+    fn node_availability_records_carry_the_peer_and_outcome() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            node_availability("storage-a", false);
+            node_availability("storage-b", true);
+        });
+
+        let output = capture.contents();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+
+        let unavailable = parse(lines[0]);
+        assert_eq!(unavailable[FIELD_EVENT], EVENT_AVAILABILITY);
+        assert_eq!(unavailable[FIELD_LEVEL], "WARN");
+        assert_eq!(unavailable[FIELD_PEER_ID], "storage-a");
+        assert_eq!(unavailable[FIELD_OUTCOME], OUTCOME_UNAVAILABLE);
+        assert_eq!(unavailable[FIELD_MESSAGE], MESSAGE_NODE_UNAVAILABLE);
+
+        let available = parse(lines[1]);
+        assert_eq!(available[FIELD_LEVEL], "INFO");
+        assert_eq!(available[FIELD_PEER_ID], "storage-b");
+        assert_eq!(available[FIELD_OUTCOME], OUTCOME_AVAILABLE);
+        assert_eq!(available[FIELD_MESSAGE], MESSAGE_NODE_AVAILABLE);
+    }
+
+    #[test]
+    fn quorum_availability_records_carry_only_the_counts() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            quorum_availability(false, 1, 3);
+            quorum_availability(true, 2, 3);
+        });
+
+        let output = capture.contents();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+
+        let lost = parse(lines[0]);
+        assert_eq!(lost[FIELD_EVENT], EVENT_QUORUM);
+        assert_eq!(lost[FIELD_LEVEL], "WARN");
+        assert_eq!(lost[FIELD_OUTCOME], OUTCOME_QUORUM_LOST);
+        assert_eq!(lost[FIELD_MESSAGE], "1 of 3 storage nodes available");
+        assert!(lost[FIELD_PEER_ID].is_null(), "no node is named");
+
+        let restored = parse(lines[1]);
+        assert_eq!(restored[FIELD_LEVEL], "INFO");
+        assert_eq!(restored[FIELD_OUTCOME], OUTCOME_QUORUM_RESTORED);
+        assert_eq!(restored[FIELD_MESSAGE], "2 of 3 storage nodes available");
+    }
+
+    #[test]
+    fn heartbeat_errors_are_recorded_with_the_error_code() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            heartbeat_error(&HeartbeatError::NoAttemptInFlight("storage-a".to_owned()));
+        });
+
+        let output = capture.contents();
+        assert_eq!(output.lines().count(), 1);
+        let value = parse(output.trim_end());
+        assert_eq!(value[FIELD_EVENT], EVENT_HEARTBEAT);
+        assert_eq!(value[FIELD_LEVEL], "WARN");
+        assert_eq!(value[FIELD_PEER_ID], "storage-a");
+        assert_eq!(value[FIELD_OUTCOME], OUTCOME_FAILURE);
+        assert_eq!(value[FIELD_ERROR_CODE], ERROR_CODE_HEARTBEAT);
+        assert_eq!(value[FIELD_MESSAGE], MESSAGE_HEARTBEAT_NO_ATTEMPT);
+    }
+
+    #[test]
+    fn an_unknown_heartbeat_label_is_not_recorded_as_a_peer() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+
+        tracing::subscriber::with_default(subscriber, || {
+            heartbeat_error(&HeartbeatError::UnknownNode(
+                "login=alice /etc/passwd".to_owned(),
+            ));
+        });
+
+        let output = capture.contents();
+        let value = parse(output.trim_end());
+        assert_eq!(value[FIELD_ERROR_CODE], ERROR_CODE_HEARTBEAT);
+        assert!(
+            value[FIELD_PEER_ID].is_null(),
+            "a label that is not a configured node must not become a peer id"
+        );
+        assert!(
+            !output.contains("alice"),
+            "no caller-supplied text is logged"
+        );
+        assert!(
+            !output.contains("/etc/passwd"),
+            "no caller-supplied text is logged"
+        );
+    }
+
+    #[test]
+    fn availability_events_are_logged_in_the_reported_order() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+        let events = [
+            AvailabilityEvent::NodeUnavailable {
+                label: "storage-a".to_owned(),
+            },
+            AvailabilityEvent::NodeAvailable {
+                label: "storage-b".to_owned(),
+            },
+            AvailabilityEvent::QuorumLost {
+                available: 1,
+                total: 3,
+            },
+            AvailabilityEvent::QuorumRestored {
+                available: 2,
+                total: 3,
+            },
+        ];
+
+        tracing::subscriber::with_default(subscriber, || log_events(&events));
+
+        let output = capture.contents();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), events.len());
+
+        let unavailable = parse(lines[0]);
+        assert_eq!(unavailable[FIELD_EVENT], EVENT_AVAILABILITY);
+        assert_eq!(unavailable[FIELD_OUTCOME], OUTCOME_UNAVAILABLE);
+        assert_eq!(unavailable[FIELD_PEER_ID], "storage-a");
+
+        let available = parse(lines[1]);
+        assert_eq!(available[FIELD_EVENT], EVENT_AVAILABILITY);
+        assert_eq!(available[FIELD_OUTCOME], OUTCOME_AVAILABLE);
+        assert_eq!(available[FIELD_PEER_ID], "storage-b");
+
+        let lost = parse(lines[2]);
+        assert_eq!(lost[FIELD_EVENT], EVENT_QUORUM);
+        assert_eq!(lost[FIELD_OUTCOME], OUTCOME_QUORUM_LOST);
+        assert_eq!(lost[FIELD_MESSAGE], "1 of 3 storage nodes available");
+
+        let restored = parse(lines[3]);
+        assert_eq!(restored[FIELD_EVENT], EVENT_QUORUM);
+        assert_eq!(restored[FIELD_OUTCOME], OUTCOME_QUORUM_RESTORED);
+        assert_eq!(restored[FIELD_MESSAGE], "2 of 3 storage nodes available");
+    }
+
+    #[test]
+    fn a_rejected_response_logs_one_heartbeat_record_and_a_successful_one_none() {
+        let start = Instant::now();
+        let timing = HeartbeatTiming {
+            interval_ms: NonZeroU64::new(1_000).expect("interval must be non-zero"),
+            timeout_ms: NonZeroU64::new(10).expect("timeout must be non-zero"),
+            miss_threshold: NonZeroU32::new(2).expect("threshold must be non-zero"),
+        };
+        let mut monitor =
+            AvailabilityMonitor::new(&["storage-a"], timing, start).expect("labels must be valid");
+
+        let rejected = CaptureWriter::default();
+        let rejected_subscriber = subscriber(rejected.clone());
+        tracing::subscriber::with_default(rejected_subscriber, || {
+            assert!(
+                monitor.record_response("storage-a", start).is_err(),
+                "no attempt is in flight yet"
+            );
+        });
+        let output = rejected.contents();
+        assert_eq!(output.lines().count(), 1, "exactly one failure record");
+        let value = parse(output.trim_end());
+        assert_eq!(value[FIELD_EVENT], EVENT_HEARTBEAT);
+        assert_eq!(value[FIELD_ERROR_CODE], ERROR_CODE_HEARTBEAT);
+        assert_eq!(value[FIELD_OUTCOME], OUTCOME_FAILURE);
+
+        let accepted = CaptureWriter::default();
+        let accepted_subscriber = subscriber(accepted.clone());
+        tracing::subscriber::with_default(accepted_subscriber, || {
+            monitor.poll(start);
+            let events = monitor
+                .record_response("storage-a", start)
+                .expect("the node must have an attempt in flight");
+            assert!(events.is_empty());
+        });
+        assert!(
+            accepted.contents().is_empty(),
+            "a successful heartbeat is not recorded"
+        );
     }
 
     #[test]
