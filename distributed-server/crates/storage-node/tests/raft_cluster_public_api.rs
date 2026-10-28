@@ -11,6 +11,10 @@
 //! stopped, the remaining quorum commits another version, and the restarted node
 //! catches up the committed entries from its persisted state directory.
 //!
+//! A committed version's blob replica set is replaced through the leader, and
+//! the update reaches every node's applied catalog; an update for an unknown
+//! upload id leaves the catalog unchanged.
+//!
 //! Restart recovery is covered separately with a single-voter cluster: the
 //! persisted catalog is restored from the node's data directory and a repeated
 //! bootstrap command is rejected.
@@ -21,6 +25,7 @@
 //! `NFR-MAINT-006 / 1`.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -225,6 +230,37 @@ async fn wait_for_committed_version(
     }
 }
 
+/// Waits until every node applies `replicas` to the version for `upload_id`
+/// without changing the committed record.
+async fn wait_for_replica_set(
+    nodes: &BTreeMap<u64, Arc<RaftNode>>,
+    version: &CommittedVersion,
+    replicas: &BTreeSet<u64>,
+) {
+    let upload_id = version.record.upload_id;
+    let deadline = tokio::time::Instant::now() + REPLICATION_BUDGET;
+    loop {
+        let mut updated = true;
+        for node in nodes.values() {
+            let versions = node.committed_versions().await;
+            let applied = versions.get(&upload_id).is_some_and(|committed| {
+                committed.record == version.record && committed.replicas == *replicas
+            });
+            if !applied {
+                updated = false;
+            }
+        }
+        if updated {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the blob replica set of version {upload_id} did not reach every node's catalog in time"
+        );
+        tokio::time::sleep(CATALOG_POLL_INTERVAL).await;
+    }
+}
+
 /// Waits until the node reports an applied log index of at least `minimum`.
 async fn wait_for_applied(node: &RaftNode, minimum: u64, budget: Duration) {
     let deadline = tokio::time::Instant::now() + budget;
@@ -309,6 +345,79 @@ async fn elects_a_leader_and_replicates_a_committed_version() {
     assert_eq!(response.upload_id, Some(version.record.upload_id));
 
     wait_for_committed_version(&cluster.nodes, &version).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn updates_the_blob_replica_set_for_a_committed_version() {
+    let cluster = start_cluster().await;
+    let leader = {
+        let bootstrap = cluster
+            .nodes
+            .get(&BOOTSTRAP_NODE_ID)
+            .expect("the bootstrap node is part of the cluster");
+        bootstrap
+            .initialize(cluster_membership())
+            .await
+            .expect("the explicit bootstrap command initializes the cluster");
+        bootstrap
+            .wait_for_leader(ELECTION_BUDGET)
+            .await
+            .expect("a leader is elected within the election budget")
+    };
+    let leader_node = cluster
+        .nodes
+        .get(&leader)
+        .expect("the elected leader belongs to the cluster");
+
+    let upload_id = UploadId::from_bytes([0x66; UPLOAD_ID_LEN]);
+    let version = committed_version(upload_id, b"replicated payload", &[1, 2]);
+    let response = leader_node
+        .client_write(RaftRequest::CommitVersion(version.clone()))
+        .await
+        .expect("the leader commits the version through a quorum");
+    assert_eq!(response.upload_id, Some(upload_id));
+    wait_for_committed_version(&cluster.nodes, &version).await;
+
+    let expanded_replicas = BTreeSet::from([1, 2, 3]);
+    let response = leader_node
+        .client_write(RaftRequest::UpdateReplicas {
+            upload_id,
+            replicas: expanded_replicas.clone(),
+        })
+        .await
+        .expect("the leader updates the blob replica set through a quorum");
+    assert_eq!(
+        response.upload_id,
+        Some(upload_id),
+        "the update response names the committed version it changed"
+    );
+    wait_for_replica_set(&cluster.nodes, &version, &expanded_replicas).await;
+
+    let unknown_id = UploadId::from_bytes([0x77; UPLOAD_ID_LEN]);
+    let response = leader_node
+        .client_write(RaftRequest::UpdateReplicas {
+            upload_id: unknown_id,
+            replicas: BTreeSet::from([1]),
+        })
+        .await
+        .expect("the leader applies an update for an unknown upload id");
+    assert_eq!(
+        response.upload_id, None,
+        "an update for an unknown upload id reports no committed version"
+    );
+    let applied = leader_node
+        .last_applied_index()
+        .expect("the unknown-id entry is applied before the absence check");
+    for node in cluster.nodes.values() {
+        wait_for_applied(node, applied, ELECTION_BUDGET).await;
+    }
+    for node in cluster.nodes.values() {
+        let versions = node.committed_versions().await;
+        assert!(
+            !versions.contains_key(&unknown_id),
+            "an update for an unknown upload id must not create a catalog entry"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

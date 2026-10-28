@@ -337,6 +337,21 @@ impl RaftStorage<RaftConfig> for MemStore {
                         upload_id: Some(upload_id),
                     });
                 }
+                EntryPayload::Normal(RaftRequest::UpdateReplicas {
+                    upload_id,
+                    replicas,
+                }) => {
+                    let updated = match inner.catalog.get_mut(upload_id) {
+                        Some(version) => {
+                            version.replicas = replicas.clone();
+                            true
+                        }
+                        None => false,
+                    };
+                    responses.push(RaftResponse {
+                        upload_id: updated.then_some(*upload_id),
+                    });
+                }
                 EntryPayload::Blank => responses.push(RaftResponse { upload_id: None }),
                 EntryPayload::Membership(membership) => {
                     inner.last_membership =

@@ -103,9 +103,11 @@ repeated bootstrap command. The applied Raft catalog stores the full version
 metadata (upload id, login, original file name, original and compressed byte
 sizes, SHA-256 of the original bytes, capture/creation time, and acceptance
 time) together with the
-set of storage nodes that durably hold the blob. The persisted Raft state file
-records a format version. `raft_cluster_public_api.rs` covers restart recovery
-and a returning node catching up committed entries. The connection
+set of storage nodes that durably hold the blob. A committed version's blob
+replica set can be replaced through a Raft update, and the new set is applied on
+every node with the catalog. The persisted Raft state file records a format
+version. `raft_cluster_public_api.rs` covers restart recovery, blob replica-set
+updates, and a returning node catching up committed entries. The connection
 actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
