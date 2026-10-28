@@ -73,7 +73,7 @@ impl fmt::Debug for CommittedVersion {
 pub enum RaftRequest {
     /// Records a committed upload version with its blob replica set.
     CommitVersion(CommittedVersion),
-    /// Replaces the set of storage nodes that durably hold the version's blob.
+    /// Replaces the set of storage nodes that durably hold the version's blob; an unknown upload id is a no-op reported as `None`.
     UpdateReplicas {
         upload_id: UploadId,
         replicas: BTreeSet<NodeId>,
@@ -82,7 +82,7 @@ pub enum RaftRequest {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct RaftResponse {
-    /// The version recorded by this entry, or `None` for non-application entries.
+    /// The version affected by this entry, or `None` when the entry did not change a catalog version.
     pub upload_id: Option<UploadId>,
 }
 

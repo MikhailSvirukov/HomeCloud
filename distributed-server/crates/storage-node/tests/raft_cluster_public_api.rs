@@ -405,6 +405,12 @@ async fn updates_the_blob_replica_set_for_a_committed_version() {
         response.upload_id, None,
         "an update for an unknown upload id reports no committed version"
     );
+    let applied = leader_node
+        .last_applied_index()
+        .expect("the unknown-id entry is applied before the absence check");
+    for node in cluster.nodes.values() {
+        wait_for_applied(node, applied, ELECTION_BUDGET).await;
+    }
     for node in cluster.nodes.values() {
         let versions = node.committed_versions().await;
         assert!(
