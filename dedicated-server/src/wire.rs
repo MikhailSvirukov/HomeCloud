@@ -2,17 +2,20 @@
 //!
 //! The protocol fixes every header as a positional CBOR array with explicit
 //! types, lengths and null rules (`INT-NET-047`, `INT-NET-050`). This module
-//! encodes and decodes the three client-side structures the server needs: the
-//! external header (`INT-NET-050 / 4`), the client logical header
-//! (`INT-NET-051 / 3`) and the result envelope (`INT-NET-061 / 1`).
+//! encodes and decodes the four structures the server needs: the external
+//! header (`INT-NET-050 / 4`), the client logical header (`INT-NET-051 / 3`),
+//! the result envelope of a server response (`INT-NET-061 / 1`) and the
+//! inter-server envelope `[message_type, args]` (`INT-NET-072 / 2`) with its
+//! heartbeat request and response (`INT-NET-073 / 5`) and Raft RPC
+//! (`INT-NET-074 / 2`) messages.
 //!
 //! Encoding uses `ciborium`, which writes definite-length arrays, text strings
 //! and minimal integers, so the output is the deterministic minimal
 //! representation the requirements demand (`INT-NET-006 / 2`,
-//! `INT-NET-055 / 2`). Decoding is strict: a wrong element count, a wrong CBOR
-//! type, an unknown operation code, a bad byte-string length, a broken null
-//! rule or trailing bytes are rejected (`INT-NET-038 / 2`).
-
+//! `INT-NET-055 / 2`). Decoding is strict: a wrong element count or CBOR type,
+//! a reserved or unknown message type, an unknown operation code, a wrong
+//! argument count, type or value, a bad byte-string length, a broken null rule
+//! or trailing bytes are rejected (`INT-NET-038 / 2`, `INT-NET-072 / 2`).
 use std::fmt;
 use std::num::NonZeroU32;
 
@@ -1742,5 +1745,47 @@ mod tests {
                 message
             );
         }
+    }
+
+    #[test]
+    fn an_out_of_range_timestamp_is_rejected() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Array(vec![
+                Value::Integer(0.into()),
+                Value::Integer(u64::from(u32::MAX).into()),
+                Value::Null,
+            ]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes),
+            Err(WireError::MessageArgumentOutOfRange {
+                message_type: MessageType::HeartbeatRequest,
+                index: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn a_heartbeat_argument_with_the_wrong_cbor_type_is_rejected() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Array(vec![
+                Value::Text("seven".to_owned()),
+                Value::Integer(0.into()),
+                Value::Null,
+            ]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes),
+            Err(WireError::WrongMessageArgumentType {
+                message_type: MessageType::HeartbeatRequest,
+                index: 0
+            })
+        ));
     }
 }

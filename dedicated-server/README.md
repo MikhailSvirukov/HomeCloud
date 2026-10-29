@@ -397,7 +397,8 @@ result envelope (`INT-NET-061`) and the inter-server envelope `[message_type,
 args]` with its heartbeat request, heartbeat response and Raft RPC messages
 (`INT-NET-072`-`INT-NET-075`). Encoding is the deterministic minimal
 representation, and decoding rejects a wrong element count, type, byte-string
-length, null rule, unknown operation code or trailing bytes.
+length or null rule, an unknown operation code, a reserved or unknown message
+type, a wrong argument count, type or value, and trailing bytes.
 
 ## Key identity
 
