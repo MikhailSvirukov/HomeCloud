@@ -62,13 +62,18 @@ clients; it does not relay Raft or blob traffic.
   SHA-256 before syncing the file and its parent directory), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
-  persistence), `src/message.rs` (inter-server `[message_type,
+  persistence), `src/frame_sequence.rs` (contiguous client frame-number
+  validation: the sequence starts at `0`, advances by one, and never wraps
+  after `u32::MAX`), `src/version_negotiation.rs` (CBOR codec for supported
+  version lists and negotiation that selects protocol version `1`),
+  `src/message.rs` (inter-server `[message_type,
   args]` envelope with `message_type = 3` for Raft RPCs), `src/signing.rs`
   (Ed25519 message signing/verification with a redacted signing key), and
   `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
   and AES-256-GCM).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
+  `frame_validation_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
   `keys_public_api.rs`, `content_hash_public_api.rs`,
@@ -229,6 +234,24 @@ code `0` and `[snapshot_token, next_cursor, entries]`; an invalid cursor uses
 `0x0004_0001` with an empty argument array, and an unknown or expired snapshot
 uses `0x0004_0002` with an empty argument array. Credential checks and transport
 handling are separate from the handler.
+
+## Frame validation and version negotiation
+
+Frame numbers of one client sequence start at `0`; each following frame increases
+the number by exactly one. A gap, a repeat, or a number after `u32::MAX` is
+rejected before the frame is processed, so a sequence never wraps around and the
+`uint32` space is finite. The check is stateful per sequence and does not accept a
+rejected number as if it had advanced the sequence.
+
+Connection negotiation uses the one-element version list `[1]`
+(`SUPPORTED_VERSION` is `1`). The list encodes as the CBOR array `[1]`
+(`0x81 0x01`). A well-formed remote list that contains `1` selects version `1`,
+even when it also offers other versions. A list with no version `1`, including an
+empty list, is refused as having no common version; the connection is closed
+without processing application requests. The list decoder rejects values that are
+not a CBOR array, elements that are not `uint32` values, and trailing bytes. It
+keeps well-formed entries for other version numbers, so support is decided by
+negotiation rather than by the decoder.
 
 ## Metrics
 
