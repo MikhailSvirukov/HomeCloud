@@ -350,7 +350,15 @@ struct Writer {
 impl Writer {
     /// Drains events until every sender is dropped, counting persistence failures.
     async fn run(mut self, mut receiver: mpsc::Receiver<LogEvent>) {
-        if self.length > self.config.max_file_bytes.get() && self.rotate().await.is_err() {
+        let current_age_expired = tokio::fs::metadata(&self.config.path)
+            .await
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age > self.config.max_file_age);
+        if (self.length > self.config.max_file_bytes.get() || current_age_expired)
+            && self.rotate().await.is_err()
+        {
             self.write_errors.fetch_add(1, Ordering::Relaxed);
         }
         if self.prune().await.is_err() {

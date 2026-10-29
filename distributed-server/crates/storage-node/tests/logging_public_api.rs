@@ -323,6 +323,65 @@ async fn enforces_the_configured_file_age() {
 }
 
 #[tokio::test]
+async fn rotates_an_aged_current_file_at_startup() {
+    const MAX_FILE_AGE_SECONDS: u64 = 1;
+
+    let directory = TempDir::new().expect("test temp dir is created");
+    let path = directory.path().join(EVENT_FILE);
+    let config = log_config(path.clone(), 16, 4096, 65536, MAX_FILE_AGE_SECONDS);
+
+    let logging = start_logging(config.clone()).expect("structured logging starts");
+    let logger = logging.logger().clone();
+    logger.log(LogEvent::request_finished(
+        OperationType::Upload,
+        "req-old",
+        Outcome::Success,
+        1,
+        None,
+        None,
+    ));
+    drop(logger);
+    logging.shutdown().await;
+
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+
+    let logging = start_logging(config).expect("structured logging restarts");
+    let logger = logging.logger().clone();
+    logger.log(LogEvent::request_finished(
+        OperationType::Upload,
+        "req-new",
+        Outcome::Success,
+        2,
+        None,
+        None,
+    ));
+    drop(logger);
+    logging.shutdown().await;
+
+    let current = records(&path);
+    assert_eq!(
+        current.len(),
+        1,
+        "the aged current file is rotated before the new event"
+    );
+    assert_eq!(current[0]["request_id"].as_str(), Some("req-new"));
+
+    let rotated = fs::read_dir(directory.path())
+        .expect("the log directory is readable")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(ROTATED_PREFIX)
+        })
+        .expect("the aged current file was rotated");
+    let rotated_records = records(&rotated.path());
+    assert_eq!(rotated_records.len(), 1);
+    assert_eq!(rotated_records[0]["request_id"].as_str(), Some("req-old"));
+}
+
+#[tokio::test]
 async fn configures_the_log_file_path() {
     let directory = TempDir::new().expect("test temp dir is created");
     let path = directory.path().join("sub").join(EVENT_FILE);
