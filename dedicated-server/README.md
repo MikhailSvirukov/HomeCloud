@@ -400,6 +400,12 @@ representation, and decoding rejects a wrong element count, type, byte-string
 length or null rule, an unknown operation code, a reserved or unknown message
 type, a wrong argument count, type or value, and trailing bytes.
 
+`src/answers.rs` builds the two successful answers the server owes a client: the
+registration answer with only the assigned installation identifier
+(`INT-NET-059`) and the topology answer with the manifest nodes in order and
+canonical hosts (`INT-NET-070`). The topology answer also has a strict decoder,
+so the schema is proven from both sides.
+
 ## Key identity
 
 `src/identity.rs` loads the server's own key pair for startup. The identity is

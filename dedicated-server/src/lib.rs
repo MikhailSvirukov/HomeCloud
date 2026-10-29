@@ -5,6 +5,7 @@
 //! identity loading, metrics, framing and the CBOR wire structures; application
 //! networking and request handling are still to come.
 
+mod answers;
 mod availability;
 mod clock;
 mod config;
@@ -21,6 +22,10 @@ mod report;
 mod topology;
 mod wire;
 
+pub use answers::{
+    decode_topology_answer, registration_answer, topology_answer, TopologyEntry,
+    TOPOLOGY_ENTRY_ELEMENTS,
+};
 pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
