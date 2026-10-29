@@ -30,8 +30,8 @@ private const val SETUP_CONTENT_SDK_INT = 33
 /**
  * Renders [SetupContent] on the JVM and asserts what the user sees and what the surface reports for
  * `FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1` and `FR-AND-043 / 1`: the labelled inputs,
- * the masked password, the single mode choice, the inline host error, and the prerequisite text
- * that does not block submission of a valid draft.
+ * the masked password, the single mode choice, the inline host error, the save failure line, and the
+ * prerequisite text that does not block submission of a valid draft.
  *
  * Conscrypt is turned off because this test never touches TLS and loading its native library is
  * impossible on a `noexec` temp filesystem.
@@ -155,6 +155,20 @@ class SetupContentTest {
         composeRule.onNodeWithText(authenticationMissing()).performScrollTo().assertIsDisplayed()
     }
 
+    @Test
+    fun `save failure shows the save error message`() {
+        render(SetupStateMachine.saveFailed(stateFor(validDraft(), unmetPrerequisites())))
+
+        composeRule.onNodeWithText(saveError()).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `state without a save failure hides the save error message`() {
+        render(stateFor(validDraft(), unmetPrerequisites()))
+
+        composeRule.onAllNodesWithText(saveError()).assertCountEquals(0)
+    }
+
     private fun render(initialState: SetupState) {
         val state = mutableStateOf(initialState)
         composeRule.setContent {
@@ -207,6 +221,8 @@ class SetupContentTest {
     private fun connectLabel(): String = string(R.string.setup_mode_connect)
 
     private fun submitAction(): String = string(R.string.setup_submit_action)
+
+    private fun saveError(): String = string(R.string.setup_save_error_message)
 
     private fun prerequisitesTitle(): String = string(R.string.setup_prerequisites_title)
 
