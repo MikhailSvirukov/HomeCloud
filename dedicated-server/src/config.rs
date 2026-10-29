@@ -104,7 +104,28 @@ pub(crate) struct PasswordConfig {
 #[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     /// Address and TCP port the metrics endpoint binds to.
-    pub(crate) bind: SocketAddr,
+    pub bind: SocketAddr,
+    /// TLS material served and advertised by the endpoint.
+    ///
+    /// Required when [`MetricsConfig::bind`] is not a loopback address; the
+    /// endpoint never runs unencrypted outside the host (`NFR-OBS-007`).
+    pub tls: Option<MetricsTlsConfig>,
+}
+
+/// TLS material for the metrics endpoint (`CFG-OBS-004`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsTlsConfig {
+    /// Server certificate chain served by the endpoint.
+    pub certificate_path: PathBuf,
+    /// Private key of the server certificate.
+    pub private_key_path: PathBuf,
+    /// Trust material the collecting client uses to verify the server.
+    ///
+    /// The server validates that the file exists and contains a PEM
+    /// certificate so the operator cannot publish an endpoint whose collector
+    /// has nothing to verify against.
+    pub trust_path: PathBuf,
 }
 
 /// Structured log file configuration.
@@ -264,6 +285,18 @@ pub enum ConfigError {
         /// Configured metrics bind address.
         bind: SocketAddr,
     },
+    /// [`MetricsConfig::bind`] is not a loopback address and no TLS is configured.
+    #[error("metrics.bind ({bind}) is not loopback; metrics.tls is required")]
+    MetricsTlsRequired {
+        /// Configured metrics bind address.
+        bind: SocketAddr,
+    },
+    /// A metrics TLS path is empty.
+    #[error("metrics.tls.{field} must not be empty")]
+    MetricsEmptyTlsPath {
+        /// Offending TLS path field.
+        field: &'static str,
+    },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
@@ -298,12 +331,6 @@ pub enum ConfigError {
         max_total_size_bytes: u64,
         /// Configured maximum size of one log file.
         max_file_size_bytes: u64,
-    },
-    /// [`MetricsConfig::bind`] is not a loopback address.
-    #[error("metrics.bind ({bind}) must be a loopback address")]
-    MetricsBindNotLoopback {
-        /// Configured metrics bind address.
-        bind: SocketAddr,
     },
 }
 
@@ -378,11 +405,32 @@ impl ServerConfig {
 
 /// The metrics endpoint must stay on loopback until TLS support is configured.
 fn validate_metrics(metrics: &MetricsConfig) -> Result<()> {
-    if !metrics.bind.ip().is_loopback() {
-        return Err(ConfigError::MetricsBindNotLoopback { bind: metrics.bind });
+    if !metrics.bind.ip().is_loopback() && metrics.tls.is_none() {
+        return Err(ConfigError::MetricsTlsRequired { bind: metrics.bind });
     }
+    validate_metrics_port(metrics).and_then(|()| validate_metrics_tls(metrics))
+}
+
+fn validate_metrics_port(metrics: &MetricsConfig) -> Result<()> {
     if metrics.bind.port() == 0 {
-        return Err(ConfigError::MetricsZeroPort { bind: metrics.bind });
+        Err(ConfigError::MetricsZeroPort { bind: metrics.bind })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_metrics_tls(metrics: &MetricsConfig) -> Result<()> {
+    let Some(tls) = metrics.tls.as_ref() else {
+        return Ok(());
+    };
+    for (field, path) in [
+        ("certificate_path", &tls.certificate_path),
+        ("private_key_path", &tls.private_key_path),
+        ("trust_path", &tls.trust_path),
+    ] {
+        if path.as_os_str().is_empty() {
+            return Err(ConfigError::MetricsEmptyTlsPath { field });
+        }
     }
     Ok(())
 }
@@ -703,12 +751,37 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_non_loopback_metrics_bind() {
+    fn rejects_a_non_loopback_metrics_bind_without_tls() {
         let document = VALID_SERVER.replace("bind = \"127.0.0.1:9101\"", "bind = \"0.0.0.0:9101\"");
 
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
-            Err(ConfigError::MetricsBindNotLoopback { .. })
+            Err(ConfigError::MetricsTlsRequired { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_a_non_loopback_metrics_bind_with_tls() {
+        let document = VALID_SERVER.replace(
+            "bind = \"127.0.0.1:9101\"",
+            "bind = \"0.0.0.0:9101\"\n\n[metrics.tls]\ncertificate_path = \"/etc/homecloud/metrics/server.crt\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
+        );
+
+        assert!(ServerConfig::from_toml_str(&document).is_ok());
+    }
+
+    #[test]
+    fn rejects_an_empty_metrics_tls_path() {
+        let document = VALID_SERVER.replace(
+            "bind = \"127.0.0.1:9101\"",
+            "bind = \"127.0.0.1:9101\"\n\n[metrics.tls]\ncertificate_path = \"\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
+        );
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsEmptyTlsPath {
+                field: "certificate_path"
+            })
         ));
     }
 

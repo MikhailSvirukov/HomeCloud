@@ -252,10 +252,14 @@ for the whole process and flushes buffered records when dropped.
   free space beyond `max_total_size_bytes` in the log directory for the active
   file and filesystem overhead.
 - `metrics` sets `bind`, the address and TCP port of the Prometheus metrics
-  endpoint (for example `127.0.0.1:9101`). It is required. The address must be
-  a loopback address with a non-zero port until TLS support lands; a
-  non-loopback bind or port `0` is rejected while loading the configuration, so
-  the endpoint is never exposed without TLS and always has a known port.
+  endpoint (for example `127.0.0.1:9101`), and an optional `[metrics.tls]`
+  section with `certificate_path`, `private_key_path` and `trust_path`. It is
+  required and always needs a non-zero port. A loopback `bind` may use plain
+  HTTP; a non-loopback `bind` requires `[metrics.tls]`, otherwise loading the
+  configuration fails, so the endpoint is never exposed without TLS. The trust
+  material is the certificate or CA the collecting client verifies the server
+  against; the server checks at startup that all three TLS files exist and
+  contain usable PEM material.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -325,10 +329,17 @@ the application TCP protocol.
   one at a time and every response sends `Connection: close`. The read and the
   write each use the five-second socket timeout, so a slow client cannot pin a
   worker for more than the request read plus the response write.
-- A non-loopback bind is rejected while loading the configuration, because
-  `NFR-OBS-007` requires TLS for a non-local endpoint and this version does not
-  serve TLS yet. The endpoint therefore never runs unencrypted outside the
-  host.
+- A loopback `bind` may serve plain HTTP; any non-loopback `bind` must
+  configure `[metrics.tls]` and is then served over HTTPS with that certificate
+  (`NFR-OBS-007`, `CFG-OBS-004`). A non-loopback bind without TLS is rejected
+  while loading the configuration, so the endpoint never runs unencrypted
+  outside the host. The collecting client verifies the server against the
+  configured trust material.
+
+With TLS configured, the endpoint serves HTTPS on the same path and with the
+same exposition. An unreadable certificate, private key or trust file, a file
+with no usable PEM material, or a certificate and key that do not match fails
+the startup with the `metrics_error` code.
 
 Every label value is owned by the registry, so a scrape can never create a new
 one (`NFR-OBS-008`):

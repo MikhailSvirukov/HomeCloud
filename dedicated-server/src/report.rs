@@ -80,9 +80,9 @@ impl Startup {
             .collect()
     }
 
-    /// Address the metrics endpoint binds to.
-    pub fn metrics_bind(&self) -> std::net::SocketAddr {
-        self.config.metrics.bind
+    /// Prometheus metrics endpoint configuration.
+    pub fn metrics(&self) -> &crate::config::MetricsConfig {
+        &self.config.metrics
     }
 
     /// One-line summary of the configuration and identity the server started with.

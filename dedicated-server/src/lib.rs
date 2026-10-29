@@ -34,7 +34,7 @@ pub use logging::{
     startup_failed, startup_failed_to_stderr, LogError, LogGuard,
 };
 pub use metrics::{Metrics, Operation, CONTENT_TYPE};
-pub use metrics_server::{start as start_metrics_server, MetricsServer, METRICS_PATH};
+pub use metrics_server::{start as start_metrics_server, MetricsServer, TlsPaths, METRICS_PATH};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
     Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,
