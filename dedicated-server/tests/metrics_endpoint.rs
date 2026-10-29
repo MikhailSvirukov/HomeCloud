@@ -1,9 +1,10 @@
-//! Integration test for the Prometheus metrics endpoint and the run loop.
+//! Integration tests for the Prometheus metrics endpoint and the run loop.
 //!
-//! The test starts the compiled binary with a loopback metrics bind, scrapes
-//! `GET /metrics` while the process runs, stops it with `SIGTERM` and checks
-//! the shutdown record. The exposition itself is unit-tested in `metrics.rs`;
-//! this file proves the endpoint, the configuration and the run loop.
+//! The tests start the compiled binary with a loopback metrics bind, scrape
+//! `GET /metrics` while the process runs, stop it with `SIGTERM` and check the
+//! shutdown record. The exposition content is unit-tested in `metrics.rs`; this
+//! file proves the endpoint, the configuration, the run loop and the failure
+//! paths.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -31,7 +32,7 @@ const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
 const LABEL: &str = "dedicated-1";
-/// Upper bound for starting the server and for a scrape.
+/// Upper bound for starting the server, a scrape and a clean exit.
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Owns a per-test temporary directory and removes it on drop.
@@ -61,14 +62,70 @@ impl Drop for TempDir {
     }
 }
 
-/// Reserve a loopback port and return it, releasing it for the server.
-fn free_port() -> u16 {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").expect("an ephemeral loopback port must be available");
-    listener
-        .local_addr()
-        .expect("the local address must exist")
-        .port()
+/// A running server process that is killed and reaped if a test panics.
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    fn spawn(config: &Path) -> Self {
+        let child = Command::new(BINARY)
+            .env(CONFIG_PATH_ENV, config)
+            .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("dedicated-server binary must start");
+        Self { child: Some(child) }
+    }
+
+    fn child(&mut self) -> &mut Child {
+        self.child.as_mut().expect("the child must be alive")
+    }
+
+    /// Send `SIGTERM`, wait at most [`TIMEOUT`] for the process and collect it.
+    fn terminate(mut self) -> Output {
+        let pid = self.child().id().to_string();
+        let signal = Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("kill must run");
+        assert!(signal.success(), "SIGTERM must be delivered");
+
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let exited = self
+                .child()
+                .try_wait()
+                .expect("the child status must be readable")
+                .is_some();
+            if exited {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child().kill();
+                let _ = self.child().wait();
+                panic!("the server did not stop within {TIMEOUT:?} after SIGTERM");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        self.child
+            .take()
+            .expect("the child must be alive")
+            .wait_with_output()
+            .expect("the server output must be collected")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// Write a configuration for the given log path and metrics bind.
@@ -92,25 +149,13 @@ fn write_config(dir: &TempDir, log: &Path, metrics_bind: &str) -> PathBuf {
     path
 }
 
-/// Spawn the binary with the configuration path in the environment.
-fn spawn(config: &Path) -> Child {
-    Command::new(BINARY)
-        .env(CONFIG_PATH_ENV, config)
-        .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("dedicated-server binary must start")
-}
-
-/// Send `SIGTERM` to a child process.
-fn terminate(child: &Child) {
-    let status = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status()
-        .expect("kill must run");
-    assert!(status.success(), "SIGTERM must be delivered");
+/// Reserve a loopback port for the metrics endpoint.
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral loopback port must be available")
+        .local_addr()
+        .expect("the local address must exist")
+        .port()
 }
 
 /// Scrape `GET /metrics` and return the raw response.
@@ -124,14 +169,21 @@ fn scrape(port: u16) -> std::io::Result<String> {
     Ok(response)
 }
 
-/// Scrape until the server answers `200`, or fail after the timeout.
-fn wait_for_metrics(port: u16) -> String {
+/// Scrape until the server answers `200`, failing fast if the child exits.
+fn wait_for_metrics(guard: &mut ChildGuard, port: u16) -> String {
     let deadline = Instant::now() + TIMEOUT;
     loop {
         if let Ok(response) = scrape(port) {
             if response.starts_with("HTTP/1.1 200 OK") {
                 return response;
             }
+        }
+        if let Some(status) = guard
+            .child()
+            .try_wait()
+            .expect("the child status must be readable")
+        {
+            panic!("the server exited before the endpoint answered: {status}");
         }
         assert!(
             Instant::now() < deadline,
@@ -151,6 +203,66 @@ fn log_events(path: &Path) -> Vec<Value> {
         .collect()
 }
 
+fn is_metric_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_' || first == ':')
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == ':'
+        })
+}
+
+fn is_label_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+/// Assert that the body is a parseable Prometheus text exposition.
+fn assert_parseable_exposition(body: &str) {
+    for line in body.lines().filter(|line| !line.is_empty()) {
+        if line.starts_with('#') {
+            continue;
+        }
+        let (series, value) = line
+            .rsplit_once(' ')
+            .unwrap_or_else(|| panic!("metric line must carry a value: {line}"));
+        value
+            .parse::<f64>()
+            .unwrap_or_else(|_| panic!("metric value must be a number: {line}"));
+
+        let name = series.split('{').next().unwrap_or_default();
+        assert!(is_metric_name(name), "invalid metric name in: {line}");
+
+        if let Some(labels) = series.strip_prefix(name) {
+            if !labels.is_empty() {
+                let labels = labels
+                    .strip_prefix('{')
+                    .and_then(|labels| labels.strip_suffix('}'))
+                    .unwrap_or_else(|| panic!("invalid label set in: {line}"));
+                for pair in labels.split(',') {
+                    let (key, value) = pair
+                        .split_once('=')
+                        .unwrap_or_else(|| panic!("invalid label in: {line}"));
+                    assert!(is_label_name(key), "invalid label name in: {line}");
+                    assert!(
+                        value.starts_with('"') && value.ends_with('"') && value.len() >= 2,
+                        "label value must be quoted in: {line}"
+                    );
+                }
+            }
+        }
+    }
+
+    assert!(
+        body.contains("le=\"+Inf\""),
+        "the histogram must render its +Inf bucket"
+    );
+    assert!(
+        body.contains("_sum{") && body.contains("_count{"),
+        "the histogram must render its sum and count"
+    );
+}
+
 #[test]
 fn the_running_server_serves_metrics_and_stops_on_sigterm() {
     let dir = TempDir::new("scrape");
@@ -158,10 +270,15 @@ fn the_running_server_serves_metrics_and_stops_on_sigterm() {
     let port = free_port();
     let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
 
-    let child = spawn(&config);
-    let response = wait_for_metrics(port);
+    let mut guard = ChildGuard::spawn(&config);
+    let response = wait_for_metrics(&mut guard, port);
 
     assert!(response.contains("Content-Type: text/plain; version=0.0.4; charset=utf-8"));
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .expect("the response must carry a body");
+    assert_parseable_exposition(body);
     for expected in [
         "homecloud_dedicated_up 1",
         "homecloud_dedicated_node_available{node=\"storage-1\"} 1",
@@ -182,8 +299,7 @@ fn the_running_server_serves_metrics_and_stops_on_sigterm() {
         "labels must not carry user-unique values: {response}"
     );
 
-    terminate(&child);
-    let output: Output = child.wait_with_output().expect("the server must exit");
+    let output = guard.terminate();
     assert!(
         output.status.success(),
         "the server must exit cleanly, stderr: {}",
@@ -194,6 +310,35 @@ fn the_running_server_serves_metrics_and_stops_on_sigterm() {
     assert_eq!(events.len(), 2, "log events: {events:?}");
     assert_eq!(events[0]["event"], "startup");
     assert_eq!(events[1]["event"], "shutdown");
+}
+
+#[test]
+fn an_occupied_metrics_port_is_a_metrics_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("the port must be reserved");
+    let port = listener
+        .local_addr()
+        .expect("the local address must exist")
+        .port();
+
+    let dir = TempDir::new("occupied");
+    let log = dir.file("dedicated-server.log");
+    let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
+
+    let output = Command::new(BINARY)
+        .env(CONFIG_PATH_ENV, &config)
+        .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("dedicated-server binary must run");
+
+    assert_eq!(output.status.code(), Some(1), "the start must fail");
+    let events = log_events(&log);
+    let failure = events.last().expect("a failure record must be written");
+    assert_eq!(failure["event"], "startup");
+    assert_eq!(failure["outcome"], "failure");
+    assert_eq!(failure["error_code"], "metrics_error");
 }
 
 #[test]

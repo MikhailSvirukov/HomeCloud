@@ -2,21 +2,25 @@
 //!
 //! Only `GET /metrics` is served. The endpoint is a separate monitoring
 //! interface and does not replace or share the application TCP protocol
-//! (`NFR-OBS-006`). Each connection has a bounded read, a short timeout and a
-//! `Connection: close` response, so a slow client cannot pin a worker and no
-//! keep-alive state is kept.
+//! (`NFR-OBS-006`). A request is read with one bounded read under one timeout,
+//! connections are handled sequentially and every response closes the
+//! connection, so a slow client cannot pin a worker indefinitely and the
+//! listener never accumulates threads or descriptors.
 
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Maximum number of request bytes read from one connection.
-const MAX_REQUEST_BYTES: u64 = 8 * 1024;
+const MAX_REQUEST_BYTES: usize = 8 * 1024;
 
 /// Read and write timeout for a single connection.
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Pause after an accept error so the listener cannot spin.
+const ACCEPT_ERROR_BACKOFF: Duration = Duration::from_millis(100);
 
 /// Path served by the endpoint.
 pub const METRICS_PATH: &str = "/metrics";
@@ -41,7 +45,7 @@ impl MetricsServer {
     }
 }
 
-/// Bind `bind` and serve `body` on `GET /metrics` from background threads.
+/// Bind `bind` and serve `body` on `GET /metrics` from one background thread.
 pub fn start(
     bind: SocketAddr,
     body: Arc<dyn Fn() -> String + Send + Sync>,
@@ -54,18 +58,12 @@ pub fn start(
         .spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else {
+                    // A persistent accept error (for example EMFILE) must not
+                    // spin the listener thread.
+                    thread::sleep(ACCEPT_ERROR_BACKOFF);
                     continue;
                 };
-                let body = Arc::clone(&body);
-                let spawned = thread::Builder::new()
-                    .name("metrics-connection".to_owned())
-                    .spawn(move || {
-                        let _ = serve(stream, body.as_ref());
-                    });
-                if spawned.is_err() {
-                    // The connection is dropped when the thread cannot start.
-                    continue;
-                }
+                let _ = serve(stream, body.as_ref());
             }
         })?;
 
@@ -80,25 +78,27 @@ fn serve(stream: TcpStream, body: &(dyn Fn() -> String + Send + Sync)) -> io::Re
     stream.set_read_timeout(Some(CONNECTION_TIMEOUT))?;
     stream.set_write_timeout(Some(CONNECTION_TIMEOUT))?;
 
-    let mut reader = BufReader::new((&stream).take(MAX_REQUEST_BYTES));
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
-        return Ok(());
-    }
-
-    // Drain the headers so the client finishes sending before the response.
-    loop {
-        let mut header = String::new();
-        let read = reader.read_line(&mut header)?;
-        if read == 0 || header == "\r\n" || header == "\n" {
-            break;
-        }
-    }
+    let mut request = [0_u8; MAX_REQUEST_BYTES];
+    let read = (&stream).read(&mut request)?;
+    let request = &request[..read];
+    let request_line = request
+        .split(|byte| *byte == b'\n')
+        .next()
+        .map(|line| {
+            String::from_utf8_lossy(line)
+                .trim_end_matches('\r')
+                .to_owned()
+        })
+        .unwrap_or_default();
 
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default();
     let path = target.split('?').next().unwrap_or_default();
+
+    if method.is_empty() || target.is_empty() {
+        return write_response(stream, Response::error(400, "incomplete request"));
+    }
 
     let response = match (method, path) {
         ("GET", METRICS_PATH) => Response::ok(body()),
@@ -107,7 +107,10 @@ fn serve(stream: TcpStream, body: &(dyn Fn() -> String + Send + Sync)) -> io::Re
         _ => Response::error(404, "not found"),
     };
 
-    let mut stream = stream;
+    write_response(stream, response)
+}
+
+fn write_response(mut stream: TcpStream, response: Response) -> io::Result<()> {
     let bytes = response.as_bytes();
     stream.write_all(&bytes)?;
     stream.flush()
@@ -226,5 +229,13 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
         assert!(response.ends_with("only GET is supported\n"));
+    }
+
+    #[test]
+    fn an_incomplete_request_line_is_rejected() {
+        let server = server();
+        let response = request(&server, "GET");
+
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
     }
 }

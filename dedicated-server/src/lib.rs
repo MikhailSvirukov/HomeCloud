@@ -2,7 +2,8 @@
 //!
 //! This crate implements configuration loading and validation, password-verifier
 //! derivation and checking, heartbeat tracking, account registration, and key
-//! identity loading; networking and the wire protocol are still to come.
+//! identity loading, metrics, and framing; application networking and the wire
+//! protocol are still to come.
 
 mod availability;
 mod clock;

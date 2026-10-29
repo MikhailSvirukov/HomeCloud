@@ -258,6 +258,12 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    /// [`MetricsConfig::bind`] uses port zero.
+    #[error("metrics.bind ({bind}) must use a port in 1..=65535")]
+    MetricsZeroPort {
+        /// Configured metrics bind address.
+        bind: SocketAddr,
+    },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
@@ -372,11 +378,13 @@ impl ServerConfig {
 
 /// The metrics endpoint must stay on loopback until TLS support is configured.
 fn validate_metrics(metrics: &MetricsConfig) -> Result<()> {
-    if metrics.bind.ip().is_loopback() {
-        Ok(())
-    } else {
-        Err(ConfigError::MetricsBindNotLoopback { bind: metrics.bind })
+    if !metrics.bind.ip().is_loopback() {
+        return Err(ConfigError::MetricsBindNotLoopback { bind: metrics.bind });
     }
+    if metrics.bind.port() == 0 {
+        return Err(ConfigError::MetricsZeroPort { bind: metrics.bind });
+    }
+    Ok(())
 }
 
 fn validate_logging(logging: &LoggingConfig) -> Result<()> {
@@ -701,6 +709,16 @@ mod tests {
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::MetricsBindNotLoopback { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_zero_metrics_port() {
+        let document = VALID_SERVER.replace("bind = \"127.0.0.1:9101\"", "bind = \"127.0.0.1:0\"");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsZeroPort { .. })
         ));
     }
 

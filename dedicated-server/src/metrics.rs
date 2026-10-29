@@ -51,8 +51,8 @@ impl Operation {
     /// Label value for this operation.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Registration => "registration",
-            Self::Topology => "topology",
+            Self::Registration => OPERATION_REGISTRATION,
+            Self::Topology => OPERATION_TOPOLOGY,
         }
     }
 
@@ -65,6 +65,24 @@ impl Operation {
 }
 
 /// Upper bounds of the request-duration histogram, in seconds.
+/// Label name of the configured storage node.
+const LABEL_NODE: &str = "node";
+
+/// Label name of the handled client operation.
+const LABEL_OPERATION: &str = "operation";
+
+/// Label name of a histogram bucket bound.
+const LABEL_BUCKET: &str = "le";
+
+/// Bucket label value covering every observation without an upper bound.
+const BUCKET_INFINITY: &str = "+Inf";
+
+/// Label value of the registration operation.
+const OPERATION_REGISTRATION: &str = "registration";
+
+/// Label value of the topology operation.
+const OPERATION_TOPOLOGY: &str = "topology";
+
 const DURATION_BUCKETS_SECONDS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
@@ -117,6 +135,9 @@ pub struct Metrics {
 
 impl Metrics {
     /// Create a registry for `node_labels` with every node and the quorum available.
+    ///
+    /// `node_labels` must be unique: the configuration validates the static
+    /// manifest, and a repeated label would render a duplicate series.
     pub fn new(node_labels: &[&str]) -> Self {
         Self {
             nodes: node_labels
@@ -182,9 +203,10 @@ impl Metrics {
         for node in &self.nodes {
             let _ = writeln!(
                 output,
-                "{METRIC_NODE_AVAILABLE}{{node=\"{}\"}} {}",
+                "{METRIC_NODE_AVAILABLE}{{{label}=\"{}\"}} {}",
                 escape_label(&node.label),
-                node.available.load(Ordering::Relaxed)
+                node.available.load(Ordering::Relaxed),
+                label = LABEL_NODE
             );
         }
 
@@ -213,23 +235,29 @@ impl Metrics {
             for (index, bound) in DURATION_BUCKETS_SECONDS.iter().enumerate() {
                 let _ = writeln!(
                     output,
-                    "{METRIC_REQUEST_DURATION}_bucket{{operation=\"{operation_label}\",le=\"{bound}\"}} {}",
-                    histogram.buckets[index].load(Ordering::Relaxed)
+                    "{METRIC_REQUEST_DURATION}_bucket{{{operation}=\"{operation_label}\",{bucket}=\"{bound}\"}} {}",
+                    histogram.buckets[index].load(Ordering::Relaxed),
+                    operation = LABEL_OPERATION,
+                    bucket = LABEL_BUCKET
                 );
             }
             let count = histogram.count.load(Ordering::Relaxed);
             let _ = writeln!(
                 output,
-                "{METRIC_REQUEST_DURATION}_bucket{{operation=\"{operation_label}\",le=\"+Inf\"}} {count}"
+                "{METRIC_REQUEST_DURATION}_bucket{{{operation}=\"{operation_label}\",{bucket}=\"{BUCKET_INFINITY}\"}} {count}",
+                operation = LABEL_OPERATION,
+                bucket = LABEL_BUCKET
             );
             let sum_seconds = histogram.sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0;
             let _ = writeln!(
                 output,
-                "{METRIC_REQUEST_DURATION}_sum{{operation=\"{operation_label}\"}} {sum_seconds}"
+                "{METRIC_REQUEST_DURATION}_sum{{{operation}=\"{operation_label}\"}} {sum_seconds}",
+                operation = LABEL_OPERATION
             );
             let _ = writeln!(
                 output,
-                "{METRIC_REQUEST_DURATION}_count{{operation=\"{operation_label}\"}} {count}"
+                "{METRIC_REQUEST_DURATION}_count{{{operation}=\"{operation_label}\"}} {count}",
+                operation = LABEL_OPERATION
             );
         }
 

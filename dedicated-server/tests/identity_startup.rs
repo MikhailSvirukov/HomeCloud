@@ -37,8 +37,15 @@ const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 /// Placeholder for the loopback metrics bind address used by the tests.
 const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
-/// Loopback metrics bind with an ephemeral port, so tests do not collide.
-const METRICS_BIND: &str = "127.0.0.1:0";
+
+/// Reserve a loopback port for the metrics endpoint so the configuration is valid.
+fn free_metrics_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral loopback port must be available")
+        .local_addr()
+        .expect("the local address must exist")
+        .port()
+}
 
 /// Owns a per-test temporary directory and removes it on drop.
 struct TempDir {
@@ -77,7 +84,10 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) ->
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
         .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
-        .replace(METRICS_BIND_PLACEHOLDER, METRICS_BIND);
+        .replace(
+            METRICS_BIND_PLACEHOLDER,
+            &format!("127.0.0.1:{}", free_metrics_port()),
+        );
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path

@@ -69,19 +69,34 @@ fn main() -> ExitCode {
     let body: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
         let dropped_records = body_log
             .lock()
-            .ok()
-            .and_then(|slot| {
-                slot.as_ref()
-                    .map(dedicated_server::LogGuard::dropped_records)
-            })
-            .unwrap_or(0);
+            .map(|slot| slot.as_ref().map(LogGuard::dropped_records).unwrap_or(0))
+            .unwrap_or_else(|poisoned| {
+                poisoned
+                    .into_inner()
+                    .as_ref()
+                    .map(LogGuard::dropped_records)
+                    .unwrap_or(0)
+            });
         body_metrics.render(dropped_records)
     });
 
-    let _metrics = match start_metrics_server(startup.metrics_bind(), body) {
+    // The signal handlers are installed before anything signals readiness, so a
+    // stop request observed by a test or an orchestrator can never fall into a
+    // window where the default disposition would kill the process unrecorded.
+    let stop = match shutdown_flag() {
+        Ok(stop) => stop,
+        Err(error) => {
+            runtime_failed(&error);
+            flush_log(&log);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let metrics_bind = startup.metrics_bind();
+    let _metrics = match start_metrics_server(metrics_bind, body) {
         Ok(server) => server,
-        Err(_) => {
-            metrics_failed();
+        Err(error) => {
+            metrics_failed(metrics_bind, &error);
             flush_log(&log);
             return ExitCode::FAILURE;
         }
@@ -89,14 +104,6 @@ fn main() -> ExitCode {
 
     log_startup(&startup.summary());
 
-    let stop = match shutdown_flag() {
-        Ok(stop) => stop,
-        Err(_) => {
-            runtime_failed();
-            flush_log(&log);
-            return ExitCode::FAILURE;
-        }
-    };
     while !stop.load(Ordering::Relaxed) {
         thread::sleep(SHUTDOWN_POLL_INTERVAL);
     }
@@ -109,9 +116,11 @@ fn main() -> ExitCode {
 
 /// Drop the log guard so the background writer flushes every buffered record.
 fn flush_log(log: &Arc<Mutex<Option<LogGuard>>>) {
-    if let Ok(mut slot) = log.lock() {
-        drop(slot.take());
-    }
+    let mut slot = match log.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    drop(slot.take());
 }
 
 /// Install `SIGINT` and `SIGTERM` handlers that set the shutdown flag.
