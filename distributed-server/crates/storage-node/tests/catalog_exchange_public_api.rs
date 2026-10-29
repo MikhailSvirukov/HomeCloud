@@ -579,3 +579,59 @@ fn encodes_an_empty_failure_argument_array() {
         Err(CatalogExchangeError::Encode)
     ));
 }
+
+#[test]
+fn enforces_minimum_and_maximum_login_password_boundaries() {
+    let non_zero = |value| NonZeroUsize::new(value).expect("test client limit is non-zero");
+    let limits = ClientLimits::new(
+        non_zero(4),
+        non_zero(8),
+        non_zero(3),
+        non_zero(6),
+        non_zero(64),
+    )
+    .expect("test client limits are consistent");
+    let request = CatalogRequest {
+        snapshot_token: None,
+        cursor: None,
+    };
+
+    let encoded = encode_catalog_page_request("abcd", "abc", &request, &limits)
+        .expect("minimum login and password lengths are accepted");
+    let decoded = decode_catalog_page_request(&encoded, &limits).expect("minimum lengths decode");
+    assert!(decoded.login() == "abcd");
+    assert!(decoded.password() == "abc");
+
+    let encoded = encode_catalog_page_request("abcdefgh", "abcdef", &request, &limits)
+        .expect("maximum login and password lengths are accepted");
+    let decoded = decode_catalog_page_request(&encoded, &limits).expect("maximum lengths decode");
+    assert!(decoded.login() == "abcdefgh");
+    assert!(decoded.password() == "abcdef");
+
+    let encoded = encode_catalog_page_request("abcd", "ééé", &request, &limits)
+        .expect("a six-byte UTF-8 password is at the maximum");
+    let decoded =
+        decode_catalog_page_request(&encoded, &limits).expect("the multibyte password decodes");
+    assert!(decoded.password() == "ééé");
+
+    assert!(matches!(
+        encode_catalog_page_request("abc", "abc", &request, &limits),
+        Err(CatalogExchangeError::InvalidLogin)
+    ));
+    assert!(matches!(
+        encode_catalog_page_request("abcdefghi", "abc", &request, &limits),
+        Err(CatalogExchangeError::InvalidLogin)
+    ));
+    assert!(matches!(
+        encode_catalog_page_request("abcd", "ab", &request, &limits),
+        Err(CatalogExchangeError::InvalidPassword)
+    ));
+    assert!(matches!(
+        encode_catalog_page_request("abcd", "abcdefg", &request, &limits),
+        Err(CatalogExchangeError::InvalidPassword)
+    ));
+    assert!(matches!(
+        encode_catalog_page_request("abcd", "éééé", &request, &limits),
+        Err(CatalogExchangeError::InvalidPassword)
+    ));
+}
