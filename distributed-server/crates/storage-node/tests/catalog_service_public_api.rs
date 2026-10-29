@@ -161,6 +161,8 @@ fn configured_node_builds_a_matching_catalog_service() {
         ("catalog_page_size", "2"),
         ("catalog_snapshot_ttl_ms", "60000"),
         ("max_source_name_len", "64"),
+        ("integrity_scan_period_seconds", "3600"),
+        ("integrity_scan_max_concurrent", "2"),
     ])
     .expect("valid pairs build a config");
 

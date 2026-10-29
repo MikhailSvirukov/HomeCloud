@@ -40,7 +40,10 @@
 //! internal failures, and local blob integrity verification ([`verify_local_blob`],
 //! [`BlobIntegrity`], [`IntegrityError`]) that streams a committed blob, compares
 //! its SHA-256 with the committed hash, and marks a mismatch with a
-//! `<blob>.corrupt` sidecar marker. The Prometheus-compatible metrics endpoint
+//! `<blob>.corrupt` sidecar marker, and the periodic integrity scanner
+//! ([`scan_committed_blobs`], [`run_integrity_scan_loop`]) that verifies all
+//! committed blobs on a configured schedule with a bounded concurrency limit.
+//! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! loopback monitoring listener. Structured UTF-8 JSON Lines logging
 //! ([`LogEvent`], [`Logger`]) provides a bounded, non-blocking event API with
@@ -77,6 +80,7 @@ mod cpu_pool;
 mod frame_buffer;
 mod framing;
 mod integrity;
+mod integrity_scan;
 mod keys;
 mod listener;
 mod logging;
@@ -112,6 +116,9 @@ pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::FrameBuffer;
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
 pub use integrity::{verify_local_blob, BlobIntegrity, IntegrityError, CORRUPT_MARKER_SUFFIX};
+pub use integrity_scan::{
+    run_integrity_scan_loop, scan_committed_blobs, IntegrityScanConfig, IntegrityScanReport,
+};
 pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
 pub use logging::{

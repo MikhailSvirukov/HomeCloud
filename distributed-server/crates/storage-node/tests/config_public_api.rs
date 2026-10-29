@@ -24,6 +24,8 @@ const KEY_PEERS: &str = "peers";
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
+const KEY_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "integrity_scan_max_concurrent";
 const KEY_LOG_FILE_PATH: &str = "log_file_path";
 const KEY_LOG_QUEUE_CAPACITY: &str = "log_queue_capacity";
 const KEY_LOG_MAX_FILE_BYTES: &str = "log_max_file_bytes";
@@ -34,6 +36,8 @@ const QUEUE_CAPACITY: &str = "16";
 const CATALOG_PAGE_SIZE: &str = "2";
 const CATALOG_SNAPSHOT_TTL_MS: &str = "60000";
 const MAX_SOURCE_NAME_LEN: &str = "64";
+const INTEGRITY_SCAN_PERIOD_SECONDS: &str = "3600";
+const INTEGRITY_SCAN_MAX_CONCURRENT: &str = "2";
 const LOG_FILE_PATH: &str = "/var/log/storage-node/events.jsonl";
 const LOG_QUEUE_CAPACITY: &str = "64";
 const LOG_MAX_FILE_BYTES: &str = "1048576";
@@ -59,6 +63,14 @@ fn valid_pairs() -> Vec<(&'static str, &'static str)> {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_PEERS, ""),
     ]
 }
@@ -104,6 +116,14 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_PEERS, " 10.0.0.2:9000 ,10.0.0.3:9000 "),
     ])
     .expect("valid pairs build a config");
@@ -126,6 +146,8 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.catalog_page_size.get(), 2);
     assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
     assert_eq!(config.max_source_name_len.get(), 64);
+    assert_eq!(config.integrity_scan.period, Duration::from_secs(3_600));
+    assert_eq!(config.integrity_scan.max_concurrent.get(), 2);
     assert_eq!(
         config.metrics_bind_addr,
         SocketAddr::from(([127, 0, 0, 1], 9100))
@@ -614,6 +636,14 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
     ]);
 
     assert_eq!(
@@ -643,6 +673,14 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_PEERS, "10.0.0.2"),
     ]);
 
@@ -673,6 +711,14 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_PEERS, "10.0.0.2:9000,10.0.0.2:9000"),
     ]);
 
@@ -776,6 +822,14 @@ fn from_pairs_with_unspecified_metrics_bind_addr_reports_metrics_requires_tls() 
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_METRICS_BIND_ADDR, "0.0.0.0:9100"),
     ]);
 
@@ -805,6 +859,14 @@ fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls()
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            INTEGRITY_SCAN_PERIOD_SECONDS,
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            INTEGRITY_SCAN_MAX_CONCURRENT,
+        ),
         (KEY_METRICS_BIND_ADDR, "192.0.2.1:9100"),
     ]);
 
@@ -928,5 +990,61 @@ fn from_pairs_with_total_log_size_below_one_file_reports_log_config_error() {
     assert_eq!(
         NodeConfig::from_pairs(&pairs),
         Err(ConfigError::Log(LogConfigError::TotalSmallerThanFile))
+    );
+}
+
+#[test]
+fn from_pairs_without_integrity_scan_period_seconds_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_INTEGRITY_SCAN_PERIOD_SECONDS)),
+        Err(ConfigError::MissingKey {
+            key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_integrity_scan_max_concurrent_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_INTEGRITY_SCAN_MAX_CONCURRENT)),
+        Err(ConfigError::MissingKey {
+            key: KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_integrity_scan_period_seconds_reports_invalid_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_INTEGRITY_SCAN_PERIOD_SECONDS, "0")),
+        Err(ConfigError::InvalidIntegrityScanSetting {
+            key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_integrity_scan_max_concurrent_reports_invalid_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_INTEGRITY_SCAN_MAX_CONCURRENT, "0")),
+        Err(ConfigError::InvalidIntegrityScanSetting {
+            key: KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_non_numeric_integrity_scan_setting_reports_invalid_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            "not-a-number"
+        )),
+        Err(ConfigError::InvalidIntegrityScanSetting {
+            key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            value: "not-a-number".to_owned(),
+        })
     );
 }
