@@ -7,11 +7,26 @@ import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 
 /**
  * An X25519 key agreement key pair in its fixed 32-byte private and public key encoding.
+ *
+ * Two key pairs are equal when both of their key byte arrays are equal.
  */
 internal class X25519KeyPair(
     val privateKey: ByteArray,
     val publicKey: ByteArray,
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) {
+            return true
+        }
+        if (other !is X25519KeyPair) {
+            return false
+        }
+        return privateKey.contentEquals(other.privateKey) &&
+            publicKey.contentEquals(other.publicKey)
+    }
+
+    override fun hashCode(): Int = 31 * privateKey.contentHashCode() + publicKey.contentHashCode()
+}
 
 /**
  * X25519 key agreement used by HPKE (`INT-NET-027`).

@@ -4,6 +4,7 @@ import dev.homecloud.android.testsupport.Hex
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -138,6 +139,31 @@ class Ed25519Test {
                 Ed25519.publicKeyOf(ByteArray(size))
             }
         }
+    }
+
+    @Test
+    fun keyPairsWithEqualBytesAreEqualAndHashEqual() {
+        val keyPair = Ed25519.generate()
+        val identicalKeyPair =
+            Ed25519KeyPair(
+                privateKey = keyPair.privateKey.copyOf(),
+                publicKey = keyPair.publicKey.copyOf(),
+            )
+
+        assertEquals(keyPair, identicalKeyPair)
+        assertEquals(keyPair.hashCode(), identicalKeyPair.hashCode())
+    }
+
+    @Test
+    fun keyPairsWithDifferentPublicKeysAreUnequal() {
+        val keyPair = Ed25519.generate()
+        val differentPublicKey = keyPair.publicKey.copyOf()
+        differentPublicKey[0] = (differentPublicKey[0].toInt() xor TAMPER_MASK).toByte()
+
+        assertNotEquals(
+            keyPair,
+            Ed25519KeyPair(privateKey = keyPair.privateKey.copyOf(), publicKey = differentPublicKey),
+        )
     }
 
     @Test
