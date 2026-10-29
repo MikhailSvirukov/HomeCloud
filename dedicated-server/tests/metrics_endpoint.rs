@@ -392,16 +392,53 @@ fn a_non_loopback_metrics_bind_is_rejected_by_the_configuration() {
     );
 }
 
-/// Generate a self-signed certificate for `localhost` and write it with its key.
-fn write_tls_material(dir: &TempDir) -> (PathBuf, PathBuf) {
-    let certified = rcgen::generate_simple_self_signed(vec![TLS_SERVER_NAME.to_owned()])
-        .expect("the certificate must be generated");
-    let certificate = dir.file("server.crt");
-    let private_key = dir.file("server.key");
-    std::fs::write(&certificate, certified.cert.pem()).expect("certificate must be written");
-    std::fs::write(&private_key, certified.signing_key.serialize_pem())
-        .expect("private key must be written");
-    (certificate, private_key)
+/// Test certificate material: the server leaf, its key and the CA trust file.
+struct TlsMaterial {
+    certificate: PathBuf,
+    private_key: PathBuf,
+    trust: PathBuf,
+}
+
+/// Generate a CA and a server certificate for `localhost` signed by it.
+///
+/// The CA is the trust material a collecting client uses; a self-signed
+/// end-entity certificate is not a valid trust anchor for webpki.
+fn write_tls_material(dir: &TempDir, name: &str) -> TlsMaterial {
+    let mut ca_params = rcgen::CertificateParams::new(Vec::new()).expect("CA parameters");
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca_params.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        format!("HomeCloud test CA {name}"),
+    );
+    let ca_key = rcgen::KeyPair::generate().expect("the CA key must be generated");
+    let ca_certificate = ca_params
+        .self_signed(&ca_key)
+        .expect("the CA certificate must be signed");
+
+    let mut server_params =
+        rcgen::CertificateParams::new(vec![TLS_SERVER_NAME.to_owned()]).expect("server parameters");
+    server_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, TLS_SERVER_NAME);
+    server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let server_key = rcgen::KeyPair::generate().expect("the server key must be generated");
+    let issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
+    let server_certificate = server_params
+        .signed_by(&server_key, &issuer)
+        .expect("the server certificate must be signed");
+
+    let certificate = dir.file(&format!("{name}-server.crt"));
+    let private_key = dir.file(&format!("{name}-server.key"));
+    let trust = dir.file(&format!("{name}-ca.crt"));
+    std::fs::write(&certificate, server_certificate.pem()).expect("certificate must be written");
+    std::fs::write(&private_key, server_key.serialize_pem()).expect("key must be written");
+    std::fs::write(&trust, ca_certificate.pem()).expect("trust material must be written");
+
+    TlsMaterial {
+        certificate,
+        private_key,
+        trust,
+    }
 }
 
 /// Append the TLS section to a written configuration document.
@@ -432,9 +469,12 @@ fn tls_scrape(port: u16, trust: &Path) -> std::io::Result<String> {
             .map_err(|error| std::io::Error::other(error.to_string()))?;
     }
 
-    let config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let config =
+        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
     let name = ServerName::try_from(TLS_SERVER_NAME)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let connection = ClientConnection::new(Arc::new(config), name)
@@ -478,14 +518,18 @@ fn wait_for_tls_metrics(guard: &mut ChildGuard, port: u16, trust: &Path) -> Stri
 fn a_tls_scrape_with_the_trusted_certificate_succeeds() {
     let dir = TempDir::new("tls");
     let log = dir.file("dedicated-server.log");
-    let (certificate, private_key) = write_tls_material(&dir);
-    let trust = certificate.clone();
+    let material = write_tls_material(&dir, "trusted");
     let port = free_port();
     let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
-    let config = append_tls_section(&config, &certificate, &private_key, &trust);
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
 
     let mut guard = ChildGuard::spawn(&config);
-    let response = wait_for_tls_metrics(&mut guard, port, &trust);
+    let response = wait_for_tls_metrics(&mut guard, port, &material.trust);
 
     assert!(response.contains("homecloud_dedicated_up 1"), "{response}");
     let body = response
@@ -505,23 +549,24 @@ fn a_tls_scrape_with_the_trusted_certificate_succeeds() {
 fn an_untrusted_certificate_is_rejected() {
     let dir = TempDir::new("tls-untrusted");
     let log = dir.file("dedicated-server.log");
-    let (certificate, private_key) = write_tls_material(&dir);
-    let trust = certificate.clone();
+    let material = write_tls_material(&dir, "server");
     let port = free_port();
     let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
-    let config = append_tls_section(&config, &certificate, &private_key, &trust);
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
 
-    // A different, unrelated certificate is what the collecting client trusts.
-    let other = rcgen::generate_simple_self_signed(vec![TLS_SERVER_NAME.to_owned()])
-        .expect("the certificate must be generated");
-    let untrusted = dir.file("untrusted.crt");
-    std::fs::write(&untrusted, other.cert.pem()).expect("certificate must be written");
+    // A separate CA is what the collecting client trusts, so the handshake fails.
+    let other = write_tls_material(&dir, "untrusted");
 
     let mut guard = ChildGuard::spawn(&config);
     // Wait until the endpoint is up by scraping with the correct trust store.
-    wait_for_tls_metrics(&mut guard, port, &trust);
+    wait_for_tls_metrics(&mut guard, port, &material.trust);
     assert!(
-        tls_scrape(port, &untrusted).is_err(),
+        tls_scrape(port, &other.trust).is_err(),
         "a client that does not trust the server certificate must fail the handshake"
     );
 

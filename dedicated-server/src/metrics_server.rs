@@ -123,7 +123,9 @@ fn load_tls(paths: TlsPaths<'_>) -> io::Result<rustls::ServerConfig> {
     // never published with a certificate no collector can check.
     let _trust = load_certificates(paths.trust)?;
 
-    rustls::ServerConfig::builder()
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
         .with_no_client_auth()
         .with_single_cert(certificates, private_key)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
