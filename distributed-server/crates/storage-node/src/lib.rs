@@ -48,7 +48,9 @@
 //! fsync the file and its parent directory before reporting it durable.
 //! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
-//! loopback monitoring listener. Structured UTF-8 JSON Lines logging
+//! monitoring listener, using plaintext HTTP only on loopback and TLS with the
+//! configured [`MetricsTlsConfig`] certificate and private key elsewhere.
+//! Structured UTF-8 JSON Lines logging
 //! ([`LogEvent`], [`Logger`]) provides a bounded, non-blocking event API with
 //! size- and age-based rotation on the configured path.
 //!
@@ -135,7 +137,7 @@ pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
     CONTENT_HASH_LEN, UPLOAD_ID_LEN,
 };
-pub use metrics::{Metrics, MetricsServer};
+pub use metrics::{Metrics, MetricsServer, MetricsTlsConfig};
 pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};

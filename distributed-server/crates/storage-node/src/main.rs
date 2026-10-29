@@ -33,6 +33,10 @@ const ENV_MAX_FRAME_LEN: &str = "MAX_FRAME_LEN";
 const ENV_QUEUE_CAPACITY: &str = "QUEUE_CAPACITY";
 /// Environment variable carrying the metrics bind address.
 const ENV_METRICS_BIND_ADDR: &str = "METRICS_BIND_ADDR";
+/// Environment variable carrying the metrics TLS certificate path.
+const ENV_METRICS_TLS_CERT_PATH: &str = "METRICS_TLS_CERT_PATH";
+/// Environment variable carrying the metrics TLS private-key path.
+const ENV_METRICS_TLS_KEY_PATH: &str = "METRICS_TLS_KEY_PATH";
 /// Environment variable carrying the catalog page size.
 const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
 /// Environment variable carrying the catalog snapshot lifetime in milliseconds.
@@ -72,6 +76,10 @@ const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
 /// `from_pairs` key for the metrics bind address.
 const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
+/// `from_pairs` key for the metrics TLS certificate path.
+const KEY_METRICS_TLS_CERT_PATH: &str = "metrics_tls_cert_path";
+/// `from_pairs` key for the metrics TLS private-key path.
+const KEY_METRICS_TLS_KEY_PATH: &str = "metrics_tls_key_path";
 /// `from_pairs` key for the catalog page size.
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 /// `from_pairs` key for the catalog snapshot lifetime in milliseconds.
@@ -124,6 +132,8 @@ async fn run() -> ExitCode {
     let max_frame_len = env_value(ENV_MAX_FRAME_LEN);
     let queue_capacity = env_value(ENV_QUEUE_CAPACITY);
     let metrics_bind_addr = env_value(ENV_METRICS_BIND_ADDR);
+    let metrics_tls_cert_path = env_value(ENV_METRICS_TLS_CERT_PATH);
+    let metrics_tls_key_path = env_value(ENV_METRICS_TLS_KEY_PATH);
     let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
@@ -145,6 +155,8 @@ async fn run() -> ExitCode {
         (KEY_MAX_FRAME_LEN, max_frame_len.as_str()),
         (KEY_QUEUE_CAPACITY, queue_capacity.as_str()),
         (KEY_METRICS_BIND_ADDR, metrics_bind_addr.as_str()),
+        (KEY_METRICS_TLS_CERT_PATH, metrics_tls_cert_path.as_str()),
+        (KEY_METRICS_TLS_KEY_PATH, metrics_tls_key_path.as_str()),
         (KEY_LOG_FILE_PATH, log_file_path.as_str()),
         (KEY_LOG_QUEUE_CAPACITY, log_queue_capacity.as_str()),
         (KEY_LOG_MAX_FILE_BYTES, log_max_file_bytes.as_str()),
@@ -288,18 +300,17 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
     ));
 
     let metrics = Arc::new(Metrics::new(config.queue_capacity));
-    let metrics_server =
-        match MetricsServer::bind(config.metrics_bind_addr, Arc::clone(&metrics)).await {
-            Ok(server) => server,
-            Err(error) => {
-                tracing::error!(error = %error, "failed to bind metrics listener");
-                logger.log(LogEvent::state_change(
-                    LogLevel::Error,
-                    StateChange::DependencyUnavailable,
-                ));
-                return false;
-            }
-        };
+    let metrics_server = match bind_metrics_server(config, Arc::clone(&metrics)).await {
+        Ok(server) => server,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to bind metrics listener");
+            logger.log(LogEvent::state_change(
+                LogLevel::Error,
+                StateChange::DependencyUnavailable,
+            ));
+            return false;
+        }
+    };
     let metrics_addr = metrics_server.local_addr().ok();
     tracing::info!(metrics_addr = ?metrics_addr, "metrics listening");
     logger.log(LogEvent::state_change(
@@ -328,6 +339,38 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
             false
         }
     }
+}
+
+/// Binds the metrics listener, loading the configured TLS PEM files when TLS is enabled.
+async fn bind_metrics_server(
+    config: &NodeConfig,
+    metrics: Arc<Metrics>,
+) -> std::io::Result<MetricsServer> {
+    let Some(tls) = &config.metrics_tls else {
+        return MetricsServer::bind(config.metrics_bind_addr, metrics).await;
+    };
+    let certificate = read_metrics_tls_file("certificate", &tls.cert_path).await?;
+    let private_key = read_metrics_tls_file("private key", &tls.key_path).await?;
+    MetricsServer::bind_tls(
+        config.metrics_bind_addr,
+        metrics,
+        &certificate,
+        &private_key,
+    )
+    .await
+}
+
+/// Reads one metrics TLS PEM file, reporting its path without exposing its contents.
+async fn read_metrics_tls_file(kind: &str, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    tokio::fs::read(path).await.map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!(
+                "failed to read metrics TLS {kind} {}: {error}",
+                path.display()
+            ),
+        )
+    })
 }
 
 /// Resolves when the process receives Ctrl-C, failing open on a listen error.

@@ -44,7 +44,7 @@ clients; it does not relay Raft or blob traffic.
   `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
-  `src/metrics.rs` (Prometheus-compatible metrics set and the loopback
+  `src/metrics.rs` (Prometheus-compatible metrics set and the HTTP/TLS
   `GET /metrics` server),
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
   worker threads), `src/node.rs` (node runtime: serves frame connections on
@@ -72,7 +72,8 @@ clients; it does not relay Raft or blob traffic.
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
   `upload_outcomes_public_api.rs`,
-  `listener_public_api.rs`, `metrics_public_api.rs`, `cpu_pool_public_api.rs`,
+  `listener_public_api.rs`, `metrics_public_api.rs`,
+  `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
@@ -155,9 +156,15 @@ at startup:
   seconds; must be non-zero (maps to the `integrity_scan_period_seconds` key).
 - `INTEGRITY_SCAN_MAX_CONCURRENT` — maximum number of blobs checked simultaneously
   during one scan; must be non-zero (maps to the `integrity_scan_max_concurrent` key).
-- `METRICS_BIND_ADDR` — loopback `SocketAddr` for the Prometheus-compatible metrics
-  endpoint; required, with no default (maps to the `metrics_bind_addr` key). The endpoint
-  is served over plain HTTP and rejects any non-loopback bind address.
+- `METRICS_BIND_ADDR` — `SocketAddr` for the Prometheus-compatible metrics endpoint;
+  required, with no default (maps to the `metrics_bind_addr` key). A loopback address may
+  be served over plain HTTP or TLS; a non-loopback address requires both metrics TLS
+  paths.
+- `METRICS_TLS_CERT_PATH` — PEM server certificate chain for the metrics endpoint (maps
+  to the `metrics_tls_cert_path` key). Required together with `METRICS_TLS_KEY_PATH`; the
+  configured certificate is the trust material a scraper uses to verify the server.
+- `METRICS_TLS_KEY_PATH` — PEM private key matching `METRICS_TLS_CERT_PATH` (maps to the
+  `metrics_tls_key_path` key). Required together with `METRICS_TLS_CERT_PATH`.
 - `LOG_FILE_PATH` — local path of the structured JSON Lines log (maps to the
   `log_file_path` key).
 - `LOG_QUEUE_CAPACITY` — bounded structured-log queue capacity in entries; must be
@@ -177,7 +184,8 @@ All five `LOG_*` settings are required and non-zero.
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
 `catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
 `integrity_scan_period_seconds`, `integrity_scan_max_concurrent`,
-`metrics_bind_addr`, `log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
+`metrics_bind_addr`, `metrics_tls_cert_path`, `metrics_tls_key_path`,
+`log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
 `log_max_total_bytes`, `log_max_file_age_seconds`, and `peers` keys;
 an absent or empty value for any required key is reported as missing, and unknown keys are
 ignored.
@@ -192,6 +200,11 @@ port.
 ## Metrics
 
 The node exposes a Prometheus-compatible metrics endpoint on `METRICS_BIND_ADDR`.
+A loopback bind address is served over plain HTTP, or over TLS when both metrics TLS
+paths are configured. Any non-loopback bind address requires both paths, and the
+configured certificate is the trust material for scrapers, so a scraper without it must
+reject the server certificate. TLS and plaintext serving return the same bounded metric
+set.
 `GET /metrics` returns the Prometheus text exposition format (`text/plain;
 version=0.0.4; charset=utf-8`) with the node liveness, build-info, queue-capacity, and
 scrape counters. Labels are limited to bounded static values such as the build version;

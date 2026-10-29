@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use storage_node::{ConfigError, LogConfigError, NodeConfig, NodeId};
+use storage_node::{ConfigError, LogConfigError, MetricsTlsConfig, NodeConfig, NodeId};
 
 const NODE_ID: &str = "node-1";
 const LISTEN_ADDR: &str = "0.0.0.0:9000";
@@ -15,6 +15,8 @@ const SIGNING_KEY_PATH: &str = "/keys/signing.key";
 const KEY_NODE_ID: &str = "node_id";
 const KEY_LISTEN_ADDR: &str = "listen_addr";
 const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
+const KEY_METRICS_TLS_CERT_PATH: &str = "metrics_tls_cert_path";
+const KEY_METRICS_TLS_KEY_PATH: &str = "metrics_tls_key_path";
 const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
@@ -31,6 +33,8 @@ const KEY_LOG_QUEUE_CAPACITY: &str = "log_queue_capacity";
 const KEY_LOG_MAX_FILE_BYTES: &str = "log_max_file_bytes";
 const KEY_LOG_MAX_TOTAL_BYTES: &str = "log_max_total_bytes";
 const KEY_LOG_MAX_FILE_AGE_SECONDS: &str = "log_max_file_age_seconds";
+const METRICS_TLS_CERT_PATH: &str = "/keys/metrics-cert.pem";
+const METRICS_TLS_KEY_PATH: &str = "/keys/metrics-key.pem";
 const MAX_FRAME_LEN: &str = "1048576";
 const QUEUE_CAPACITY: &str = "16";
 const CATALOG_PAGE_SIZE: &str = "2";
@@ -81,6 +85,14 @@ fn pairs_without(key: &str) -> Vec<(&'static str, &'static str)> {
         .into_iter()
         .filter(|(pair_key, _)| *pair_key != key)
         .collect()
+}
+
+/// Returns the valid pairs with both metrics TLS paths appended.
+fn pairs_with_metrics_tls() -> Vec<(&'static str, &'static str)> {
+    let mut pairs = valid_pairs();
+    pairs.push((KEY_METRICS_TLS_CERT_PATH, METRICS_TLS_CERT_PATH));
+    pairs.push((KEY_METRICS_TLS_KEY_PATH, METRICS_TLS_KEY_PATH));
+    pairs
 }
 
 /// Returns the valid pairs with `key` replaced by `value`.
@@ -153,6 +165,10 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         SocketAddr::from(([127, 0, 0, 1], 9100))
     );
     assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
+    assert!(
+        config.metrics_tls.is_none(),
+        "a fixture without TLS paths leaves the metrics endpoint on loopback HTTP"
+    );
 }
 
 #[test]
@@ -875,6 +891,61 @@ fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls()
         Err(ConfigError::MetricsRequiresTls {
             value: "192.0.2.1:9100".to_owned(),
         })
+    );
+}
+
+#[test]
+fn from_pairs_with_both_metrics_tls_paths_builds_tls_config() {
+    let config =
+        NodeConfig::from_pairs(&pairs_with_metrics_tls()).expect("both TLS paths build a config");
+
+    assert_eq!(
+        config.metrics_tls,
+        Some(MetricsTlsConfig {
+            cert_path: PathBuf::from(METRICS_TLS_CERT_PATH),
+            key_path: PathBuf::from(METRICS_TLS_KEY_PATH),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_only_metrics_certificate_reports_incomplete_tls() {
+    let mut pairs = valid_pairs();
+    pairs.push((KEY_METRICS_TLS_CERT_PATH, METRICS_TLS_CERT_PATH));
+
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs),
+        Err(ConfigError::MetricsTlsIncomplete)
+    );
+}
+
+#[test]
+fn from_pairs_with_only_metrics_private_key_reports_incomplete_tls() {
+    let mut pairs = valid_pairs();
+    pairs.push((KEY_METRICS_TLS_KEY_PATH, METRICS_TLS_KEY_PATH));
+
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs),
+        Err(ConfigError::MetricsTlsIncomplete)
+    );
+}
+
+#[test]
+fn from_pairs_with_non_loopback_metrics_addr_and_tls_paths_is_accepted() {
+    let mut pairs = pairs_with(KEY_METRICS_BIND_ADDR, "0.0.0.0:9100");
+    pairs.push((KEY_METRICS_TLS_CERT_PATH, METRICS_TLS_CERT_PATH));
+    pairs.push((KEY_METRICS_TLS_KEY_PATH, METRICS_TLS_KEY_PATH));
+
+    let config =
+        NodeConfig::from_pairs(&pairs).expect("a non-loopback metrics address is valid with TLS");
+
+    assert_eq!(
+        config.metrics_bind_addr,
+        SocketAddr::from(([0, 0, 0, 0], 9100))
+    );
+    assert!(
+        config.metrics_tls.is_some(),
+        "the configured TLS paths enable the non-loopback endpoint"
     );
 }
 

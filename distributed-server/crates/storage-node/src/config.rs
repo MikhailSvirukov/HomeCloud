@@ -3,11 +3,11 @@
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
 //! a data directory, the paths of its encryption and signing key files, the
 //! maximum frame length its framing layer accepts, the per-connection queue
-//! capacity, the loopback metrics bind address, the structured log path and
-//! retention limits, the integrity scan period and concurrency limit, the
-//! catalog page size and snapshot lifetime, the source-name byte limit, and the
-//! addresses of its fixed peers. v1 clusters are fixed, so this model is
-//! validated when it is built.
+//! capacity, the metrics bind address and optional TLS certificate/key paths,
+//! the structured log path and retention limits, the integrity scan period and
+//! concurrency limit, the catalog page size and snapshot lifetime, the
+//! source-name byte limit, and the addresses of its fixed peers. v1 clusters
+//! are fixed, so this model is validated when it is built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::net::SocketAddr;
@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use crate::integrity_scan::IntegrityScanConfig;
 use crate::logging::{LogConfig, LogConfigError};
+use crate::metrics::MetricsTlsConfig;
 
 /// Fallible configuration operation result.
 type Result<T> = core::result::Result<T, ConfigError>;
@@ -38,6 +39,10 @@ const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
 /// Recognized `from_pairs` key for the metrics bind address.
 const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
+/// Recognized `from_pairs` key for the metrics TLS certificate path.
+const KEY_METRICS_TLS_CERT_PATH: &str = "metrics_tls_cert_path";
+/// Recognized `from_pairs` key for the metrics TLS private-key path.
+const KEY_METRICS_TLS_KEY_PATH: &str = "metrics_tls_key_path";
 /// Recognized `from_pairs` key for the structured log file path.
 const KEY_LOG_FILE_PATH: &str = "log_file_path";
 /// Recognized `from_pairs` key for the structured log queue capacity.
@@ -116,6 +121,7 @@ pub struct NodeConfig {
     pub max_frame_len: NonZeroU32,
     pub queue_capacity: NonZeroUsize,
     pub metrics_bind_addr: SocketAddr,
+    pub metrics_tls: Option<MetricsTlsConfig>,
     pub log: LogConfig,
     pub integrity_scan: IntegrityScanConfig,
     pub catalog_page_size: NonZeroUsize,
@@ -139,6 +145,7 @@ impl NodeConfig {
         max_frame_len: NonZeroU32,
         queue_capacity: NonZeroUsize,
         metrics_bind_addr: SocketAddr,
+        metrics_tls: Option<MetricsTlsConfig>,
         log: LogConfig,
         integrity_scan: IntegrityScanConfig,
         catalog_page_size: NonZeroUsize,
@@ -148,7 +155,7 @@ impl NodeConfig {
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
         validate_listen_addr(listen_addr)?;
-        validate_metrics_bind_addr(metrics_bind_addr)?;
+        validate_metrics_bind_addr(metrics_bind_addr, metrics_tls.as_ref())?;
         Ok(Self {
             node_id,
             listen_addr: listen_addr.to_owned(),
@@ -158,6 +165,7 @@ impl NodeConfig {
             max_frame_len,
             queue_capacity,
             metrics_bind_addr,
+            metrics_tls,
             log,
             integrity_scan,
             catalog_page_size,
@@ -176,7 +184,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, structured logging settings, integrity scan settings, catalog settings, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address and TLS paths, structured logging settings, integrity scan settings, catalog settings, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -186,6 +194,8 @@ impl NodeConfig {
         let mut max_frame_len = None;
         let mut queue_capacity = None;
         let mut metrics_bind_addr = None;
+        let mut metrics_tls_cert_path = None;
+        let mut metrics_tls_key_path = None;
         let mut log_file_path = None;
         let mut log_queue_capacity = None;
         let mut log_max_file_bytes = None;
@@ -213,6 +223,12 @@ impl NodeConfig {
                 KEY_QUEUE_CAPACITY if !value.is_empty() => queue_capacity = Some(*value),
                 KEY_METRICS_BIND_ADDR if !value.is_empty() => {
                     metrics_bind_addr = Some(*value);
+                }
+                KEY_METRICS_TLS_CERT_PATH if !value.is_empty() => {
+                    metrics_tls_cert_path = Some(PathBuf::from(value));
+                }
+                KEY_METRICS_TLS_KEY_PATH if !value.is_empty() => {
+                    metrics_tls_key_path = Some(PathBuf::from(value));
                 }
                 KEY_LOG_FILE_PATH if !value.is_empty() => log_file_path = Some(*value),
                 KEY_LOG_QUEUE_CAPACITY if !value.is_empty() => log_queue_capacity = Some(*value),
@@ -278,6 +294,14 @@ impl NodeConfig {
             });
         };
         let metrics_bind_addr = parse_metrics_bind_addr(metrics_bind_addr)?;
+        let metrics_tls = match (metrics_tls_cert_path, metrics_tls_key_path) {
+            (None, None) => None,
+            (Some(cert_path), Some(key_path)) => Some(MetricsTlsConfig {
+                cert_path,
+                key_path,
+            }),
+            _ => return Err(ConfigError::MetricsTlsIncomplete),
+        };
         let Some(log_file_path) = log_file_path else {
             return Err(ConfigError::MissingKey {
                 key: KEY_LOG_FILE_PATH,
@@ -361,6 +385,7 @@ impl NodeConfig {
             max_frame_len,
             queue_capacity,
             metrics_bind_addr,
+            metrics_tls,
             log,
             integrity_scan,
             catalog_page_size,
@@ -404,9 +429,12 @@ pub enum ConfigError {
     /// The metrics bind address was not a valid socket address.
     #[error("invalid metrics bind address {value}")]
     InvalidMetricsBindAddr { value: String },
-    /// The metrics bind address was not loopback, so v1 cannot serve it over HTTP.
-    #[error("metrics endpoint {value} requires TLS and only loopback HTTP is supported")]
+    /// The metrics bind address was not loopback and no TLS material was configured.
+    #[error("metrics endpoint {value} is not loopback and requires TLS")]
     MetricsRequiresTls { value: String },
+    /// Exactly one of the metrics TLS certificate and private-key paths was set.
+    #[error("metrics TLS requires both a certificate and a private key")]
+    MetricsTlsIncomplete,
     /// A structured logging setting was not a positive integer.
     #[error("invalid log setting {key}={value}")]
     InvalidLogSetting { key: &'static str, value: String },
@@ -452,9 +480,12 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
     Ok(())
 }
 
-/// Rejects a metrics bind address that is not loopback because v1 serves plaintext metrics only there.
-fn validate_metrics_bind_addr(addr: SocketAddr) -> Result<()> {
-    if !addr.ip().is_loopback() {
+/// Rejects a non-loopback metrics bind address without TLS material.
+fn validate_metrics_bind_addr(
+    addr: SocketAddr,
+    metrics_tls: Option<&MetricsTlsConfig>,
+) -> Result<()> {
+    if !addr.ip().is_loopback() && metrics_tls.is_none() {
         return Err(ConfigError::MetricsRequiresTls {
             value: addr.to_string(),
         });
@@ -704,6 +735,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            None,
             log_config(),
             integrity_scan_config(),
             catalog_page_size(),
@@ -721,6 +753,7 @@ mod tests {
         assert_eq!(config.max_frame_len.get(), 1_048_576);
         assert_eq!(config.queue_capacity.get(), 16);
         assert_eq!(config.metrics_bind_addr, metrics_bind_addr());
+        assert!(config.metrics_tls.is_none());
         assert_eq!(config.integrity_scan, integrity_scan_config());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
@@ -737,6 +770,7 @@ mod tests {
                 max_frame_len(),
                 queue_capacity(),
                 metrics_bind_addr(),
+                None,
                 log_config(),
                 integrity_scan_config(),
                 catalog_page_size(),
@@ -762,6 +796,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            None,
             log_config(),
             integrity_scan_config(),
             catalog_page_size(),
@@ -783,6 +818,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            None,
             log_config(),
             integrity_scan_config(),
             catalog_page_size(),
