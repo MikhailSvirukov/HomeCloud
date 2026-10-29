@@ -4,7 +4,7 @@
 //! `CFG-CL-036 / 1` (accounts/raft roots and the blob path).
 
 use std::fmt::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::metadata::UPLOAD_ID_LEN;
 
@@ -62,6 +62,38 @@ impl StorageLayout {
         std::fs::create_dir_all(self.accounts_dir())?;
         std::fs::create_dir_all(self.raft_dir())
     }
+
+    /// Returns the total bytes of regular files under the accounts and raft roots; missing roots count as zero and symlinks are skipped.
+    pub fn usage_bytes(&self) -> std::io::Result<u64> {
+        let accounts = usage_under(&self.accounts_dir())?;
+        let raft = usage_under(&self.raft_dir())?;
+        accounts
+            .checked_add(raft)
+            .ok_or_else(|| std::io::Error::other("storage usage exceeds u64 range"))
+    }
+}
+
+/// Sums regular-file lengths below `root`, treating a missing root as empty.
+fn usage_under(root: &Path) -> std::io::Result<u64> {
+    let mut entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    entries.try_fold(0_u64, |total, entry| {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let added = if file_type.is_dir() {
+            usage_under(&entry.path())?
+        } else if file_type.is_file() {
+            entry.metadata()?.len()
+        } else {
+            0
+        };
+        total
+            .checked_add(added)
+            .ok_or_else(|| std::io::Error::other("storage usage exceeds u64 range"))
+    })
 }
 
 fn is_valid_login(login: &str) -> bool {

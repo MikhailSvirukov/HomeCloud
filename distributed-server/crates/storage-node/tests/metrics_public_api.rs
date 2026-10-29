@@ -14,6 +14,8 @@ use tokio::task::JoinHandle;
 
 const METRICS_PATH: &str = "/metrics";
 const EXPOSITION_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
+const STORAGE_BYTES_USED_METRIC: &str = "homecloud_storage_bytes_used";
+const CONFIGURED_STORAGE_BYTES_USED: u64 = 1234;
 
 fn queue_capacity() -> NonZeroUsize {
     NonZeroUsize::new(16).expect("test capacity is non-zero")
@@ -138,6 +140,14 @@ async fn serves_prometheus_text_on_metrics() {
         body.contains("homecloud_node_build_info{version=\""),
         "the exposition reports a build-info version label"
     );
+    assert!(
+        body.contains(&format!("# TYPE {STORAGE_BYTES_USED_METRIC} gauge")),
+        "the exposition types the occupied-storage gauge"
+    );
+    assert!(
+        body.contains(&format!("{STORAGE_BYTES_USED_METRIC} 0")),
+        "a fresh node reports zero occupied storage bytes"
+    );
     assert_exposition_samples(body);
 
     server.abort();
@@ -193,6 +203,21 @@ async fn counts_successful_scrapes() {
     );
 
     server.abort();
+}
+
+#[test]
+fn renders_configured_storage_bytes_used() {
+    let metrics = Metrics::new(queue_capacity());
+
+    metrics.set_storage_bytes_used(CONFIGURED_STORAGE_BYTES_USED);
+
+    let body = metrics.render();
+    assert!(
+        body.contains(&format!(
+            "{STORAGE_BYTES_USED_METRIC} {CONFIGURED_STORAGE_BYTES_USED}\n"
+        )),
+        "the exposition reports the configured occupied storage bytes, got {body:?}"
+    );
 }
 
 #[tokio::test]
