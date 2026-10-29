@@ -185,7 +185,10 @@ The node writes UTF-8 JSON Lines to `LOG_FILE_PATH`, one JSON object per line. E
 record carries `timestamp_ms` in UTC, `component`, `level`, and `event_type`, plus the
 optional operation, peer, request, upload, outcome, error, duration, and state-change
 fields that apply to that event. Request acceptance and completion records share a
-`request_id`, and the completion record carries the processing duration.
+`request_id`, and the completion record carries the processing duration. Connections
+or frames rejected before a request id exists, such as a frame length above
+`MAX_FRAME_LEN`, are recorded as `connection_rejected` events with the peer identifier
+and an error category.
 
 Events pass through a bounded queue to a non-blocking writer, so the request path never
 performs a synchronous file write. When the queue is full or the writer fails, the event
