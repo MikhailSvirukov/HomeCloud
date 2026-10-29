@@ -260,8 +260,10 @@ for the whole process and flushes buffered records when dropped.
   HTTP; a non-loopback `bind` requires `[metrics.tls]`, otherwise loading the
   configuration fails, so the endpoint is never exposed without TLS. The trust
   material is the certificate or CA the collecting client verifies the server
-  against; the server checks at startup that all three TLS files exist and
-  contain PEM certificate material.
+  against. At startup the server checks that the certificate and trust files
+  exist and contain PEM certificates and that the key file contains a PEM
+  private key matching the certificate; building a chain from `trust_path` is
+  the collecting client's job.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
