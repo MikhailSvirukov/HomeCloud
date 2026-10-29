@@ -2,8 +2,9 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use storage_node::{ConfigError, NodeConfig, NodeId};
+use storage_node::{ConfigError, LogConfigError, NodeConfig, NodeId};
 
 const NODE_ID: &str = "node-1";
 const LISTEN_ADDR: &str = "0.0.0.0:9000";
@@ -23,11 +24,66 @@ const KEY_PEERS: &str = "peers";
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+const KEY_LOG_FILE_PATH: &str = "log_file_path";
+const KEY_LOG_QUEUE_CAPACITY: &str = "log_queue_capacity";
+const KEY_LOG_MAX_FILE_BYTES: &str = "log_max_file_bytes";
+const KEY_LOG_MAX_TOTAL_BYTES: &str = "log_max_total_bytes";
+const KEY_LOG_MAX_FILE_AGE_SECONDS: &str = "log_max_file_age_seconds";
 const MAX_FRAME_LEN: &str = "1048576";
 const QUEUE_CAPACITY: &str = "16";
 const CATALOG_PAGE_SIZE: &str = "2";
 const CATALOG_SNAPSHOT_TTL_MS: &str = "60000";
 const MAX_SOURCE_NAME_LEN: &str = "64";
+const LOG_FILE_PATH: &str = "/var/log/storage-node/events.jsonl";
+const LOG_QUEUE_CAPACITY: &str = "64";
+const LOG_MAX_FILE_BYTES: &str = "1048576";
+const LOG_MAX_TOTAL_BYTES: &str = "16777216";
+const LOG_MAX_FILE_AGE_SECONDS: &str = "86400";
+
+/// Complete valid `from_pairs` input including every required log setting.
+fn valid_pairs() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_PEERS, ""),
+    ]
+}
+
+/// Returns the valid pairs without `key`, leaving every other required key present.
+fn pairs_without(key: &str) -> Vec<(&'static str, &'static str)> {
+    valid_pairs()
+        .into_iter()
+        .filter(|(pair_key, _)| *pair_key != key)
+        .collect()
+}
+
+/// Returns the valid pairs with `key` replaced by `value`.
+fn pairs_with(key: &str, value: &'static str) -> Vec<(&'static str, &'static str)> {
+    valid_pairs()
+        .into_iter()
+        .map(|(pair_key, pair_value)| {
+            if pair_key == key {
+                (pair_key, value)
+            } else {
+                (pair_key, pair_value)
+            }
+        })
+        .collect()
+}
 
 #[test]
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
@@ -40,6 +96,11 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -57,6 +118,11 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.signing_key_path, PathBuf::from(SIGNING_KEY_PATH));
     assert_eq!(config.max_frame_len.get(), 1_048_576);
     assert_eq!(config.queue_capacity.get(), 16);
+    assert_eq!(config.log.path, PathBuf::from(LOG_FILE_PATH));
+    assert_eq!(config.log.queue_capacity.get(), 64);
+    assert_eq!(config.log.max_file_bytes.get(), 1_048_576);
+    assert_eq!(config.log.max_total_bytes.get(), 16_777_216);
+    assert_eq!(config.log.max_file_age, Duration::from_secs(86_400));
     assert_eq!(config.catalog_page_size.get(), 2);
     assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
     assert_eq!(config.max_source_name_len.get(), 64);
@@ -224,6 +290,11 @@ fn from_pairs_with_zero_queue_capacity_reports_invalid_queue_capacity() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, "0"),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -248,6 +319,11 @@ fn from_pairs_with_unparsable_queue_capacity_reports_invalid_queue_capacity() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, "not-a-number"),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -272,6 +348,11 @@ fn from_pairs_without_catalog_page_size_reports_missing_key() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
@@ -298,6 +379,11 @@ fn from_pairs_with_zero_catalog_page_size_reports_invalid_catalog_page_size() {
         (KEY_CATALOG_PAGE_SIZE, "0"),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
     ]);
 
     assert_eq!(
@@ -322,6 +408,11 @@ fn from_pairs_with_unparsable_catalog_page_size_reports_invalid_catalog_page_siz
         (KEY_CATALOG_PAGE_SIZE, "not-a-number"),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
     ]);
 
     assert_eq!(
@@ -343,6 +434,11 @@ fn from_pairs_without_catalog_snapshot_ttl_reports_missing_key() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
@@ -366,6 +462,11 @@ fn from_pairs_with_zero_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_tt
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, "0"),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -390,6 +491,11 @@ fn from_pairs_with_unparsable_catalog_snapshot_ttl_reports_invalid_catalog_snaps
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, "not-a-number"),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -414,6 +520,11 @@ fn from_pairs_without_max_source_name_len_reports_missing_key() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
     ]);
@@ -437,6 +548,11 @@ fn from_pairs_with_zero_max_source_name_len_reports_invalid_max_source_name_len(
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, "0"),
@@ -461,6 +577,11 @@ fn from_pairs_with_unparsable_max_source_name_len_reports_invalid_max_source_nam
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, "not-a-number"),
@@ -485,6 +606,11 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -509,6 +635,11 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -534,6 +665,11 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -575,6 +711,11 @@ fn from_pairs_without_metrics_bind_addr_reports_missing_key() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -598,6 +739,11 @@ fn from_pairs_with_unparsable_metrics_bind_addr_reports_invalid_metrics_bind_add
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -622,6 +768,11 @@ fn from_pairs_with_unspecified_metrics_bind_addr_reports_metrics_requires_tls() 
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -646,6 +797,11 @@ fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls()
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
@@ -657,5 +813,120 @@ fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls()
         Err(ConfigError::MetricsRequiresTls {
             value: "192.0.2.1:9100".to_owned(),
         })
+    );
+}
+
+#[test]
+fn from_pairs_without_log_file_path_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_LOG_FILE_PATH)),
+        Err(ConfigError::MissingKey {
+            key: KEY_LOG_FILE_PATH,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_log_queue_capacity_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_LOG_QUEUE_CAPACITY)),
+        Err(ConfigError::MissingKey {
+            key: KEY_LOG_QUEUE_CAPACITY,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_log_max_file_bytes_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_LOG_MAX_FILE_BYTES)),
+        Err(ConfigError::MissingKey {
+            key: KEY_LOG_MAX_FILE_BYTES,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_log_max_total_bytes_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_LOG_MAX_TOTAL_BYTES)),
+        Err(ConfigError::MissingKey {
+            key: KEY_LOG_MAX_TOTAL_BYTES,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_log_max_file_age_seconds_reports_missing_key() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_without(KEY_LOG_MAX_FILE_AGE_SECONDS)),
+        Err(ConfigError::MissingKey {
+            key: KEY_LOG_MAX_FILE_AGE_SECONDS,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_log_queue_capacity_reports_invalid_log_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOG_QUEUE_CAPACITY, "0")),
+        Err(ConfigError::InvalidLogSetting {
+            key: KEY_LOG_QUEUE_CAPACITY,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_log_max_file_bytes_reports_invalid_log_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOG_MAX_FILE_BYTES, "0")),
+        Err(ConfigError::InvalidLogSetting {
+            key: KEY_LOG_MAX_FILE_BYTES,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_log_max_total_bytes_reports_invalid_log_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOG_MAX_TOTAL_BYTES, "0")),
+        Err(ConfigError::InvalidLogSetting {
+            key: KEY_LOG_MAX_TOTAL_BYTES,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_log_max_file_age_seconds_reports_invalid_log_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOG_MAX_FILE_AGE_SECONDS, "0")),
+        Err(ConfigError::InvalidLogSetting {
+            key: KEY_LOG_MAX_FILE_AGE_SECONDS,
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_log_max_file_bytes_reports_invalid_log_setting() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOG_MAX_FILE_BYTES, "not-a-number")),
+        Err(ConfigError::InvalidLogSetting {
+            key: KEY_LOG_MAX_FILE_BYTES,
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_total_log_size_below_one_file_reports_log_config_error() {
+    let pairs = pairs_with(KEY_LOG_MAX_TOTAL_BYTES, "1024");
+
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs),
+        Err(ConfigError::Log(LogConfigError::TotalSmallerThanFile))
     );
 }

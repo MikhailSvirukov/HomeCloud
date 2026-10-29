@@ -3,14 +3,16 @@
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
 //! a data directory, the paths of its encryption and signing key files, the
 //! maximum frame length its framing layer accepts, the per-connection queue
-//! capacity, the loopback metrics bind address, the catalog page size and
-//! snapshot lifetime, the source-name byte limit, and the addresses of its
-//! fixed peers. v1 clusters are fixed, so this model is validated when it is
-//! built.
+//! capacity, the loopback metrics bind address, the structured log path and
+//! retention limits, the catalog page size and snapshot lifetime, the
+//! source-name byte limit, and the addresses of its fixed peers. v1 clusters
+//! are fixed, so this model is validated when it is built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+
+use crate::logging::{LogConfig, LogConfigError};
 
 /// Fallible configuration operation result.
 type Result<T> = core::result::Result<T, ConfigError>;
@@ -34,6 +36,16 @@ const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
 /// Recognized `from_pairs` key for the metrics bind address.
 const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
+/// Recognized `from_pairs` key for the structured log file path.
+const KEY_LOG_FILE_PATH: &str = "log_file_path";
+/// Recognized `from_pairs` key for the structured log queue capacity.
+const KEY_LOG_QUEUE_CAPACITY: &str = "log_queue_capacity";
+/// Recognized `from_pairs` key for the maximum structured log file size.
+const KEY_LOG_MAX_FILE_BYTES: &str = "log_max_file_bytes";
+/// Recognized `from_pairs` key for the maximum total structured log size.
+const KEY_LOG_MAX_TOTAL_BYTES: &str = "log_max_total_bytes";
+/// Recognized `from_pairs` key for the structured log file age in seconds.
+const KEY_LOG_MAX_FILE_AGE_SECONDS: &str = "log_max_file_age_seconds";
 /// Recognized `from_pairs` key for the catalog page size.
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 /// Recognized `from_pairs` key for the catalog snapshot lifetime in milliseconds.
@@ -98,6 +110,7 @@ pub struct NodeConfig {
     pub max_frame_len: NonZeroU32,
     pub queue_capacity: NonZeroUsize,
     pub metrics_bind_addr: SocketAddr,
+    pub log: LogConfig,
     pub catalog_page_size: NonZeroUsize,
     pub catalog_snapshot_ttl_ms: NonZeroU64,
     pub max_source_name_len: NonZeroUsize,
@@ -119,6 +132,7 @@ impl NodeConfig {
         max_frame_len: NonZeroU32,
         queue_capacity: NonZeroUsize,
         metrics_bind_addr: SocketAddr,
+        log: LogConfig,
         catalog_page_size: NonZeroUsize,
         catalog_snapshot_ttl_ms: NonZeroU64,
         max_source_name_len: NonZeroUsize,
@@ -136,6 +150,7 @@ impl NodeConfig {
             max_frame_len,
             queue_capacity,
             metrics_bind_addr,
+            log,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -152,7 +167,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, catalog settings, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, structured logging settings, catalog settings, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -162,6 +177,11 @@ impl NodeConfig {
         let mut max_frame_len = None;
         let mut queue_capacity = None;
         let mut metrics_bind_addr = None;
+        let mut log_file_path = None;
+        let mut log_queue_capacity = None;
+        let mut log_max_file_bytes = None;
+        let mut log_max_total_bytes = None;
+        let mut log_max_file_age_seconds = None;
         let mut catalog_page_size = None;
         let mut catalog_snapshot_ttl_ms = None;
         let mut max_source_name_len = None;
@@ -182,6 +202,13 @@ impl NodeConfig {
                 KEY_QUEUE_CAPACITY if !value.is_empty() => queue_capacity = Some(*value),
                 KEY_METRICS_BIND_ADDR if !value.is_empty() => {
                     metrics_bind_addr = Some(*value);
+                }
+                KEY_LOG_FILE_PATH if !value.is_empty() => log_file_path = Some(*value),
+                KEY_LOG_QUEUE_CAPACITY if !value.is_empty() => log_queue_capacity = Some(*value),
+                KEY_LOG_MAX_FILE_BYTES if !value.is_empty() => log_max_file_bytes = Some(*value),
+                KEY_LOG_MAX_TOTAL_BYTES if !value.is_empty() => log_max_total_bytes = Some(*value),
+                KEY_LOG_MAX_FILE_AGE_SECONDS if !value.is_empty() => {
+                    log_max_file_age_seconds = Some(*value);
                 }
                 KEY_CATALOG_PAGE_SIZE if !value.is_empty() => catalog_page_size = Some(*value),
                 KEY_CATALOG_SNAPSHOT_TTL_MS if !value.is_empty() => {
@@ -234,6 +261,41 @@ impl NodeConfig {
             });
         };
         let metrics_bind_addr = parse_metrics_bind_addr(metrics_bind_addr)?;
+        let Some(log_file_path) = log_file_path else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOG_FILE_PATH,
+            });
+        };
+        let Some(log_queue_capacity) = log_queue_capacity else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOG_QUEUE_CAPACITY,
+            });
+        };
+        let Some(log_max_file_bytes) = log_max_file_bytes else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOG_MAX_FILE_BYTES,
+            });
+        };
+        let Some(log_max_total_bytes) = log_max_total_bytes else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOG_MAX_TOTAL_BYTES,
+            });
+        };
+        let Some(log_max_file_age_seconds) = log_max_file_age_seconds else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOG_MAX_FILE_AGE_SECONDS,
+            });
+        };
+        let log = LogConfig::new(
+            PathBuf::from(log_file_path),
+            parse_log_setting::<NonZeroUsize>(KEY_LOG_QUEUE_CAPACITY, log_queue_capacity)?,
+            parse_log_setting::<NonZeroU64>(KEY_LOG_MAX_FILE_BYTES, log_max_file_bytes)?,
+            parse_log_setting::<NonZeroU64>(KEY_LOG_MAX_TOTAL_BYTES, log_max_total_bytes)?,
+            parse_log_setting::<NonZeroU64>(
+                KEY_LOG_MAX_FILE_AGE_SECONDS,
+                log_max_file_age_seconds,
+            )?,
+        )?;
         let Some(catalog_page_size) = catalog_page_size else {
             return Err(ConfigError::MissingKey {
                 key: KEY_CATALOG_PAGE_SIZE,
@@ -262,6 +324,7 @@ impl NodeConfig {
             max_frame_len,
             queue_capacity,
             metrics_bind_addr,
+            log,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -306,6 +369,12 @@ pub enum ConfigError {
     /// The metrics bind address was not loopback, so v1 cannot serve it over HTTP.
     #[error("metrics endpoint {value} requires TLS and only loopback HTTP is supported")]
     MetricsRequiresTls { value: String },
+    /// A structured logging setting was not a positive integer.
+    #[error("invalid log setting {key}={value}")]
+    InvalidLogSetting { key: &'static str, value: String },
+    /// The structured logging settings were internally inconsistent.
+    #[error(transparent)]
+    Log(#[from] LogConfigError),
     /// The catalog page size was zero or not an integer.
     #[error("invalid catalog page size {value}")]
     InvalidCatalogPageSize { value: String },
@@ -357,6 +426,19 @@ fn parse_metrics_bind_addr(value: &str) -> Result<SocketAddr> {
     value
         .parse::<SocketAddr>()
         .map_err(|_| ConfigError::InvalidMetricsBindAddr {
+            value: value.to_owned(),
+        })
+}
+
+/// Parses a structured logging setting that must be a non-zero integer.
+fn parse_log_setting<T>(key: &'static str, value: &str) -> Result<T>
+where
+    T: core::str::FromStr,
+{
+    value
+        .parse::<T>()
+        .map_err(|_| ConfigError::InvalidLogSetting {
+            key,
             value: value.to_owned(),
         })
 }
@@ -467,10 +549,12 @@ mod tests {
 
     use super::{
         ConfigError, NodeConfig, NodeId, KEY_CATALOG_PAGE_SIZE, KEY_CATALOG_SNAPSHOT_TTL_MS,
-        KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR, KEY_MAX_FRAME_LEN,
-        KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR, KEY_NODE_ID, KEY_QUEUE_CAPACITY,
-        KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
+        KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR, KEY_LOG_FILE_PATH,
+        KEY_LOG_MAX_FILE_AGE_SECONDS, KEY_LOG_MAX_FILE_BYTES, KEY_LOG_MAX_TOTAL_BYTES,
+        KEY_LOG_QUEUE_CAPACITY, KEY_MAX_FRAME_LEN, KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR,
+        KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
+    use crate::logging::LogConfig;
 
     const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
     const SIGNING_KEY_PATH: &str = "/keys/signing.key";
@@ -489,6 +573,17 @@ mod tests {
 
     fn metrics_bind_addr() -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], 9100))
+    }
+
+    fn log_config() -> LogConfig {
+        LogConfig::new(
+            PathBuf::from("/tmp/storage-node.log"),
+            NonZeroUsize::new(16).expect("test queue capacity is non-zero"),
+            NonZeroU64::new(4096).expect("test file size is non-zero"),
+            NonZeroU64::new(65536).expect("test total size is non-zero"),
+            NonZeroU64::new(60).expect("test file age is non-zero"),
+        )
+        .expect("test log config is valid")
     }
 
     fn catalog_page_size() -> NonZeroUsize {
@@ -546,6 +641,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            log_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -576,6 +672,7 @@ mod tests {
                 max_frame_len(),
                 queue_capacity(),
                 metrics_bind_addr(),
+                log_config(),
                 catalog_page_size(),
                 catalog_snapshot_ttl_ms(),
                 max_source_name_len(),
@@ -599,6 +696,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            log_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -618,6 +716,7 @@ mod tests {
             max_frame_len(),
             queue_capacity(),
             metrics_bind_addr(),
+            log_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -640,6 +739,11 @@ mod tests {
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
             (KEY_METRICS_BIND_ADDR, "127.0.0.1:9100"),
+            (KEY_LOG_FILE_PATH, "/tmp/storage-node.log"),
+            (KEY_LOG_QUEUE_CAPACITY, "16"),
+            (KEY_LOG_MAX_FILE_BYTES, "4096"),
+            (KEY_LOG_MAX_TOTAL_BYTES, "65536"),
+            (KEY_LOG_MAX_FILE_AGE_SECONDS, "60"),
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
@@ -739,6 +843,11 @@ mod tests {
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
             (KEY_METRICS_BIND_ADDR, "127.0.0.1:9100"),
+            (KEY_LOG_FILE_PATH, "/tmp/storage-node.log"),
+            (KEY_LOG_QUEUE_CAPACITY, "16"),
+            (KEY_LOG_MAX_FILE_BYTES, "4096"),
+            (KEY_LOG_MAX_TOTAL_BYTES, "65536"),
+            (KEY_LOG_MAX_FILE_AGE_SECONDS, "60"),
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),

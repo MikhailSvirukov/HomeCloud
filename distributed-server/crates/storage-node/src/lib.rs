@@ -39,7 +39,9 @@
 //! codes ([`CatalogErrorCode`]) for invalid cursors, expired snapshots, and
 //! internal failures. The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
-//! loopback monitoring listener.
+//! loopback monitoring listener. Structured UTF-8 JSON Lines logging
+//! ([`LogEvent`], [`Logger`]) provides a bounded, non-blocking event API with
+//! size- and age-based rotation on the configured path.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -73,6 +75,7 @@ mod frame_buffer;
 mod framing;
 mod keys;
 mod listener;
+mod logging;
 mod message;
 mod metadata;
 mod metrics;
@@ -106,6 +109,10 @@ pub use frame_buffer::FrameBuffer;
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
 pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
+pub use logging::{
+    start_logging, ErrorCategory, EventType, LogConfig, LogConfigError, LogEvent, LogLevel, Logger,
+    Logging, OperationType, Outcome, StateChange,
+};
 pub use message::{decode_raft_rpc, encode_raft_rpc, MessageError, MessageType};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
