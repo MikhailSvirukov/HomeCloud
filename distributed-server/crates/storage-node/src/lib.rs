@@ -5,7 +5,11 @@
 //! bounded, size-classed payload buffer pool, the ordered payload chain and
 //! pooled chunk stream, the validated node identity/configuration model, the
 //! upload metadata model with the idempotent upload ledger, the receive-side
-//! frame buffer, the typed upload outcome codes ([`UploadStatus`] and
+//! frame buffer with inbound sequence validation primitives ([`FrameSequence`],
+//! [`FrameSequenceError`]), protocol version-list negotiation primitives
+//! ([`encode_version_list`], [`decode_version_list`], [`negotiate_version`],
+//! [`VersionError`], [`SUPPORTED_VERSION`], [`VERSION_LIST`]), the typed upload
+//! outcome codes ([`UploadStatus`] and
 //! [`ResponseError`]), and the frame reader/writer halves ([`FrameReader`],
 //! [`FrameWriter`]) with [`split_frames`] and the forwarding [`pump_frames`]
 //! plus its split-half variant [`pump_halves`], which move whole frames over an
@@ -94,6 +98,7 @@ mod config;
 mod connection;
 mod cpu_pool;
 mod frame_buffer;
+mod frame_sequence;
 mod framing;
 mod integrity;
 mod integrity_scan;
@@ -111,6 +116,7 @@ mod response;
 mod sealing;
 mod signing;
 mod storage_layout;
+mod version_negotiation;
 
 pub use blob_writer::{write_blob_direct, BlobWriteError, StoredBlob};
 pub use buffer_pool::{
@@ -137,6 +143,7 @@ pub use connection::{
 };
 pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::FrameBuffer;
+pub use frame_sequence::{FrameSequence, FrameSequenceError};
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
 pub use integrity::{verify_local_blob, BlobIntegrity, IntegrityError, CORRUPT_MARKER_SUFFIX};
 pub use integrity_scan::{
@@ -170,3 +177,7 @@ pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
 };
 pub use storage_layout::{LayoutError, StorageLayout};
+pub use version_negotiation::{
+    decode_version_list, encode_version_list, negotiate_version, VersionError, SUPPORTED_VERSION,
+    VERSION_LIST,
+};
