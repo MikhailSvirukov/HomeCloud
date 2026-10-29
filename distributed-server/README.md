@@ -41,6 +41,9 @@ clients; it does not relay Raft or blob traffic.
   configured page size, snapshot lifetime, and source-name limit),
   `src/catalog_error.rs` (maps catalog pager and service failures to the
   `0x0004_0001`, `0x0004_0002`, and `0x0008_0001` protocol error codes),
+  `src/catalog_exchange.rs` (client catalog page exchange codecs for the
+  seven-position external header, the operation-3 request, and the result
+  envelope),
   `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
@@ -71,6 +74,7 @@ clients; it does not relay Raft or blob traffic.
   `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
+  `catalog_exchange_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
@@ -196,6 +200,26 @@ and a larger value is rejected.
 Startup loads both private key files after the configuration is validated and before
 the listener binds, so a missing or unreadable key stops the process without opening a
 port.
+
+## Catalog page exchange
+
+A catalog page request goes directly from the client to a storage node as operation `3`.
+Its external header has seven positions in this order: `protocol_version` (`1`),
+`sender_id`, `request_id`, `frame_number`, `upload_id`, `responder_label`, and
+`bootstrap_signing_public_key`. A catalog request carries `upload_id = null` and
+`responder_label = null`; the bootstrap key is `null` for every message except primary
+registration, where `sender_id` is `null` and the key is the installation's open
+Ed25519 key. The logical header is `[3, login, password, [snapshot_token, cursor]]`,
+where both arguments are `null` on the first page and the unchanged 16-byte tokens from
+the previous response on a continuation page.
+
+The response repeats the request's `request_id`, carries `upload_id = null` and the
+responding storage node's public label in `responder_label`, and uses the logical result
+envelope `[result_code, result_args_array]`. A successful page (code `0`) carries
+`[snapshot_token, next_cursor, entries]`; every non-zero code carries an empty argument
+array. The codec validates the header positions and null rules, the operation code, the
+text types of the login and password, the token lengths, and the success and failure
+argument shapes. Signing, encryption, and credential checks are not implemented yet.
 
 ## Metrics
 

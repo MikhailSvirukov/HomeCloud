@@ -32,7 +32,12 @@
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API, together with the catalog entry, page, and
 //! request CBOR codecs ([`CatalogEntry`], [`CatalogPage`], [`CatalogRequest`],
-//! [`encode_page`], [`decode_request`]), and CSPRNG-backed catalog pagination
+//! [`encode_page`], [`decode_request`]), and the catalog client exchange codecs
+//! ([`ExternalHeader`], [`CatalogPageRequest`], [`encode_external_header`],
+//! [`decode_external_header`], [`encode_catalog_page_request`],
+//! [`decode_catalog_page_request`], [`encode_catalog_page_response`]) that
+//! assemble the seven-position external header, the client logical header, and
+//! the result envelope, and CSPRNG-backed catalog pagination
 //! snapshots ([`CatalogPager`], [`CatalogPagerError`]), and the catalog service
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
 //! entries and serves paginated catalog pages, and the catalog protocol error
@@ -77,6 +82,7 @@ mod blob_writer;
 mod buffer_pool;
 mod catalog;
 mod catalog_error;
+mod catalog_exchange;
 mod catalog_pager;
 mod catalog_service;
 mod codec;
@@ -112,6 +118,11 @@ pub use catalog::{
     CATALOG_TOKEN_LEN,
 };
 pub use catalog_error::CatalogErrorCode;
+pub use catalog_exchange::{
+    decode_catalog_page_request, decode_external_header, encode_catalog_page_request,
+    encode_catalog_page_response, encode_external_header, CatalogExchangeError, CatalogPageRequest,
+    ExternalHeader, BOOTSTRAP_KEY_LEN, EXTERNAL_PROTOCOL_VERSION, REQUEST_ID_LEN, SENDER_ID_LEN,
+};
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
 pub use catalog_service::{CatalogService, CatalogServiceError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
