@@ -13,7 +13,7 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | Section | Content | Requirement IDs and revisions |
 |---|---|---|
 | 1 | Scope and precedence | none (document metadata) |
-| 2 | Canonical encoding | `INT-NET-005 / 1`, `INT-NET-006 / 2`, `INT-NET-011 / 1`, `INT-NET-047 / 2`, `INT-NET-049 / 1`; field rules from `INT-NET-050 / 4`, `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-063 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `FR-DED-027 / 1` |
+| 2 | Canonical encoding | `INT-NET-005 / 1`, `INT-NET-006 / 2`, `INT-NET-081 / 1`, `INT-NET-011 / 1`, `INT-NET-047 / 2`, `INT-NET-049 / 1`; field rules from `INT-NET-050 / 4`, `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-063 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `FR-DED-027 / 1` |
 | 3 | Protocol version negotiation | `INT-NET-079 / 1`; `INT-NET-007 / 1` and `INT-NET-043 / 1` as the rejection rules named by `INT-NET-079` |
 | 4 | External frame header | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-050 / 4`; `INT-NET-009 / 1` and `INT-NET-011 / 1` for `upload_id`; `CFG-CL-031 / 1` for the label limit |
 | 4.1 | Frame body layout | `INT-NET-002 / 1`, `INT-NET-003 / 1`, `INT-NET-004 / 1`, `INT-NET-008 / 2`, `INT-NET-012 / 1`, `INT-NET-018 / 1`, `INT-NET-019 / 1`, `INT-NET-020 / 1`, `INT-NET-021 / 3`, `INT-NET-024 / 2`, `INT-NET-025 / 1`, `INT-NET-026 / 1`, `INT-NET-027 / 1`, `INT-NET-028 / 1`, `INT-NET-033 / 1`, `INT-NET-034 / 1`, `INT-NET-036 / 1`, `INT-NET-037 / 1`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-061 / 1`, `INT-NET-068 / 1`, `INT-NET-072 / 2`, `INT-NET-081 / 1`, `FR-UP-004 / 1`, `FR-UP-005 / 1`; `CFG-CL-021 / 1` for the server identity |
@@ -51,6 +51,8 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | upload `sha256` | 32 bytes | `INT-NET-052 / 4` |
 | registration `x25519_public_key` | 32 bytes | `INT-NET-058 / 1` |
 | registration `ed25519_public_key` | 32 bytes | `INT-NET-058 / 1` |
+| bootstrap `x25519_public_key` | 32 bytes | `INT-NET-034 / 1`, `INT-NET-081 / 1` |
+| bootstrap `ed25519_public_key` | 32 bytes | `INT-NET-034 / 1`, `INT-NET-081 / 1` |
 
 These are the only byte-string lengths fixed by the requirements cited in this contract.
 
@@ -93,8 +95,6 @@ primary registration: [1, null, <request_id>, <frame_number>, <upload_id or null
 
 The final position is `null` for an ordinary message because `bootstrap_signing_public_key` applies only to primary registration (`INT-NET-050 / 4`).
 
-
-
 ## 4.1 Frame body layout
 
 Every application frame has the following fixed byte order (`INT-NET-081 / 1`):
@@ -120,7 +120,7 @@ The signature covers the complete payload, including the HPKE encapsulated key a
 [<x25519_public_key>, <ed25519_public_key>]
 ```
 
-with two 32-byte CBOR byte strings (`INT-NET-034 / 1`, `INT-NET-081 / 1`). The frame is signed with the Ed25519 key whose public half is in that payload; the client cannot authenticate it independently, so it stores both keys without verification (`INT-NET-025 / 1`), verifies later frames against the stored key and rejects a later bootstrap frame that presents different material (`INT-NET-026 / 1`, `INT-NET-036 / 1`); the `sender_id` is not independently checked and is used only to identify the stored entry. The bootstrap signature therefore proves only possession of the key, not the identity of the server. The bootstrap frame carries the server's manifest `sender_id`, because the dedicated server always has one (`CFG-CL-021 / 1`); the `null`-`sender_id` form of §4 applies only to a client's primary-registration frame, whose header `bootstrap_signing_public_key` is checked against the registration arguments after decryption (`INT-NET-021 / 3`).
+with two 32-byte CBOR byte strings (`INT-NET-034 / 1`, `INT-NET-081 / 1`). The frame is signed with the Ed25519 key whose public half is in that payload; the client cannot authenticate it independently, so it stores both keys without verification (`INT-NET-025 / 1`), verifies later frames against the stored key and rejects a later bootstrap frame that presents different material (`INT-NET-026 / 1`, `INT-NET-036 / 1`); the `sender_id` is not independently checked. The bootstrap signature therefore proves only possession of the key, not the identity of the server. The bootstrap frame carries the server's manifest `sender_id`, because the dedicated server always has one (`CFG-CL-021 / 1`); the `null`-`sender_id` form of §4 applies only to a client's primary-registration frame, whose header `bootstrap_signing_public_key` is checked against the registration arguments after decryption (`INT-NET-021 / 3`).
 
 **Key resolution and verification order.** Before verifying a frame the receiver resolves the sender's Ed25519 key by the case at hand (`INT-NET-021 / 3`, `INT-NET-081 / 1`):
 
@@ -129,6 +129,7 @@ with two 32-byte CBOR byte strings (`INT-NET-034 / 1`, `INT-NET-081 / 1`). The f
 - a client's primary-registration frame (`sender_id` is `null`) has no registered installation to resolve the sender from; the receiver verifies the signature with the header `bootstrap_signing_public_key` before decryption, then requires the operation to be primary registration and the decrypted registration arguments to carry the same Ed25519 key (`INT-NET-021 / 3`).
 
 The receiver reads the prefix, rejects a value above the configured frame limit (`INT-NET-004 / 1`), reads the header, the signature and the payload, verifies the signature over all three byte ranges, and only then decrypts the payload (`INT-NET-020 / 1`, `INT-NET-081 / 1`). A failed signature closes the connection without an application result (`INT-NET-068 / 1`); the frame is never decrypted. Frame ordering and duplicate detection stay with `request_id` and `frame_number` (`INT-NET-008 / 2`, `INT-NET-012 / 1`).
+
 ## 5. Client logical header
 
 The logical header of a client request authenticated by an account begins with four elements in this order: operation type, login, password, and the operation-arguments array (`INT-NET-051 / 3`). The client logical schema is independent of the external-header schema (`INT-NET-048 / 2`), is a CBOR array rather than a map (`INT-NET-047 / 2`), and contains every schema position, using `null` for an optional element (`INT-NET-049 / 1`). The operation type is encoded as CBOR `uint32` in the minimal deterministic representation (`INT-NET-055 / 2`).
