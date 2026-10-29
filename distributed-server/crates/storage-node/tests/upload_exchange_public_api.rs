@@ -115,7 +115,10 @@ fn encodes_the_upload_request_as_a_golden_array() {
         .expect("the encoded upload request decodes");
 
     assert_eq!(decoded.login(), LOGIN);
-    assert_eq!(decoded.password(), PASSWORD);
+    assert!(
+        decoded.password() == PASSWORD,
+        "the password text is preserved without normalization"
+    );
     let decoded_request = decoded.request();
     assert_eq!(decoded_request.source_name, "a");
     assert_eq!(decoded_request.timestamp_ms, -1);
@@ -139,7 +142,10 @@ fn preserves_a_multibyte_source_name_without_normalization() {
         .expect("the six-byte source name is exactly at the limit");
 
     assert_eq!(decoded.login(), LOGIN);
-    assert_eq!(decoded.password(), PASSWORD);
+    assert!(
+        decoded.password() == PASSWORD,
+        "the password text is preserved without normalization"
+    );
     assert_eq!(decoded.request().source_name, source_name);
 }
 

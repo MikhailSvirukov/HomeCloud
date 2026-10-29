@@ -18,7 +18,7 @@ const CLIENT_LOGICAL_HEADER_LEN: usize = 4;
 const UPLOAD_ARGUMENTS_LEN: usize = 5;
 
 /// Decoded upload operation arguments.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct UploadRequest {
     /// Source media file name, stored exactly as received.
     pub source_name: String,
@@ -30,6 +30,19 @@ pub struct UploadRequest {
     pub compressed_size_bytes: u64,
     /// SHA-256 digest of the original bytes.
     pub sha256: ContentHash,
+}
+
+impl core::fmt::Debug for UploadRequest {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("UploadRequest")
+            .field("source_name_len", &self.source_name.len())
+            .field("timestamp_ms", &self.timestamp_ms)
+            .field("original_size_bytes", &self.original_size_bytes)
+            .field("compressed_size_bytes", &self.compressed_size_bytes)
+            .field("sha256", &self.sha256)
+            .finish()
+    }
 }
 
 /// Decoded upload request with its client credentials.
