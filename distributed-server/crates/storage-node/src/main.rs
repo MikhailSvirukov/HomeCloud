@@ -293,6 +293,7 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         shutdown_signal(),
         config.max_frame_len,
         config.queue_capacity,
+        Some(logger.clone()),
     )
     .await;
     metrics_task.abort();
