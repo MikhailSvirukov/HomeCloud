@@ -249,14 +249,14 @@ fn rejects_a_frame_shorter_than_the_prefix() {
 }
 
 #[test]
-fn rejects_a_body_shorter_than_the_header_and_signature() {
+fn rejects_a_body_that_cannot_contain_the_header_and_signature() {
     let header_bytes = encoded_header(&ordinary_header());
     let mut body = header_bytes;
     body.extend([0u8; 10]);
     let body_len = u32::try_from(body.len()).expect("the test body length fits in u32");
     let mut frame = body_len.to_be_bytes().to_vec();
     frame.extend(body);
-    assert!(matches!(decode(&frame), Err(SignedFrameError::TooShort)));
+    assert!(matches!(decode(&frame), Err(SignedFrameError::Decode)));
 }
 
 #[test]
@@ -266,10 +266,17 @@ fn rejects_malformed_header_cbor() {
     let body_len = u32::try_from(body.len()).expect("the test body length fits in u32");
     let mut frame = body_len.to_be_bytes().to_vec();
     frame.extend(body);
-    assert!(matches!(
-        decode(&frame),
-        Err(SignedFrameError::Decode) | Err(SignedFrameError::Header(_))
-    ));
+    assert!(matches!(decode(&frame), Err(SignedFrameError::Decode)));
+}
+
+#[test]
+fn rejects_an_external_header_with_the_wrong_shape() {
+    let mut body = vec![0x80];
+    body.extend([0u8; SIGNATURE_LEN]);
+    let body_len = u32::try_from(body.len()).expect("the test body length fits in u32");
+    let mut frame = body_len.to_be_bytes().to_vec();
+    frame.extend(body);
+    assert!(matches!(decode(&frame), Err(SignedFrameError::Header(_))));
 }
 
 #[test]
