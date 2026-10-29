@@ -5,8 +5,8 @@
 //! bounded, size-classed payload buffer pool, the ordered payload chain and
 //! pooled chunk stream, the validated node identity/configuration model, the
 //! upload metadata model with the idempotent upload ledger, the receive-side
-//! frame buffer with inbound sequence validation ([`FrameSequence`],
-//! [`FrameSequenceError`]), protocol version-list negotiation
+//! frame buffer with inbound sequence validation primitives ([`FrameSequence`],
+//! [`FrameSequenceError`]), protocol version-list negotiation primitives
 //! ([`encode_version_list`], [`decode_version_list`], [`negotiate_version`],
 //! [`VersionError`], [`SUPPORTED_VERSION`], [`VERSION_LIST`]), the typed upload
 //! outcome codes ([`UploadStatus`] and

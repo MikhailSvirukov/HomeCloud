@@ -49,6 +49,19 @@ fn rejects_a_gap_and_a_repeated_frame_number() {
             actual: 0
         })
     ));
+    assert!(
+        sequence.accept(1).is_ok(),
+        "a rejected number does not advance the sequence"
+    );
+
+    let mut fresh = FrameSequence::new();
+    assert!(matches!(
+        fresh.accept(1),
+        Err(FrameSequenceError::OutOfOrder {
+            expected: 0,
+            actual: 1
+        })
+    ));
 }
 
 #[test]
@@ -61,6 +74,10 @@ fn encodes_and_decodes_the_v1_version_list() {
 
     let versions = decode_version_list(&encoded).expect("the encoded v1 list decodes");
     assert_eq!(versions.as_slice(), &[1][..]);
+
+    let multi = [0x82, 0x02, 0x01];
+    let versions = decode_version_list(&multi).expect("a two-element version list decodes");
+    assert_eq!(versions, vec![2, 1]);
 
     let negotiated = negotiate_version(&[1]).expect("version 1 is offered by the peer");
     assert_eq!(negotiated, 1);

@@ -2,6 +2,8 @@
 //!
 //! SRS: `INT-NET-008 / 2`.
 
+type Result<T> = core::result::Result<T, FrameSequenceError>;
+
 /// Tracks the next expected frame number for one sequence.
 #[derive(Debug)]
 pub struct FrameSequence {
@@ -21,7 +23,7 @@ impl FrameSequence {
     }
 
     /// Accepts the next frame number; the first accepted value is `0`.
-    pub fn accept(&mut self, frame_number: u32) -> Result<(), FrameSequenceError> {
+    pub fn accept(&mut self, frame_number: u32) -> Result<()> {
         let Some(expected) = self.next else {
             return Err(FrameSequenceError::Exhausted);
         };

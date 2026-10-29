@@ -239,16 +239,17 @@ handling are separate from the handler.
 
 Frame numbers of one client sequence start at `0`; each following frame increases
 the number by exactly one. A gap, a repeat, or a number after `u32::MAX` is
-rejected before the frame is processed, so a sequence never wraps around and the
-`uint32` space is finite. The check is stateful per sequence and does not accept a
-rejected number as if it had advanced the sequence.
+reported as a sequence error, so a sequence never wraps around and the `uint32`
+space is finite. The check is stateful per sequence and does not accept a
+rejected number as if it had advanced the sequence; wiring the validator into the
+frame path is a later increment.
 
 Connection negotiation uses the one-element version list `[1]`
 (`SUPPORTED_VERSION` is `1`). The list encodes as the CBOR array `[1]`
 (`0x81 0x01`). A well-formed remote list that contains `1` selects version `1`,
 even when it also offers other versions. A list with no version `1`, including an
-empty list, is refused as having no common version; the connection is closed
-without processing application requests. The list decoder rejects values that are
+empty list, is reported as having no common version; the connection layer that
+closes on this result is a later increment. The list decoder rejects values that are
 not a CBOR array, elements that are not `uint32` values, and trailing bytes. It
 keeps well-formed entries for other version numbers, so support is decided by
 negotiation rather than by the decoder.

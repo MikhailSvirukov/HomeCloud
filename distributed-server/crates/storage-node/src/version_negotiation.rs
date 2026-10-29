@@ -4,8 +4,10 @@
 
 use ciborium::value::Value;
 
-/// Protocol version supported by every v1 implementation.
-pub const SUPPORTED_VERSION: u32 = 1;
+type Result<T> = core::result::Result<T, VersionError>;
+
+/// Protocol version supported by every v1 implementation; the external header carries the same value.
+pub const SUPPORTED_VERSION: u32 = crate::framing::PROTOCOL_VERSION as u32;
 
 /// The complete v1 version advertisement list.
 pub const VERSION_LIST: [u32; 1] = [SUPPORTED_VERSION];
@@ -31,7 +33,7 @@ pub enum VersionError {
 }
 
 /// Encodes the v1 advertisement list `[1]` as CBOR.
-pub fn encode_version_list() -> Result<Vec<u8>, VersionError> {
+pub fn encode_version_list() -> Result<Vec<u8>> {
     let value = Value::Array(vec![Value::Integer(SUPPORTED_VERSION.into())]);
     let mut bytes = Vec::new();
     ciborium::ser::into_writer(&value, &mut bytes).map_err(|_| VersionError::Encode)?;
@@ -39,7 +41,7 @@ pub fn encode_version_list() -> Result<Vec<u8>, VersionError> {
 }
 
 /// Decodes a CBOR version list and rejects trailing bytes.
-pub fn decode_version_list(bytes: &[u8]) -> Result<Vec<u32>, VersionError> {
+pub fn decode_version_list(bytes: &[u8]) -> Result<Vec<u32>> {
     let mut slice = bytes;
     let value: Value = ciborium::de::from_reader(&mut slice).map_err(|_| VersionError::Decode)?;
     if !slice.is_empty() {
@@ -62,7 +64,7 @@ pub fn decode_version_list(bytes: &[u8]) -> Result<Vec<u32>, VersionError> {
 }
 
 /// Selects version `1` when the peer advertises it.
-pub fn negotiate_version(peer_versions: &[u32]) -> Result<u32, VersionError> {
+pub fn negotiate_version(peer_versions: &[u32]) -> Result<u32> {
     if !peer_versions.contains(&SUPPORTED_VERSION) {
         return Err(VersionError::NoCommonVersion);
     }
