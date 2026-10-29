@@ -45,7 +45,10 @@ clients; it does not relay Raft or blob traffic.
   seven-position external header, the operation-3 request, and the result
   envelope), `src/upload_exchange.rs` (operation-4 upload request codec with the
   five upload arguments and the source-name and file-size limits),
-  `src/catalog_handler.rs` (maps first-page and continuation
+  `src/upload_error.rs` (typed upload protocol error codes that map upload
+  request, blob-write, integrity, and frame-sequence failures to the
+  `INT-NET-064` table entries, with storage-capacity detection left to a future
+  increment), `src/catalog_handler.rs` (maps first-page and continuation
   requests to catalog pages and encodes the result envelope),
   `src/listener.rs` (binds
   the node's listen address
@@ -84,6 +87,7 @@ clients; it does not relay Raft or blob traffic.
   `catalog_error_codes_public_api.rs`,
   `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
   `upload_exchange_public_api.rs`, `upload_outcomes_public_api.rs`,
+  `upload_error_codes_public_api.rs`,
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
@@ -115,7 +119,10 @@ lifetime, and source-name limit, the typed catalog error codes that map pager
 and service failures to the `0x0004_0001`, `0x0004_0002`, and `0x0008_0001`
 protocol table entries, the upload request codec for operation `4` with its five
 argument positions, exact source-name preservation, and name/size limits, the typed
-upload outcomes (status codes), and the TCP
+upload outcomes (status codes), the typed upload protocol error codes that map
+upload request, blob-write, integrity, and frame-sequence failures to their
+`INT-NET-064` table entries while publishing `0x0007_0002` for storage-capacity
+exhaustion ahead of capacity detection, and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
 compression/crypto work off the Tokio worker threads, and the node runtime that
