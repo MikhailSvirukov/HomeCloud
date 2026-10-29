@@ -37,7 +37,10 @@
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
 //! entries and serves paginated catalog pages, and the catalog protocol error
 //! codes ([`CatalogErrorCode`]) for invalid cursors, expired snapshots, and
-//! internal failures. The Prometheus-compatible metrics endpoint
+//! internal failures, and local blob integrity verification ([`verify_local_blob`],
+//! [`BlobIntegrity`], [`IntegrityError`]) that streams a committed blob, compares
+//! its SHA-256 with the committed hash, and marks a mismatch with a
+//! `<blob>.corrupt` sidecar marker. The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! loopback monitoring listener. Structured UTF-8 JSON Lines logging
 //! ([`LogEvent`], [`Logger`]) provides a bounded, non-blocking event API with
@@ -73,6 +76,7 @@ mod connection;
 mod cpu_pool;
 mod frame_buffer;
 mod framing;
+mod integrity;
 mod keys;
 mod listener;
 mod logging;
@@ -107,6 +111,7 @@ pub use connection::{
 pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::FrameBuffer;
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
+pub use integrity::{verify_local_blob, BlobIntegrity, IntegrityError, CORRUPT_MARKER_SUFFIX};
 pub use keys::{KeyError, PrivateKey, KEY_LEN};
 pub use listener::{Listener, ListenerError};
 pub use logging::{

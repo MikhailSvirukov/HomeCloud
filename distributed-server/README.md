@@ -49,7 +49,10 @@ clients; it does not relay Raft or blob traffic.
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
   worker threads), `src/node.rs` (node runtime: serves frame connections on
   a bound listener until shutdown), `src/storage_layout.rs` (on-disk
-  layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`), `src/raft/`
+  layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`),
+  `src/integrity.rs` (local blob integrity check that streams the stored blob,
+  compares its SHA-256 with the committed hash, and keeps a `<blob>.corrupt`
+  marker), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
   persistence), `src/message.rs` (inter-server `[message_type,
@@ -69,7 +72,8 @@ clients; it does not relay Raft or blob traffic.
   `listener_public_api.rs`, `metrics_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
-  `signing_public_api.rs`, `sealing_public_api.rs`, `message_public_api.rs`,
+  `integrity_public_api.rs`, `signing_public_api.rs`, `sealing_public_api.rs`,
+  `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
@@ -110,7 +114,11 @@ set of storage nodes that durably hold the blob. A committed version's blob
 replica set can be replaced through a Raft update, and the new set is applied on
 every node with the catalog. The persisted Raft state file records a format
 version. `raft_cluster_public_api.rs` covers restart recovery, blob replica-set
-updates, and a returning node catching up committed entries. The connection
+updates, and a returning node catching up committed entries. A local committed
+blob is checked by streaming it, comparing its SHA-256 with the committed hash,
+and creating a `<blob>.corrupt` marker when the hashes differ; a later check
+that matches the committed hash removes the marker. `integrity_public_api.rs`
+covers the healthy, mismatching, restored, and missing paths. The connection
 actors and `io_uring` are not implemented yet.
 Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
