@@ -174,6 +174,17 @@ pub enum WireError {
         /// Zero-based argument index.
         index: usize,
     },
+    /// A response answer carries an unexpected result code.
+    #[error("unexpected result code {0} in a success answer")]
+    UnexpectedResultCode(u32),
+    /// An answer does not follow the schema its success shape fixes.
+    #[error("invalid answer field {field}: {reason}")]
+    InvalidAnswer {
+        /// Answer field that violates the schema.
+        field: &'static str,
+        /// What the success shape requires.
+        reason: &'static str,
+    },
     /// Bytes remain after the CBOR value.
     #[error("unexpected trailing bytes after the CBOR value")]
     TrailingBytes,

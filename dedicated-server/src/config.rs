@@ -187,6 +187,11 @@ pub struct NodeId([u8; NODE_ID_BYTES]);
 pub struct PublicKey([u8; PUBLIC_KEY_BYTES]);
 
 impl NodeId {
+    /// Build an identifier from its raw bytes.
+    pub fn from_bytes(bytes: [u8; NODE_ID_BYTES]) -> Self {
+        Self(bytes)
+    }
+
     /// Raw identifier bytes.
     pub fn as_bytes(&self) -> &[u8; NODE_ID_BYTES] {
         &self.0
@@ -194,6 +199,11 @@ impl NodeId {
 }
 
 impl PublicKey {
+    /// Build a public key from its raw bytes.
+    pub fn from_bytes(bytes: [u8; PUBLIC_KEY_BYTES]) -> Self {
+        Self(bytes)
+    }
+
     /// Raw public key bytes.
     pub fn as_bytes(&self) -> &[u8; PUBLIC_KEY_BYTES] {
         &self.0
