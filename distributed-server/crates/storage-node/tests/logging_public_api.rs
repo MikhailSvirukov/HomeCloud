@@ -382,6 +382,26 @@ async fn rotates_an_aged_current_file_at_startup() {
 }
 
 #[tokio::test]
+async fn counts_an_oversized_event_as_a_write_error() {
+    let directory = TempDir::new().expect("test temp dir is created");
+    let path = directory.path().join(EVENT_FILE);
+    let logging = start_logging(log_config(path, 16, 1, 1, MAX_FILE_AGE_SECONDS))
+        .expect("structured logging starts");
+    let logger = logging.logger().clone();
+
+    logger.log(LogEvent::state_change(LogLevel::Info, StateChange::Started));
+    tokio::task::yield_now().await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    assert!(
+        logger.write_errors() >= 1,
+        "an event larger than the file limit is counted as a write error"
+    );
+    drop(logger);
+    logging.shutdown().await;
+}
+
+#[tokio::test]
 async fn configures_the_log_file_path() {
     let directory = TempDir::new().expect("test temp dir is created");
     let path = directory.path().join("sub").join(EVENT_FILE);

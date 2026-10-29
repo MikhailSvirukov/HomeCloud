@@ -316,13 +316,19 @@ pub fn start_logging(config: LogConfig) -> io::Result<Logging> {
         }
     }
     let (file, length) = open_current_file(&config.path)?;
+    let opened = std::fs::metadata(&config.path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .and_then(|age| Instant::now().checked_sub(age))
+        .unwrap_or_else(Instant::now);
     let (sender, receiver) = mpsc::channel(config.queue_capacity.get());
     let write_errors = Arc::new(AtomicU64::new(0));
     let writer = Writer {
         config,
         file,
         length,
-        opened: Instant::now(),
+        opened,
         write_errors: Arc::clone(&write_errors),
     };
     let runtime = tokio::runtime::Handle::try_current()

@@ -379,6 +379,11 @@ fn from_pairs_with_zero_catalog_page_size_reports_invalid_catalog_page_size() {
         (KEY_CATALOG_PAGE_SIZE, "0"),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
     ]);
 
     assert_eq!(
@@ -403,6 +408,11 @@ fn from_pairs_with_unparsable_catalog_page_size_reports_invalid_catalog_page_siz
         (KEY_CATALOG_PAGE_SIZE, "not-a-number"),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOG_FILE_PATH, LOG_FILE_PATH),
+        (KEY_LOG_QUEUE_CAPACITY, LOG_QUEUE_CAPACITY),
+        (KEY_LOG_MAX_FILE_BYTES, LOG_MAX_FILE_BYTES),
+        (KEY_LOG_MAX_TOTAL_BYTES, LOG_MAX_TOTAL_BYTES),
+        (KEY_LOG_MAX_FILE_AGE_SECONDS, LOG_MAX_FILE_AGE_SECONDS),
     ]);
 
     assert_eq!(
