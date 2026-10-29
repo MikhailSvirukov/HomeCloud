@@ -178,8 +178,10 @@ pub enum WireError {
     #[error("unexpected result code {0} in a success answer")]
     UnexpectedResultCode(u32),
     /// An answer does not follow the schema its success shape fixes.
-    #[error("invalid answer: {reason}")]
+    #[error("invalid answer field {field}: {reason}")]
     InvalidAnswer {
+        /// Answer field that violates the schema.
+        field: &'static str,
         /// What the success shape requires.
         reason: &'static str,
     },
