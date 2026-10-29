@@ -75,9 +75,11 @@ clients; it does not relay Raft or blob traffic.
   version lists and negotiation that selects protocol version `1`),
   `src/message.rs` (inter-server `[message_type,
   args]` envelope with `message_type = 3` for Raft RPCs), `src/signing.rs`
-  (Ed25519 message signing/verification with a redacted signing key), and
+  (Ed25519 message signing/verification with a redacted signing key),
   `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
-  and AES-256-GCM).
+  and AES-256-GCM), and `src/signed_frame.rs` (signed application frame body
+  with the length prefix, external header, Ed25519 signature, opaque payload,
+  and first-contact bootstrap payload codecs).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `frame_validation_public_api.rs`,
@@ -97,7 +99,7 @@ clients; it does not relay Raft or blob traffic.
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
-  `message_public_api.rs`,
+  `signed_frame_public_api.rs`, `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
@@ -257,8 +259,9 @@ envelope `[result_code, result_args_array]`. A successful page (code `0`) carrie
 `[snapshot_token, next_cursor, entries]`; every non-zero code carries an empty argument
 array. The codec validates the header positions and null rules, the operation code, the
 text types of the login and password, the token lengths, and the success and failure
-argument shapes. Signing and encryption are not implemented yet; the client-header
-codecs enforce the configured login, password, and responder-label byte limits.
+argument shapes. The catalog page exchange codec does not sign or encrypt; the
+client-header codecs enforce the configured login, password, and responder-label byte
+limits, and signed application frames are described below.
 
 The catalog page handler maps a first-page request (`[null, null]`) to the first
 page of a new snapshot and a continuation request (`[snapshot_token, cursor]`) to
@@ -311,6 +314,31 @@ closes on this result is a later increment. The list decoder rejects values that
 not a CBOR array, elements that are not `uint32` values, and trailing bytes. It
 keeps well-formed entries for other version numbers, so support is decided by
 negotiation rather than by the decoder.
+
+## Signed application frames
+
+A signed application frame body is the bytes after the 4-byte big-endian length prefix.
+The prefix value is the body length and equals the sum of the encoded external header,
+the 64-byte Ed25519 signature, and the payload. The body order is fixed: external header,
+signature, payload. The external header keeps its seven positions from the catalog page
+exchange. The signature covers the 4 prefix bytes, every encoded header byte, and the
+payload; it does not cover itself.
+
+A receiver first checks that the declared body length does not exceed the configured
+maximum and matches the received body, then decodes the header, then verifies the
+signature over the prefix, header, and payload. The payload is not returned or decrypted
+until the signature verifies. A declared body length above the maximum is rejected as
+`FrameTooLarge`; a frame shorter than the prefix is rejected as `TooShort`; a declared
+length that differs from the body is rejected as `LengthMismatch`; and a signature that
+does not verify over the prefix, header, and payload, including one checked with another
+verifying key, is rejected as `InvalidSignature`.
+
+The only unencrypted payload is the first-contact bootstrap payload: the CBOR array
+`[x25519_public_key, ed25519_public_key]` of two 32-byte CBOR byte strings, encoded as
+`0x82 0x58 0x20` followed by the 32 X25519 bytes, then `0x58 0x20` followed by the 32
+Ed25519 bytes. The frame is signed with the Ed25519 key whose public key it carries, so a
+valid signature proves key possession rather than server identity. The codec also rejects
+a bootstrap payload with a different arity or key length and any trailing bytes.
 
 ## Metrics
 

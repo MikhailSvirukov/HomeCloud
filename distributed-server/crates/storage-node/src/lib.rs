@@ -25,7 +25,12 @@
 //! owner-only files, Ed25519 message signing/verification
 //! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and HPKE
 //! Base-mode message sealing ([`seal`], [`open`]) with X25519, HKDF-SHA-256, and
-//! AES-256-GCM, and the local
+//! AES-256-GCM, the signed application frame body ([`encode_signed_frame`],
+//! [`decode_signed_frame`], [`SignedApplicationFrame`], [`SignedFrameError`])
+//! that prefixes the external header, a 64-byte Ed25519 signature over the
+//! prefix, header, and payload, and the opaque payload, the first-contact
+//! bootstrap payload ([`encode_bootstrap_payload`], [`decode_bootstrap_payload`],
+//! [`BootstrapPayload`]), and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
 //! commits the full upload version metadata, including the SHA-256, the
 //! client-supplied capture/creation time, and the server acceptance time
@@ -127,6 +132,7 @@ mod payload_stream;
 mod raft;
 mod response;
 mod sealing;
+mod signed_frame;
 mod signing;
 mod storage_layout;
 mod upload_error;
@@ -147,7 +153,7 @@ pub use catalog_error::CatalogErrorCode;
 pub use catalog_exchange::{
     decode_catalog_page_request, decode_external_header, encode_catalog_page_request,
     encode_catalog_page_response, encode_external_header, CatalogExchangeError, CatalogPageRequest,
-    ExternalHeader, BOOTSTRAP_KEY_LEN, EXTERNAL_PROTOCOL_VERSION, REQUEST_ID_LEN, SENDER_ID_LEN,
+    ExternalHeader, EXTERNAL_PROTOCOL_VERSION, REQUEST_ID_LEN, SENDER_ID_LEN,
 };
 pub use catalog_handler::{CatalogHandlerError, CatalogPageHandler};
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
@@ -191,6 +197,10 @@ pub use response::{ResponseError, UploadStatus};
 pub use sealing::{
     open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, ENCAPSULATED_KEY_LEN,
     X25519_KEY_LEN,
+};
+pub use signed_frame::{
+    decode_bootstrap_payload, decode_signed_frame, encode_bootstrap_payload, encode_signed_frame,
+    BootstrapPayload, SignedApplicationFrame, SignedFrameError, BOOTSTRAP_KEY_LEN,
 };
 pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
