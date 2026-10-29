@@ -43,7 +43,9 @@ clients; it does not relay Raft or blob traffic.
   `0x0004_0001`, `0x0004_0002`, and `0x0008_0001` protocol error codes),
   `src/catalog_exchange.rs` (client catalog page exchange codecs for the
   seven-position external header, the operation-3 request, and the result
-  envelope), `src/catalog_handler.rs` (maps first-page and continuation
+  envelope), `src/upload_exchange.rs` (operation-4 upload request codec with the
+  five upload arguments and the source-name and file-size limits),
+  `src/catalog_handler.rs` (maps first-page and continuation
   requests to catalog pages and encodes the result envelope),
   `src/listener.rs` (binds
   the node's listen address
@@ -81,7 +83,7 @@ clients; it does not relay Raft or blob traffic.
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
   `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
-  `upload_outcomes_public_api.rs`,
+  `upload_exchange_public_api.rs`, `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
@@ -111,8 +113,9 @@ evicted when a new snapshot starts, the catalog service that maps the committed
 Raft catalog to paginated catalog pages using the configured page size, snapshot
 lifetime, and source-name limit, the typed catalog error codes that map pager
 and service failures to the `0x0004_0001`, `0x0004_0002`, and `0x0008_0001`
-protocol table entries, the typed upload
-outcomes (status codes), and the TCP
+protocol table entries, the upload request codec for operation `4` with its five
+argument positions, exact source-name preservation, and name/size limits, the typed
+upload outcomes (status codes), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
 compression/crypto work off the Tokio worker threads, and the node runtime that
@@ -234,6 +237,31 @@ code `0` and `[snapshot_token, next_cursor, entries]`; an invalid cursor uses
 `0x0004_0001` with an empty argument array, and an unknown or expired snapshot
 uses `0x0004_0002` with an empty argument array. Credential checks and transport
 handling are separate from the handler.
+
+## Upload request exchange
+
+A media upload goes directly from the client to a storage node as operation `4`. Its
+logical header is `[4, login, password, [source_name, timestamp_ms,
+original_size_bytes, compressed_size_bytes, sha256]]`. The operation code is encoded as
+a minimal `uint32`; an unknown operation code is rejected. The login and password are
+CBOR text strings, and the login must be non-empty and use the permitted ASCII set.
+
+The upload argument array has exactly five positions in this order:
+
+- `source_name` — the original media file name as a UTF-8 CBOR text string. It is kept
+  exactly as received, without trimming spaces or Unicode normalization, and is
+  compared by its exact Unicode content. It must be non-empty and no longer than
+  `MAX_SOURCE_NAME_LEN` UTF-8 bytes.
+- `timestamp_ms` — the upload time as a signed 64-bit CBOR integer.
+- `original_size_bytes` — the original uncompressed size as an unsigned CBOR integer.
+- `compressed_size_bytes` — the compressed size as an unsigned CBOR integer.
+- `sha256` — the SHA-256 digest of the original bytes as a 32-byte CBOR byte string.
+
+Both sizes must be no larger than the maximum file size passed to the codec along with
+the source-name limit. The codec rejects wrong top-level or argument array lengths,
+wrong value types, invalid logins, empty or over-long source names, sizes above the
+limit, hashes that are not 32 bytes, and trailing bytes. Signing, encryption, and
+credential checks are separate from the codec.
 
 ## Frame validation and version negotiation
 
