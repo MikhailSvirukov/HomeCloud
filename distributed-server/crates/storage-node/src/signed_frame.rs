@@ -1,7 +1,7 @@
 //! Signed application frame body.
 //!
 //! SRS: `INT-NET-018 / 1`, `INT-NET-019 / 1`, `INT-NET-020 / 1`,
-//! `INT-NET-021 / 3`, `INT-NET-028 / 1`, `INT-NET-034 / 1`, `INT-NET-081 / 1`.
+//! `INT-NET-028 / 1`, `INT-NET-034 / 1`, `INT-NET-081 / 1`.
 
 use core::num::NonZeroU32;
 use std::fmt;
@@ -17,7 +17,7 @@ use crate::framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN};
 use crate::signing::{MessageSigningKey, MessageVerifyingKey, SIGNATURE_LEN};
 
 /// Length of an X25519 or Ed25519 public key in a bootstrap payload.
-pub const BOOTSTRAP_KEY_LEN: usize = 32;
+pub use crate::catalog_exchange::BOOTSTRAP_KEY_LEN;
 
 /// Number of keys carried by a bootstrap payload.
 const BOOTSTRAP_KEY_COUNT: usize = 2;
