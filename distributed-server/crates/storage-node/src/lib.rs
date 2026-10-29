@@ -41,7 +41,10 @@
 //! [`decode_external_header`], [`encode_catalog_page_request`],
 //! [`decode_catalog_page_request`], [`encode_catalog_page_response`]) that
 //! assemble the seven-position external header, the client logical header, and
-//! the result envelope, and CSPRNG-backed catalog pagination
+//! the result envelope, the upload request header codec
+//! ([`UploadRequest`], [`UploadRequestHeader`], [`decode_upload_request`],
+//! [`encode_upload_request`]) that validates the upload operation arguments, and
+//! CSPRNG-backed catalog pagination
 //! snapshots ([`CatalogPager`], [`CatalogPagerError`]), and the catalog service
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
 //! entries and serves paginated catalog pages, and the catalog protocol error
@@ -116,6 +119,7 @@ mod response;
 mod sealing;
 mod signing;
 mod storage_layout;
+mod upload_exchange;
 mod version_negotiation;
 
 pub use blob_writer::{write_blob_direct, BlobWriteError, StoredBlob};
@@ -177,6 +181,10 @@ pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
 };
 pub use storage_layout::{LayoutError, StorageLayout};
+pub use upload_exchange::{
+    decode_upload_request, encode_upload_request, UploadExchangeError, UploadRequest,
+    UploadRequestHeader,
+};
 pub use version_negotiation::{
     decode_version_list, encode_version_list, negotiate_version, VersionError, SUPPORTED_VERSION,
     VERSION_LIST,
