@@ -19,6 +19,9 @@ import java.util.logging.Logger
  * The cycle is synchronous and performs blocking store I/O; threading and backgrounding belong to
  * the caller.
  *
+ * A failed upload is retried by the next cycle (`FR-AND-027 / 1`). The attempt budget applies to
+ * the attempts within a cycle, because a requeue starts a fresh budget.
+ *
  * Each completed cycle reports how many candidates were discovered, newly enqueued, and refused
  * because the queue had reached its configured capacity (`CFG-AND-002 / 2`). Already accepted
  * entries are persisted untouched when the queue is full (`NFR-REL-001 / 1`). The result of the
@@ -35,15 +38,17 @@ internal class BackupCycleRunner(
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     /**
-     * Restores the stored snapshot before planning, so work that is already queued is known and not
-     * planned again, then plans newly discovered media into the queue, then persists it, so the
-     * newly queued work survives a restart. Reports a completed cycle through the log, including
-     * any candidates rejected by capacity, or reports a failure and rethrows it unchanged.
+     * Restores the stored snapshot, requeues the entries left failed by a previous attempt so they
+     * become pending for this cycle, plans newly discovered media without repeating queued work,
+     * and persists the queue, so the newly queued and requeued work survives a restart. Reports a
+     * completed cycle through the log, including any candidates rejected by capacity, or reports a
+     * failure and rethrows it unchanged.
      */
     fun runOnce(): PlanResult {
         val planResult =
             try {
                 planner.queue.restore(store.read())
+                planner.queue.requeueFailed()
                 val planned = planner.plan()
                 store.write(planner.queue.entries())
                 planned
