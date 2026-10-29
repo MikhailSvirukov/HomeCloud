@@ -147,7 +147,7 @@ async fn scan_completes_with_a_single_concurrency_permit() {
     assert_eq!(report.errors, 0, "no scan task failed");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn loop_reports_on_the_configured_period_and_stops_on_shutdown() {
     let (_temp, layout) = empty_layout();
     let payload = b"healthy committed blob";
@@ -157,7 +157,7 @@ async fn loop_reports_on_the_configured_period_and_stops_on_shutdown() {
 
     let period_seconds = NonZeroU64::new(1).expect("the test period is non-zero");
     let config = IntegrityScanConfig::new(period_seconds, concurrency(1));
-    let (report_tx, mut report_rx) = mpsc::channel(1);
+    let (report_tx, mut report_rx) = mpsc::channel(4);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
     let scan = tokio::spawn(run_integrity_scan_loop(
@@ -172,11 +172,27 @@ async fn loop_reports_on_the_configured_period_and_stops_on_shutdown() {
         },
     ));
 
-    let first = tokio::time::timeout(Duration::from_secs(3), report_rx.recv())
+    let first = report_rx
+        .recv()
         .await
-        .expect("the configured period delivers a report in time")
-        .expect("the scan loop keeps its report sender alive");
+        .expect("the first scan delivers a report");
     assert_eq!(first.checked, 1, "the report covers the committed blob");
+    let first_at = tokio::time::Instant::now();
+    assert!(
+        report_rx.try_recv().is_err(),
+        "no second report arrives before the configured period"
+    );
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let second = report_rx
+        .recv()
+        .await
+        .expect("the configured period delivers a second report");
+    assert_eq!(second.checked, 1, "the repeat scan covers the blob");
+    assert!(
+        tokio::time::Instant::now().duration_since(first_at) >= Duration::from_secs(1),
+        "reports are separated by the configured period"
+    );
 
     shutdown_tx
         .send(())

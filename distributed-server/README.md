@@ -220,15 +220,19 @@ category.
 
 ## Integrity scan
 
-The node scans every committed blob it holds on the configured period. Each scan
-streams the local blob and compares its SHA-256 with the hash in the committed
-metadata, checking at most `INTEGRITY_SCAN_MAX_CONCURRENT` blobs at once. Every
-scan produces a report with the number of digest-checked blobs, the upload ids
-whose local bytes differ from the committed hash, the upload ids whose file is
-absent, and the number of read or marker failures. A mismatch creates the
-`<blob>.corrupt` marker for that copy; a later matching check removes it.
-Missing blobs and errors are reported without stopping the rest of the scan or
-the next period. The scan loop keeps running until its shutdown signal resolves.
+The integrity scanner walks the committed versions supplied by its source on the
+configured period. Each scan streams the local blob and compares its SHA-256 with
+the hash in the committed metadata, checking at most
+`INTEGRITY_SCAN_MAX_CONCURRENT` blobs at once. The source must yield only versions
+held by this node. Every scan produces a report with the number of digest-checked
+blobs, the upload ids whose local bytes differ from the committed hash, the
+upload ids whose file is absent, and the number of layout, permit, task-join,
+read, or marker failures. A mismatch creates the `<blob>.corrupt` marker for
+that copy; a later matching check removes it. Missing blobs and errors are
+reported without stopping the rest of the scan or the next period. The scan loop
+keeps running until its shutdown signal resolves. The node runtime does not start
+the loop yet; it becomes active when the runtime exposes the committed catalog
+source.
 
 ## Build and test
 

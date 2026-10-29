@@ -48,7 +48,10 @@ pub struct IntegrityScanReport {
     pub errors: usize,
 }
 
-/// Verifies every committed blob in parallel up to the configured limit.
+/// Verifies every supplied committed blob in parallel up to the configured limit.
+///
+/// The caller must pass only versions whose replica set includes this node;
+/// absent files for other nodes' blobs would otherwise be reported as missing.
 pub async fn scan_committed_blobs(
     layout: &StorageLayout,
     versions: Vec<CommittedVersion>,
@@ -92,6 +95,9 @@ pub async fn scan_committed_blobs(
 }
 
 /// Runs the integrity scan on the configured period until `shutdown` resolves, reporting each scan.
+///
+/// `source` must yield only committed versions whose replica set includes this
+/// node; passing the whole cluster catalog would report other nodes' blobs as missing.
 pub async fn run_integrity_scan_loop<F, S, R>(
     layout: StorageLayout,
     source: S,
