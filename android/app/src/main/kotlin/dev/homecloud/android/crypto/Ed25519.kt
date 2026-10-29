@@ -7,11 +7,26 @@ import org.bouncycastle.crypto.signers.Ed25519Signer
 
 /**
  * An Ed25519 signing key pair in its fixed 32-byte seed and 32-byte public key encoding.
+ *
+ * Two key pairs are equal when both of their key byte arrays are equal.
  */
 internal class Ed25519KeyPair(
     val privateKey: ByteArray,
     val publicKey: ByteArray,
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) {
+            return true
+        }
+        if (other !is Ed25519KeyPair) {
+            return false
+        }
+        return privateKey.contentEquals(other.privateKey) &&
+            publicKey.contentEquals(other.publicKey)
+    }
+
+    override fun hashCode(): Int = 31 * privateKey.contentHashCode() + publicKey.contentHashCode()
+}
 
 /**
  * Ed25519 signing and verification (`INT-NET-018`, `INT-NET-019`, `INT-NET-028`).

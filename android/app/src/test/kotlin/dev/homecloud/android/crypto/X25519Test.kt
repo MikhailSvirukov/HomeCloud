@@ -2,6 +2,7 @@ package dev.homecloud.android.crypto
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -16,6 +17,31 @@ class X25519Test {
 
         assertArrayEquals(firstSecret, secondSecret)
         assertEquals(KEY_BYTES, firstSecret.size)
+    }
+
+    @Test
+    fun keyPairsWithEqualBytesAreEqualAndHashEqual() {
+        val keyPair = X25519.generate()
+        val identicalKeyPair =
+            X25519KeyPair(
+                privateKey = keyPair.privateKey.copyOf(),
+                publicKey = keyPair.publicKey.copyOf(),
+            )
+
+        assertEquals(keyPair, identicalKeyPair)
+        assertEquals(keyPair.hashCode(), identicalKeyPair.hashCode())
+    }
+
+    @Test
+    fun keyPairsWithDifferentPublicKeysAreUnequal() {
+        val keyPair = X25519.generate()
+        val differentPublicKey = keyPair.publicKey.copyOf()
+        differentPublicKey[0] = (differentPublicKey[0].toInt() xor CHANGED_BYTE_MASK).toByte()
+
+        assertNotEquals(
+            keyPair,
+            X25519KeyPair(privateKey = keyPair.privateKey.copyOf(), publicKey = differentPublicKey),
+        )
     }
 
     @Test
@@ -53,4 +79,5 @@ class X25519Test {
     }
 }
 
+private const val CHANGED_BYTE_MASK = 0x01
 private const val KEY_BYTES = 32
