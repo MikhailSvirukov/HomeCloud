@@ -970,7 +970,7 @@ impl InterServerMessage {
 fn uint64(value: &Value, message_type: MessageType, index: usize) -> Result<u64> {
     match value {
         Value::Integer(integer) => {
-            u64::try_from(*integer).map_err(|_| WireError::WrongMessageArgumentType {
+            u64::try_from(*integer).map_err(|_| WireError::MessageArgumentOutOfRange {
                 message_type,
                 index,
             })
@@ -985,7 +985,7 @@ fn uint64(value: &Value, message_type: MessageType, index: usize) -> Result<u64>
 fn int64(value: &Value, message_type: MessageType, index: usize) -> Result<i64> {
     match value {
         Value::Integer(integer) => {
-            i64::try_from(*integer).map_err(|_| WireError::WrongMessageArgumentType {
+            i64::try_from(*integer).map_err(|_| WireError::MessageArgumentOutOfRange {
                 message_type,
                 index,
             })
