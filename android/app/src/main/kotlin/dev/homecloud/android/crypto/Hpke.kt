@@ -54,8 +54,11 @@ internal object Hpke {
             info = info,
         )
 
-    /** Same, with a caller-supplied ephemeral private key (tests and retries). */
-    fun seal(
+    /**
+     * Deterministic variant for interoperability tests. Production must use a fresh ephemeral key for
+     * every message: reusing one repeats the AEAD key and nonce.
+     */
+    internal fun seal(
         recipientPublicKey: ByteArray,
         ephemeralPrivateKey: ByteArray,
         aad: ByteArray,
@@ -102,7 +105,7 @@ internal object Hpke {
         val dh = X25519.sharedSecret(ephemeralPrivateKey, recipientPublicKey)
         val sharedSecret = kemSharedSecret(dh, encapsulatedKey, recipientPublicKey)
         val scheduledKey = keySchedule(aead, sharedSecret, info)
-        val ciphertext = aesGcmSeal(aead, scheduledKey.key, scheduledKey.baseNonce, aad, plaintext)
+        val ciphertext = aesGcmSeal(scheduledKey.key, scheduledKey.baseNonce, aad, plaintext)
         return HpkeCiphertext(encapsulatedKey = encapsulatedKey, ciphertext = ciphertext)
     }
 
@@ -123,7 +126,7 @@ internal object Hpke {
         val dh = X25519.sharedSecret(recipientPrivateKey, encapsulatedKey)
         val sharedSecret = kemSharedSecret(dh, encapsulatedKey, recipientPublicKey)
         val scheduledKey = keySchedule(aead, sharedSecret, info)
-        return aesGcmOpen(aead, scheduledKey.key, scheduledKey.baseNonce, aad, ciphertext)
+        return aesGcmOpen(scheduledKey.key, scheduledKey.baseNonce, aad, ciphertext)
     }
 }
 
@@ -215,7 +218,6 @@ private fun expand(
 }
 
 private fun aesGcmSeal(
-    aead: HpkeAead,
     key: ByteArray,
     nonce: ByteArray,
     aad: ByteArray,
@@ -230,7 +232,6 @@ private fun aesGcmSeal(
 }
 
 private fun aesGcmOpen(
-    aead: HpkeAead,
     key: ByteArray,
     nonce: ByteArray,
     aad: ByteArray,

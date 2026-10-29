@@ -1,5 +1,6 @@
 package dev.homecloud.android.crypto
 
+import dev.homecloud.android.testsupport.Hex
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -10,8 +11,8 @@ class HpkeTest {
     fun rfc9180A11SealProducesVectorCiphertext() {
         val sealed = sealRfcVector()
 
-        assertArrayEquals(hex(RFC_ENCAPSULATED_KEY), sealed.encapsulatedKey)
-        assertArrayEquals(hex(RFC_CIPHERTEXT), sealed.ciphertext)
+        assertArrayEquals(Hex.decode(RFC_ENCAPSULATED_KEY), sealed.encapsulatedKey)
+        assertArrayEquals(Hex.decode(RFC_CIPHERTEXT), sealed.ciphertext)
     }
 
     @Test
@@ -19,14 +20,14 @@ class HpkeTest {
         val plaintext =
             Hpke.open(
                 aead = HpkeAead.AES_128_GCM,
-                recipientPrivateKey = hex(RFC_RECIPIENT_PRIVATE_KEY),
-                encapsulatedKey = hex(RFC_ENCAPSULATED_KEY),
-                aad = hex(RFC_AAD),
-                ciphertext = hex(RFC_CIPHERTEXT),
-                info = hex(RFC_INFO),
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
+                encapsulatedKey = Hex.decode(RFC_ENCAPSULATED_KEY),
+                aad = Hex.decode(RFC_AAD),
+                ciphertext = Hex.decode(RFC_CIPHERTEXT),
+                info = Hex.decode(RFC_INFO),
             )
 
-        assertArrayEquals(hex(RFC_PLAINTEXT), plaintext)
+        assertArrayEquals(Hex.decode(RFC_PLAINTEXT), plaintext)
     }
 
     @Test
@@ -40,11 +41,11 @@ class HpkeTest {
         assertThrows(CryptoException::class.java) {
             Hpke.open(
                 aead = HpkeAead.AES_128_GCM,
-                recipientPrivateKey = hex(RFC_RECIPIENT_PRIVATE_KEY),
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
                 encapsulatedKey = sealed.encapsulatedKey,
-                aad = hex(RFC_AAD),
+                aad = Hex.decode(RFC_AAD),
                 ciphertext = tamperedCiphertext,
-                info = hex(RFC_INFO),
+                info = Hex.decode(RFC_INFO),
             )
         }
     }
@@ -56,11 +57,11 @@ class HpkeTest {
         assertThrows(CryptoException::class.java) {
             Hpke.open(
                 aead = HpkeAead.AES_128_GCM,
-                recipientPrivateKey = hex(RFC_RECIPIENT_PRIVATE_KEY),
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
                 encapsulatedKey = sealed.encapsulatedKey,
-                aad = hex(WRONG_AAD),
+                aad = Hex.decode(WRONG_AAD),
                 ciphertext = sealed.ciphertext,
-                info = hex(RFC_INFO),
+                info = Hex.decode(RFC_INFO),
             )
         }
     }
@@ -72,11 +73,11 @@ class HpkeTest {
         assertThrows(CryptoException::class.java) {
             Hpke.open(
                 aead = HpkeAead.AES_128_GCM,
-                recipientPrivateKey = hex(WRONG_RECIPIENT_PRIVATE_KEY),
+                recipientPrivateKey = Hex.decode(WRONG_RECIPIENT_PRIVATE_KEY),
                 encapsulatedKey = sealed.encapsulatedKey,
-                aad = hex(RFC_AAD),
+                aad = Hex.decode(RFC_AAD),
                 ciphertext = sealed.ciphertext,
-                info = hex(RFC_INFO),
+                info = Hex.decode(RFC_INFO),
             )
         }
     }
@@ -92,6 +93,7 @@ class HpkeTest {
                 plaintext = plaintext,
             )
 
+        assertEquals(X25519_KEY_BYTES, sealed.encapsulatedKey.size)
         val opened =
             Hpke.open(
                 recipientPrivateKey = recipient.privateKey,
@@ -104,23 +106,21 @@ class HpkeTest {
     }
 
     @Test
-    fun defaultSealUsesThirtyTwoByteEncapsulatedKey() {
-        val recipient = X25519.generate()
-        val sealed =
-            Hpke.seal(
-                recipientPublicKey = recipient.publicKey,
-                aad = DEFAULT_AAD,
-                plaintext = byteArrayOf(1),
-            )
-
-        assertEquals(X25519_KEY_BYTES, sealed.encapsulatedKey.size)
-    }
-
-    @Test
     fun sealRejectsWrongLengthRecipientPublicKey() {
         assertThrows(CryptoException::class.java) {
             Hpke.seal(
                 recipientPublicKey = ByteArray(X25519_KEY_BYTES - 1),
+                aad = DEFAULT_AAD,
+                plaintext = byteArrayOf(1),
+            )
+        }
+    }
+
+    @Test
+    fun sealRejectsOversizedRecipientPublicKey() {
+        assertThrows(CryptoException::class.java) {
+            Hpke.seal(
+                recipientPublicKey = ByteArray(X25519_KEY_BYTES + 1),
                 aad = DEFAULT_AAD,
                 plaintext = byteArrayOf(1),
             )
@@ -142,6 +142,20 @@ class HpkeTest {
     }
 
     @Test
+    fun sealRejectsOversizedEphemeralPrivateKey() {
+        val recipient = X25519.generate()
+
+        assertThrows(CryptoException::class.java) {
+            Hpke.seal(
+                recipientPublicKey = recipient.publicKey,
+                ephemeralPrivateKey = ByteArray(X25519_KEY_BYTES + 1),
+                aad = DEFAULT_AAD,
+                plaintext = byteArrayOf(1),
+            )
+        }
+    }
+
+    @Test
     fun openRejectsWrongLengthRecipientPrivateKey() {
         val sealed = sealRfcVector()
 
@@ -150,9 +164,9 @@ class HpkeTest {
                 aead = HpkeAead.AES_128_GCM,
                 recipientPrivateKey = ByteArray(X25519_KEY_BYTES - 1),
                 encapsulatedKey = sealed.encapsulatedKey,
-                aad = hex(RFC_AAD),
+                aad = Hex.decode(RFC_AAD),
                 ciphertext = sealed.ciphertext,
-                info = hex(RFC_INFO),
+                info = Hex.decode(RFC_INFO),
             )
         }
     }
@@ -164,11 +178,59 @@ class HpkeTest {
         assertThrows(CryptoException::class.java) {
             Hpke.open(
                 aead = HpkeAead.AES_128_GCM,
-                recipientPrivateKey = hex(RFC_RECIPIENT_PRIVATE_KEY),
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
                 encapsulatedKey = ByteArray(X25519_KEY_BYTES - 1),
-                aad = hex(RFC_AAD),
+                aad = Hex.decode(RFC_AAD),
                 ciphertext = sealed.ciphertext,
-                info = hex(RFC_INFO),
+                info = Hex.decode(RFC_INFO),
+            )
+        }
+    }
+
+    @Test
+    fun openRejectsOversizedRecipientPrivateKey() {
+        val sealed = sealRfcVector()
+
+        assertThrows(CryptoException::class.java) {
+            Hpke.open(
+                aead = HpkeAead.AES_128_GCM,
+                recipientPrivateKey = ByteArray(X25519_KEY_BYTES + 1),
+                encapsulatedKey = sealed.encapsulatedKey,
+                aad = Hex.decode(RFC_AAD),
+                ciphertext = sealed.ciphertext,
+                info = Hex.decode(RFC_INFO),
+            )
+        }
+    }
+
+    @Test
+    fun openRejectsOversizedEncapsulatedKey() {
+        val sealed = sealRfcVector()
+
+        assertThrows(CryptoException::class.java) {
+            Hpke.open(
+                aead = HpkeAead.AES_128_GCM,
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
+                encapsulatedKey = ByteArray(X25519_KEY_BYTES + 1),
+                aad = Hex.decode(RFC_AAD),
+                ciphertext = sealed.ciphertext,
+                info = Hex.decode(RFC_INFO),
+            )
+        }
+    }
+
+    @Test
+    fun openRejectsCiphertextShorterThanAuthenticationTag() {
+        val sealed = sealRfcVector()
+
+        assertThrows(CryptoException::class.java) {
+            Hpke.open(
+                aead = HpkeAead.AES_128_GCM,
+                recipientPrivateKey = Hex.decode(RFC_RECIPIENT_PRIVATE_KEY),
+                encapsulatedKey = sealed.encapsulatedKey,
+                aad = Hex.decode(RFC_AAD),
+                ciphertext = sealed.ciphertext.copyOf(AUTHENTICATION_TAG_BYTES - 1),
+                info = Hex.decode(RFC_INFO),
             )
         }
     }
@@ -177,21 +239,16 @@ class HpkeTest {
 private fun sealRfcVector(): HpkeCiphertext =
     Hpke.seal(
         aead = HpkeAead.AES_128_GCM,
-        recipientPublicKey = hex(RFC_RECIPIENT_PUBLIC_KEY),
-        ephemeralPrivateKey = hex(RFC_EPHEMERAL_PRIVATE_KEY),
-        aad = hex(RFC_AAD),
-        plaintext = hex(RFC_PLAINTEXT),
-        info = hex(RFC_INFO),
+        recipientPublicKey = Hex.decode(RFC_RECIPIENT_PUBLIC_KEY),
+        ephemeralPrivateKey = Hex.decode(RFC_EPHEMERAL_PRIVATE_KEY),
+        aad = Hex.decode(RFC_AAD),
+        plaintext = Hex.decode(RFC_PLAINTEXT),
+        info = Hex.decode(RFC_INFO),
     )
 
-private fun hex(value: String): ByteArray =
-    ByteArray(value.length / 2) { index ->
-        value.substring(index * 2, index * 2 + 2).toInt(HEX_RADIX).toByte()
-    }
-
-private const val HEX_RADIX = 16
 private const val TAMPER_MASK = 0x01
 private const val X25519_KEY_BYTES = 32
+private const val AUTHENTICATION_TAG_BYTES = 16
 private val DEFAULT_AAD = "Count-0".toByteArray(Charsets.UTF_8)
 
 private const val RFC_INFO = "4f6465206f6e2061204772656369616e2055726e"

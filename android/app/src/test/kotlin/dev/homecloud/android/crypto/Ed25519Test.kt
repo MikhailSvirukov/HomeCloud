@@ -1,32 +1,34 @@
 package dev.homecloud.android.crypto
 
+import dev.homecloud.android.testsupport.Hex
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ed25519Test {
     @Test
     fun rfc8032VectorsDerivePublicKeys() {
-        assertArrayEquals(hex(RFC8032_TEST_1_PUBLIC_KEY), Ed25519.publicKeyOf(hex(RFC8032_TEST_1_SEED)))
-        assertArrayEquals(hex(RFC8032_TEST_2_PUBLIC_KEY), Ed25519.publicKeyOf(hex(RFC8032_TEST_2_SEED)))
-        assertArrayEquals(hex(RFC8032_TEST_3_PUBLIC_KEY), Ed25519.publicKeyOf(hex(RFC8032_TEST_3_SEED)))
+        assertArrayEquals(Hex.decode(RFC8032_TEST_1_PUBLIC_KEY), Ed25519.publicKeyOf(Hex.decode(RFC8032_TEST_1_SEED)))
+        assertArrayEquals(Hex.decode(RFC8032_TEST_2_PUBLIC_KEY), Ed25519.publicKeyOf(Hex.decode(RFC8032_TEST_2_SEED)))
+        assertArrayEquals(Hex.decode(RFC8032_TEST_3_PUBLIC_KEY), Ed25519.publicKeyOf(Hex.decode(RFC8032_TEST_3_SEED)))
     }
 
     @Test
     fun rfc8032VectorsProduceSignatures() {
         assertArrayEquals(
-            hex(RFC8032_TEST_1_SIGNATURE),
-            Ed25519.sign(hex(RFC8032_TEST_1_SEED), ByteArray(0)),
+            Hex.decode(RFC8032_TEST_1_SIGNATURE),
+            Ed25519.sign(Hex.decode(RFC8032_TEST_1_SEED), ByteArray(0)),
         )
         assertArrayEquals(
-            hex(RFC8032_TEST_2_SIGNATURE),
-            Ed25519.sign(hex(RFC8032_TEST_2_SEED), hex(RFC8032_TEST_2_MESSAGE)),
+            Hex.decode(RFC8032_TEST_2_SIGNATURE),
+            Ed25519.sign(Hex.decode(RFC8032_TEST_2_SEED), Hex.decode(RFC8032_TEST_2_MESSAGE)),
         )
         assertArrayEquals(
-            hex(RFC8032_TEST_3_SIGNATURE),
-            Ed25519.sign(hex(RFC8032_TEST_3_SEED), hex(RFC8032_TEST_3_MESSAGE)),
+            Hex.decode(RFC8032_TEST_3_SIGNATURE),
+            Ed25519.sign(Hex.decode(RFC8032_TEST_3_SEED), Hex.decode(RFC8032_TEST_3_MESSAGE)),
         )
     }
 
@@ -34,23 +36,23 @@ class Ed25519Test {
     fun rfc8032VectorsVerify() {
         assertTrue(
             Ed25519.verify(
-                hex(RFC8032_TEST_1_PUBLIC_KEY),
+                Hex.decode(RFC8032_TEST_1_PUBLIC_KEY),
                 ByteArray(0),
-                hex(RFC8032_TEST_1_SIGNATURE),
+                Hex.decode(RFC8032_TEST_1_SIGNATURE),
             ),
         )
         assertTrue(
             Ed25519.verify(
-                hex(RFC8032_TEST_2_PUBLIC_KEY),
-                hex(RFC8032_TEST_2_MESSAGE),
-                hex(RFC8032_TEST_2_SIGNATURE),
+                Hex.decode(RFC8032_TEST_2_PUBLIC_KEY),
+                Hex.decode(RFC8032_TEST_2_MESSAGE),
+                Hex.decode(RFC8032_TEST_2_SIGNATURE),
             ),
         )
         assertTrue(
             Ed25519.verify(
-                hex(RFC8032_TEST_3_PUBLIC_KEY),
-                hex(RFC8032_TEST_3_MESSAGE),
-                hex(RFC8032_TEST_3_SIGNATURE),
+                Hex.decode(RFC8032_TEST_3_PUBLIC_KEY),
+                Hex.decode(RFC8032_TEST_3_MESSAGE),
+                Hex.decode(RFC8032_TEST_3_SIGNATURE),
             ),
         )
     }
@@ -58,14 +60,14 @@ class Ed25519Test {
     @Test
     fun verifyRejectsTamperedSignature() {
         val tamperedSignature =
-            hex(RFC8032_TEST_3_SIGNATURE).also { signature ->
+            Hex.decode(RFC8032_TEST_3_SIGNATURE).also { signature ->
                 signature[0] = (signature[0].toInt() xor TAMPER_MASK).toByte()
             }
 
         assertFalse(
             Ed25519.verify(
-                hex(RFC8032_TEST_3_PUBLIC_KEY),
-                hex(RFC8032_TEST_3_MESSAGE),
+                Hex.decode(RFC8032_TEST_3_PUBLIC_KEY),
+                Hex.decode(RFC8032_TEST_3_MESSAGE),
                 tamperedSignature,
             ),
         )
@@ -74,17 +76,68 @@ class Ed25519Test {
     @Test
     fun verifyRejectsTamperedMessage() {
         val tamperedMessage =
-            hex(RFC8032_TEST_2_MESSAGE).also { message ->
+            Hex.decode(RFC8032_TEST_2_MESSAGE).also { message ->
                 message[0] = (message[0].toInt() xor TAMPER_MASK).toByte()
             }
 
         assertFalse(
             Ed25519.verify(
-                hex(RFC8032_TEST_2_PUBLIC_KEY),
+                Hex.decode(RFC8032_TEST_2_PUBLIC_KEY),
                 tamperedMessage,
-                hex(RFC8032_TEST_2_SIGNATURE),
+                Hex.decode(RFC8032_TEST_2_SIGNATURE),
             ),
         )
+    }
+
+    @Test
+    fun verifyRejectsShortPublicKey() {
+        assertFalse(
+            Ed25519.verify(
+                ByteArray(PUBLIC_KEY_BYTES - 1),
+                ByteArray(0),
+                Hex.decode(RFC8032_TEST_1_SIGNATURE),
+            ),
+        )
+    }
+
+    @Test
+    fun verifyRejectsShortSignature() {
+        assertFalse(
+            Ed25519.verify(
+                Hex.decode(RFC8032_TEST_1_PUBLIC_KEY),
+                ByteArray(0),
+                ByteArray(SIGNATURE_BYTES - 1),
+            ),
+        )
+    }
+
+    @Test
+    fun verifyRejectsOversizedSignature() {
+        assertFalse(
+            Ed25519.verify(
+                Hex.decode(RFC8032_TEST_1_PUBLIC_KEY),
+                ByteArray(0),
+                ByteArray(SIGNATURE_BYTES + 1),
+            ),
+        )
+    }
+
+    @Test
+    fun signRejectsWrongLengthPrivateKey() {
+        for (size in WRONG_PRIVATE_KEY_BYTES) {
+            assertThrows(CryptoException::class.java) {
+                Ed25519.sign(ByteArray(size), ByteArray(0))
+            }
+        }
+    }
+
+    @Test
+    fun publicKeyOfRejectsWrongLengthPrivateKey() {
+        for (size in WRONG_PRIVATE_KEY_BYTES) {
+            assertThrows(CryptoException::class.java) {
+                Ed25519.publicKeyOf(ByteArray(size))
+            }
+        }
     }
 
     @Test
@@ -100,16 +153,11 @@ class Ed25519Test {
     }
 }
 
-private fun hex(value: String): ByteArray =
-    ByteArray(value.length / 2) { index ->
-        value.substring(index * 2, index * 2 + 2).toInt(HEX_RADIX).toByte()
-    }
-
-private const val HEX_RADIX = 16
 private const val TAMPER_MASK = 0x01
 private const val PRIVATE_KEY_BYTES = 32
 private const val PUBLIC_KEY_BYTES = 32
 private const val SIGNATURE_BYTES = 64
+private val WRONG_PRIVATE_KEY_BYTES = intArrayOf(PRIVATE_KEY_BYTES - 1, PRIVATE_KEY_BYTES + 1)
 
 private const val RFC8032_TEST_1_SEED =
     "9d61b19deffd5a60ba844af492ec2cc4" +
