@@ -35,6 +35,10 @@ const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
+/// Placeholder for the loopback metrics bind address used by the tests.
+const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
+/// Loopback metrics bind with an ephemeral port, so tests do not collide.
+const METRICS_BIND: &str = "127.0.0.1:0";
 
 /// Owns a per-test temporary directory and removes it on drop.
 struct TempDir {
@@ -72,7 +76,8 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) ->
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
-        .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string());
+        .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
+        .replace(METRICS_BIND_PLACEHOLDER, METRICS_BIND);
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path
@@ -93,16 +98,50 @@ fn run_with_config(config: &Path) -> Output {
         .expect("dedicated-server binary must run")
 }
 
-/// Run the binary without `RUST_LOG` so its built-in default filter applies.
-fn run_with_config_without_log_filter(config: &Path) -> Output {
-    Command::new(BINARY)
-        .env(CONFIG_PATH_ENV, config)
-        .env_remove(RUST_LOG_ENV)
+/// Run the binary until it logs its startup event, then stop it with `SIGTERM`.
+fn run_until_started(config: &Path, log: &Path, with_log_filter: bool) -> Output {
+    let mut command = Command::new(BINARY);
+    command.env(CONFIG_PATH_ENV, config);
+    if with_log_filter {
+        command.env(RUST_LOG_ENV, RUST_LOG_LEVEL);
+    } else {
+        command.env_remove(RUST_LOG_ENV);
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .expect("dedicated-server binary must run")
+        .spawn()
+        .expect("dedicated-server binary must start");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        let started = std::fs::read_to_string(log)
+            .is_ok_and(|contents| contents.contains("\"event\":\"startup\""));
+        if started {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server never logged its startup event"
+        );
+        assert!(
+            child
+                .try_wait()
+                .expect("the child status must be readable")
+                .is_none(),
+            "the server exited before its startup event"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let signal = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill must run");
+    assert!(signal.success(), "SIGTERM must be delivered");
+
+    child.wait_with_output().expect("the server must exit")
 }
 
 fn stdout_of(output: &Output) -> String {
@@ -208,7 +247,7 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
     let config = write_config(&dir, &encryption, &signing, &log);
 
-    let output = run_with_config(&config);
+    let output = run_until_started(&config, &log, true);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
     assert!(
@@ -382,7 +421,7 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
     let config = write_config(&dir, &encryption, &signing, &log);
 
-    let output = run_with_config_without_log_filter(&config);
+    let output = run_until_started(&config, &log, false);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
     assert!(

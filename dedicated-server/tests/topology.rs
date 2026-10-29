@@ -12,6 +12,8 @@ const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
+const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
+const METRICS_BIND: &str = "127.0.0.1:0";
 const LABEL: &str = "dedicated-1";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
@@ -75,7 +77,8 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
         .replace(
             LOG_PATH_PLACEHOLDER,
             &dir.file("dedicated-server.log").display().to_string(),
-        );
+        )
+        .replace(METRICS_BIND_PLACEHOLDER, METRICS_BIND);
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path

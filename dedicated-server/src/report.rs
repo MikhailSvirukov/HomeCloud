@@ -70,6 +70,21 @@ impl Startup {
         Topology::from_manifest(&self.config.cluster)
     }
 
+    /// Configured cluster labels, in manifest order.
+    pub fn cluster_labels(&self) -> Vec<&str> {
+        self.config
+            .cluster
+            .nodes
+            .iter()
+            .map(|node| node.label.as_str())
+            .collect()
+    }
+
+    /// Address the metrics endpoint binds to.
+    pub fn metrics_bind(&self) -> std::net::SocketAddr {
+        self.config.metrics.bind
+    }
+
     /// One-line summary of the configuration and identity the server started with.
     pub fn summary(&self) -> String {
         format!(

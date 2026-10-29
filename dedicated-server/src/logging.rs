@@ -44,7 +44,7 @@ const COMPONENT: &str = "dedicated-server";
 const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Number of records the non-blocking writer buffers before dropping new ones.
-const BUFFERED_RECORDS: usize = 4096;
+pub(crate) const LOG_QUEUE_CAPACITY: usize = 4096;
 
 /// Event type for startup outcomes.
 const EVENT_STARTUP: &str = "startup";
@@ -117,6 +117,18 @@ const MESSAGE_HEARTBEAT_NO_ATTEMPT: &str = "heartbeat response without an attemp
 
 /// Static message for an invalid cluster node label.
 const MESSAGE_HEARTBEAT_INVALID_LABEL: &str = "cluster node label is empty or repeated";
+
+/// Error code for a metrics endpoint initialization failure.
+const ERROR_CODE_METRICS: &str = "metrics_error";
+
+/// Error code for a runtime initialization failure.
+const ERROR_CODE_RUNTIME: &str = "runtime_error";
+
+/// Static message for a metrics endpoint initialization failure.
+const MESSAGE_METRICS: &str = "metrics endpoint initialization failed";
+
+/// Static message for a runtime initialization failure.
+const MESSAGE_RUNTIME: &str = "runtime initialization failed";
 
 #[cfg(test)]
 const FIELD_TIMESTAMP: &str = "timestamp";
@@ -401,7 +413,7 @@ fn init_with_filter(logging: &LoggingConfig, filter: EnvFilter) -> Result<LogGua
     let errors = Arc::new(AtomicU64::new(0));
     let (non_blocking, worker) = NonBlockingBuilder::default()
         .lossy(true)
-        .buffered_lines_limit(BUFFERED_RECORDS)
+        .buffered_lines_limit(LOG_QUEUE_CAPACITY)
         .finish(CountingWriter::new(file, Arc::clone(&errors)));
     let dropped = non_blocking.error_counter();
 
@@ -543,6 +555,30 @@ pub fn heartbeat_error(error: &HeartbeatError) {
             message = message,
         );
     }
+}
+
+/// Log that the metrics endpoint could not be started.
+pub fn metrics_failed() {
+    event!(
+        target: COMPONENT,
+        Level::ERROR,
+        event = EVENT_STARTUP,
+        outcome = OUTCOME_FAILURE,
+        error_code = ERROR_CODE_METRICS,
+        message = MESSAGE_METRICS,
+    );
+}
+
+/// Log that the process could not install its shutdown handling.
+pub fn runtime_failed() {
+    event!(
+        target: COMPONENT,
+        Level::ERROR,
+        event = EVENT_STARTUP,
+        outcome = OUTCOME_FAILURE,
+        error_code = ERROR_CODE_RUNTIME,
+        message = MESSAGE_RUNTIME,
+    );
 }
 
 fn heartbeat_failure(error: &HeartbeatError) -> (&'static str, Option<&str>) {
