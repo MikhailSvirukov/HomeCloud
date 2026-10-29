@@ -129,6 +129,16 @@ pub enum WireError {
         /// Zero-based argument index.
         index: usize,
     },
+    /// An inter-server argument is outside the range the schema allows.
+    #[error(
+        "message type {message_type:?} argument {index} is outside the range the schema allows"
+    )]
+    MessageArgumentOutOfRange {
+        /// Message type whose schema is fixed.
+        message_type: MessageType,
+        /// Zero-based argument index.
+        index: usize,
+    },
     /// The operation code is not one of the four v1 operations.
     #[error("unknown client operation code {0}")]
     UnknownOperation(u32),
@@ -799,7 +809,10 @@ impl MessageType {
 }
 
 /// Inter-server message carried in the `[message_type, args]` envelope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The manual [`fmt::Debug`] implementation reports the message type and the
+/// length of an RPC payload instead of its bytes.
+#[derive(Clone, PartialEq, Eq)]
 pub enum InterServerMessage {
     /// Dedicated liveness heartbeat request (`INT-NET-073 / 5`).
     HeartbeatRequest {
@@ -824,6 +837,37 @@ pub enum InterServerMessage {
         /// Serialized OpenRaft RPC message, passed through unchanged.
         rpc_bytes: Vec<u8>,
     },
+}
+
+impl fmt::Debug for InterServerMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HeartbeatRequest {
+                sequence_number,
+                dedicated_sent_at_ms,
+                previous_clock_offset_ms,
+            } => formatter
+                .debug_struct("HeartbeatRequest")
+                .field("sequence_number", sequence_number)
+                .field("dedicated_sent_at_ms", dedicated_sent_at_ms)
+                .field("previous_clock_offset_ms", previous_clock_offset_ms)
+                .finish(),
+            Self::HeartbeatResponse {
+                sequence_number,
+                node_received_at_ms,
+                node_sent_at_ms,
+            } => formatter
+                .debug_struct("HeartbeatResponse")
+                .field("sequence_number", sequence_number)
+                .field("node_received_at_ms", node_received_at_ms)
+                .field("node_sent_at_ms", node_sent_at_ms)
+                .finish(),
+            Self::RaftRpc { rpc_bytes } => formatter
+                .debug_struct("RaftRpc")
+                .field("rpc_bytes_len", &rpc_bytes.len())
+                .finish(),
+        }
+    }
 }
 
 impl InterServerMessage {
@@ -1621,12 +1665,13 @@ mod tests {
     }
 
     #[test]
-    fn message_argument_counts_and_types_are_enforced() {
+    fn a_short_heartbeat_argument_array_is_rejected() {
         let short = encode_value(&Value::Array(vec![
             Value::Integer(1.into()),
             Value::Array(vec![Value::Integer(1.into())]),
         ]))
         .expect("encoding must work");
+
         assert!(matches!(
             InterServerMessage::decode(&short),
             Err(WireError::WrongMessageArgumentCount {
@@ -1635,12 +1680,16 @@ mod tests {
                 actual: 1
             })
         ));
+    }
 
+    #[test]
+    fn a_non_byte_string_raft_argument_is_rejected() {
         let wrong_type = encode_value(&Value::Array(vec![
             Value::Integer(3.into()),
             Value::Array(vec![Value::Integer(1.into())]),
         ]))
         .expect("encoding must work");
+
         assert!(matches!(
             InterServerMessage::decode(&wrong_type),
             Err(WireError::WrongMessageArgumentType {
@@ -1648,7 +1697,10 @@ mod tests {
                 index: 0
             })
         ));
+    }
 
+    #[test]
+    fn a_negative_sequence_number_is_rejected() {
         let negative_sequence = encode_value(&Value::Array(vec![
             Value::Integer(2.into()),
             Value::Array(vec![
@@ -1658,9 +1710,10 @@ mod tests {
             ]),
         ]))
         .expect("encoding must work");
+
         assert!(matches!(
             InterServerMessage::decode(&negative_sequence),
-            Err(WireError::WrongMessageArgumentType {
+            Err(WireError::MessageArgumentOutOfRange {
                 message_type: MessageType::HeartbeatResponse,
                 index: 0
             })
