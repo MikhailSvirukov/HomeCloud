@@ -161,6 +161,11 @@ fn configured_node_builds_a_matching_catalog_service() {
         ("catalog_page_size", "2"),
         ("catalog_snapshot_ttl_ms", "60000"),
         ("max_source_name_len", "64"),
+        ("login_min_len", "1"),
+        ("login_max_len", "64"),
+        ("password_min_len", "1"),
+        ("password_max_len", "128"),
+        ("responder_label_max_len", "64"),
         ("integrity_scan_period_seconds", "3600"),
         ("integrity_scan_max_concurrent", "2"),
     ])

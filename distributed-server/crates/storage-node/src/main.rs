@@ -46,6 +46,16 @@ const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
 const ENV_CATALOG_SNAPSHOT_TTL_MS: &str = "CATALOG_SNAPSHOT_TTL_MS";
 /// Environment variable carrying the maximum source-name length in bytes.
 const ENV_MAX_SOURCE_NAME_LEN: &str = "MAX_SOURCE_NAME_LEN";
+/// Environment variable carrying the minimum login length in bytes.
+const ENV_LOGIN_MIN_LEN: &str = "LOGIN_MIN_LEN";
+/// Environment variable carrying the maximum login length in bytes.
+const ENV_LOGIN_MAX_LEN: &str = "LOGIN_MAX_LEN";
+/// Environment variable carrying the minimum password length in bytes.
+const ENV_PASSWORD_MIN_LEN: &str = "PASSWORD_MIN_LEN";
+/// Environment variable carrying the maximum password length in bytes.
+const ENV_PASSWORD_MAX_LEN: &str = "PASSWORD_MAX_LEN";
+/// Environment variable carrying the maximum responder-label length in bytes.
+const ENV_RESPONDER_LABEL_MAX_LEN: &str = "RESPONDER_LABEL_MAX_LEN";
 /// Environment variable carrying the integrity scan period in seconds.
 const ENV_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "INTEGRITY_SCAN_PERIOD_SECONDS";
 /// Environment variable carrying the maximum concurrent integrity checks.
@@ -89,6 +99,16 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// `from_pairs` key for the minimum login length in bytes.
+const KEY_LOGIN_MIN_LEN: &str = "login_min_len";
+/// `from_pairs` key for the maximum login length in bytes.
+const KEY_LOGIN_MAX_LEN: &str = "login_max_len";
+/// `from_pairs` key for the minimum password length in bytes.
+const KEY_PASSWORD_MIN_LEN: &str = "password_min_len";
+/// `from_pairs` key for the maximum password length in bytes.
+const KEY_PASSWORD_MAX_LEN: &str = "password_max_len";
+/// `from_pairs` key for the maximum responder-label length in bytes.
+const KEY_RESPONDER_LABEL_MAX_LEN: &str = "responder_label_max_len";
 /// `from_pairs` key for the integrity scan period in seconds.
 const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
 /// `from_pairs` key for the maximum concurrent integrity checks.
@@ -140,6 +160,11 @@ async fn run() -> ExitCode {
     let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
+    let login_min_len = env_value(ENV_LOGIN_MIN_LEN);
+    let login_max_len = env_value(ENV_LOGIN_MAX_LEN);
+    let password_min_len = env_value(ENV_PASSWORD_MIN_LEN);
+    let password_max_len = env_value(ENV_PASSWORD_MAX_LEN);
+    let responder_label_max_len = env_value(ENV_RESPONDER_LABEL_MAX_LEN);
     let integrity_scan_period_seconds = env_value(ENV_INTEGRITY_SCAN_PERIOD_SECONDS);
     let integrity_scan_max_concurrent = env_value(ENV_INTEGRITY_SCAN_MAX_CONCURRENT);
     let peers = env_value(ENV_PEERS);
@@ -174,6 +199,14 @@ async fn run() -> ExitCode {
             catalog_snapshot_ttl_ms.as_str(),
         ),
         (KEY_MAX_SOURCE_NAME_LEN, max_source_name_len.as_str()),
+        (KEY_LOGIN_MIN_LEN, login_min_len.as_str()),
+        (KEY_LOGIN_MAX_LEN, login_max_len.as_str()),
+        (KEY_PASSWORD_MIN_LEN, password_min_len.as_str()),
+        (KEY_PASSWORD_MAX_LEN, password_max_len.as_str()),
+        (
+            KEY_RESPONDER_LABEL_MAX_LEN,
+            responder_label_max_len.as_str(),
+        ),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             integrity_scan_period_seconds.as_str(),
@@ -253,6 +286,11 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         catalog_page_size = config.catalog_page_size.get(),
         catalog_snapshot_ttl_ms = config.catalog_snapshot_ttl_ms.get(),
         max_source_name_len = config.max_source_name_len.get(),
+        login_min_len = config.client_limits.login_min_len.get(),
+        login_max_len = config.client_limits.login_max_len.get(),
+        password_min_len = config.client_limits.password_min_len.get(),
+        password_max_len = config.client_limits.password_max_len.get(),
+        responder_label_max_len = config.client_limits.responder_label_max_len.get(),
         integrity_scan_period_seconds = config.integrity_scan.period.as_secs(),
         integrity_scan_max_concurrent = config.integrity_scan.max_concurrent.get(),
         peers = config.peers.len(),

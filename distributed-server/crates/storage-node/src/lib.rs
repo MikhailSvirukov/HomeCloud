@@ -41,7 +41,8 @@
 //! [`decode_external_header`], [`encode_catalog_page_request`],
 //! [`decode_catalog_page_request`], [`encode_catalog_page_response`]) that
 //! assemble the seven-position external header, the client logical header, and
-//! the result envelope, the upload request header codec
+//! the result envelope, enforce the configured client login/password bounds and
+//! responder-label byte limit ([`ClientLimits`]), the upload request header codec
 //! ([`UploadRequest`], [`UploadRequestHeader`], [`decode_upload_request`],
 //! [`encode_upload_request`]) that validates the upload operation arguments, and
 //! CSPRNG-backed catalog pagination
@@ -99,6 +100,7 @@ mod catalog_exchange;
 mod catalog_handler;
 mod catalog_pager;
 mod catalog_service;
+mod client_limits;
 mod codec;
 mod config;
 mod connection;
@@ -144,6 +146,7 @@ pub use catalog_exchange::{
 pub use catalog_handler::{CatalogHandlerError, CatalogPageHandler};
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
 pub use catalog_service::{CatalogService, CatalogServiceError};
+pub use client_limits::{ClientLimits, ClientLimitsError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
 pub use config::{ConfigError, NodeConfig, NodeId, MAX_NODE_ID_LEN};
 pub use connection::{

@@ -172,6 +172,16 @@ at startup:
   (maps to the `catalog_snapshot_ttl_ms` key).
 - `MAX_SOURCE_NAME_LEN` — maximum `source_name` length in UTF-8 bytes; must be non-zero
   (maps to the `max_source_name_len` key).
+- `LOGIN_MIN_LEN` — minimum client login length in UTF-8 bytes; must be non-zero (maps
+  to the `login_min_len` key).
+- `LOGIN_MAX_LEN` — maximum client login length in UTF-8 bytes; must be non-zero and at
+  least `LOGIN_MIN_LEN` (maps to the `login_max_len` key).
+- `PASSWORD_MIN_LEN` — minimum client password length in UTF-8 bytes; must be non-zero
+  (maps to the `password_min_len` key).
+- `PASSWORD_MAX_LEN` — maximum client password length in UTF-8 bytes; must be non-zero
+  and at least `PASSWORD_MIN_LEN` (maps to the `password_max_len` key).
+- `RESPONDER_LABEL_MAX_LEN` — maximum responder-label length in UTF-8 bytes; must be
+  non-zero (maps to the `responder_label_max_len` key).
 - `INTEGRITY_SCAN_PERIOD_SECONDS` — delay between full scans of committed blob data, in
   seconds; must be non-zero (maps to the `integrity_scan_period_seconds` key).
 - `INTEGRITY_SCAN_MAX_CONCURRENT` — maximum number of blobs checked simultaneously
@@ -200,9 +210,16 @@ at startup:
 
 All five `LOG_*` settings are required and non-zero.
 
+The five client-limit settings are also required and non-zero, and each minimum must not
+exceed its maximum. The catalog and upload client-header codecs enforce the configured
+login and password byte ranges, and the catalog codec enforces the responder-label byte
+limit.
+
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
 `catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
+`login_min_len`, `login_max_len`, `password_min_len`, `password_max_len`,
+`responder_label_max_len`,
 `integrity_scan_period_seconds`, `integrity_scan_max_concurrent`,
 `metrics_bind_addr`, `metrics_tls_cert_path`, `metrics_tls_key_path`,
 `log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
@@ -235,7 +252,8 @@ envelope `[result_code, result_args_array]`. A successful page (code `0`) carrie
 `[snapshot_token, next_cursor, entries]`; every non-zero code carries an empty argument
 array. The codec validates the header positions and null rules, the operation code, the
 text types of the login and password, the token lengths, and the success and failure
-argument shapes. Signing, encryption, and credential checks are not implemented yet.
+argument shapes. Signing and encryption are not implemented yet; the client-header
+codecs enforce the configured login, password, and responder-label byte limits.
 
 The catalog page handler maps a first-page request (`[null, null]`) to the first
 page of a new snapshot and a continuation request (`[snapshot_token, cursor]`) to

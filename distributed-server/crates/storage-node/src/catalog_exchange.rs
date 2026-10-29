@@ -1,11 +1,13 @@
 //! Catalog page client exchange codecs.
 //!
-//! SRS: `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-061 / 1`,
-//! `INT-NET-069 / 1`, `INT-NET-080 / 1`, `FR-CAT-013 / 2`, `FR-CAT-015 / 1`.
+//! SRS: `CFG-CL-029 / 1`, `CFG-CL-031 / 1`, `INT-NET-050 / 4`,
+//! `INT-NET-051 / 3`, `INT-NET-054 / 1`, `INT-NET-061 / 1`, `INT-NET-069 / 1`,
+//! `INT-NET-080 / 1`, `FR-CAT-013 / 2`, `FR-CAT-015 / 1`.
 
 use ciborium::value::Value;
 
 use crate::catalog::{decode_request, encode_page, CatalogError, CatalogPage, CatalogRequest};
+use crate::client_limits::ClientLimits;
 use crate::metadata::UPLOAD_ID_LEN;
 
 /// External protocol version supported by the catalog exchange codecs.
@@ -85,12 +87,18 @@ pub enum CatalogExchangeError {
     /// The operation type is not a catalog page request.
     #[error("the client operation is not a catalog page request")]
     InvalidOperation,
-    /// The login is empty or contains a byte outside the permitted ASCII set.
+    /// The login is outside the configured byte range or contains a byte outside the permitted ASCII set.
     #[error("the client login is not a valid ASCII login")]
     InvalidLogin,
+    /// The password is outside the configured UTF-8 byte range.
+    #[error("the client password is outside the configured length range")]
+    InvalidPassword,
     /// A header field violates its type, length, or null rule.
     #[error("the external header null rules are violated")]
     InvalidHeader,
+    /// The responder label exceeds the configured UTF-8 byte limit.
+    #[error("the responder label exceeds the configured byte limit")]
+    InvalidResponderLabel,
     /// The exchange value could not be decoded, or trailing bytes followed it.
     #[error("the exchange value could not be decoded")]
     Decode,
@@ -102,13 +110,20 @@ pub enum CatalogExchangeError {
     Catalog(#[from] CatalogError),
 }
 
-/// Encodes a seven-position external header as CBOR.
-pub fn encode_external_header(header: &ExternalHeader) -> Result<Vec<u8>> {
+/// Encodes a seven-position external header as CBOR, enforcing the configured responder-label limit.
+pub fn encode_external_header(header: &ExternalHeader, limits: &ClientLimits) -> Result<Vec<u8>> {
     if header.protocol_version != EXTERNAL_PROTOCOL_VERSION {
         return Err(CatalogExchangeError::UnsupportedVersion);
     }
     if header.sender_id.is_some() == header.bootstrap_signing_public_key.is_some() {
         return Err(CatalogExchangeError::InvalidHeader);
+    }
+    if header
+        .responder_label
+        .as_deref()
+        .is_some_and(|label| !limits.responder_label_allowed(label))
+    {
+        return Err(CatalogExchangeError::InvalidResponderLabel);
     }
 
     let value = Value::Array(vec![
@@ -127,8 +142,8 @@ pub fn encode_external_header(header: &ExternalHeader) -> Result<Vec<u8>> {
     encode_value(&value)
 }
 
-/// Decodes a seven-position external header and rejects trailing bytes.
-pub fn decode_external_header(bytes: &[u8]) -> Result<ExternalHeader> {
+/// Decodes a seven-position external header, rejects trailing bytes, and enforces the configured responder-label limit.
+pub fn decode_external_header(bytes: &[u8], limits: &ClientLimits) -> Result<ExternalHeader> {
     let Value::Array(elements) = decode_value(bytes)? else {
         return Err(CatalogExchangeError::NotAnArray);
     };
@@ -155,6 +170,12 @@ pub fn decode_external_header(bytes: &[u8]) -> Result<ExternalHeader> {
         Value::Text(label) => Some(label),
         _ => return Err(CatalogExchangeError::InvalidHeader),
     };
+    if responder_label
+        .as_deref()
+        .is_some_and(|label| !limits.responder_label_allowed(label))
+    {
+        return Err(CatalogExchangeError::InvalidResponderLabel);
+    }
     let bootstrap_signing_public_key =
         optional_fixed::<BOOTSTRAP_KEY_LEN>(bootstrap_signing_public_key)?;
 
@@ -173,8 +194,11 @@ pub fn decode_external_header(bytes: &[u8]) -> Result<ExternalHeader> {
     })
 }
 
-/// Decodes a `[3, login, password, [snapshot_token, cursor]]` catalog page request.
-pub fn decode_catalog_page_request(logical_header: &[u8]) -> Result<CatalogPageRequest> {
+/// Decodes a `[3, login, password, [snapshot_token, cursor]]` catalog page request within the configured credential limits.
+pub fn decode_catalog_page_request(
+    logical_header: &[u8],
+    limits: &ClientLimits,
+) -> Result<CatalogPageRequest> {
     let Value::Array(elements) = decode_value(logical_header)? else {
         return Err(CatalogExchangeError::NotAnArray);
     };
@@ -192,13 +216,16 @@ pub fn decode_catalog_page_request(logical_header: &[u8]) -> Result<CatalogPageR
     let Value::Text(login) = login else {
         return Err(CatalogExchangeError::InvalidLogin);
     };
-    if !valid_login(&login) {
+    if !limits.login_allowed(&login) {
         return Err(CatalogExchangeError::InvalidLogin);
     }
 
     let Value::Text(password) = password else {
         return Err(CatalogExchangeError::Decode);
     };
+    if !limits.password_allowed(&password) {
+        return Err(CatalogExchangeError::InvalidPassword);
+    }
 
     let mut encoded_arguments = Vec::new();
     ciborium::ser::into_writer(&arguments, &mut encoded_arguments)
@@ -212,14 +239,18 @@ pub fn decode_catalog_page_request(logical_header: &[u8]) -> Result<CatalogPageR
     })
 }
 
-/// Encodes a catalog page client logical header as CBOR.
+/// Encodes a catalog page client logical header as CBOR within the configured credential limits.
 pub fn encode_catalog_page_request(
     login: &str,
     password: &str,
     request: &CatalogRequest,
+    limits: &ClientLimits,
 ) -> Result<Vec<u8>> {
-    if !valid_login(login) {
+    if !limits.login_allowed(login) {
         return Err(CatalogExchangeError::InvalidLogin);
+    }
+    if !limits.password_allowed(password) {
+        return Err(CatalogExchangeError::InvalidPassword);
     }
 
     let arguments = match (request.snapshot_token, request.cursor) {
@@ -300,11 +331,4 @@ fn optional_fixed<const N: usize>(value: Value) -> Result<Option<[u8; N]>> {
 
 fn optional_bytes<const N: usize>(bytes: Option<&[u8; N]>) -> Value {
     bytes.map_or(Value::Null, |bytes| Value::Bytes(bytes.to_vec()))
-}
-
-fn valid_login(login: &str) -> bool {
-    !login.is_empty()
-        && login
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
