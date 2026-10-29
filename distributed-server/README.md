@@ -43,7 +43,8 @@ clients; it does not relay Raft or blob traffic.
   `0x0004_0001`, `0x0004_0002`, and `0x0008_0001` protocol error codes),
   `src/catalog_exchange.rs` (client catalog page exchange codecs for the
   seven-position external header, the operation-3 request, and the result
-  envelope),
+  envelope), `src/catalog_handler.rs` (maps first-page and continuation
+  requests to catalog pages and encodes the result envelope),
   `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
@@ -74,7 +75,7 @@ clients; it does not relay Raft or blob traffic.
   `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
-  `catalog_exchange_public_api.rs`,
+  `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
   `upload_outcomes_public_api.rs`,
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
@@ -220,6 +221,14 @@ envelope `[result_code, result_args_array]`. A successful page (code `0`) carrie
 array. The codec validates the header positions and null rules, the operation code, the
 text types of the login and password, the token lengths, and the success and failure
 argument shapes. Signing, encryption, and credential checks are not implemented yet.
+
+The catalog page handler maps a first-page request (`[null, null]`) to the first
+page of a new snapshot and a continuation request (`[snapshot_token, cursor]`) to
+the corresponding page of that snapshot. A successful page is encoded with result
+code `0` and `[snapshot_token, next_cursor, entries]`; an invalid cursor uses
+`0x0004_0001` with an empty argument array, and an unknown or expired snapshot
+uses `0x0004_0002` with an empty argument array. Credential checks and transport
+handling are separate from the handler.
 
 ## Metrics
 
