@@ -2,7 +2,7 @@
 
 ## 1. Scope and precedence
 
-This document is the published wire contract for version `1` of the HomeCloud application protocol. It covers the external frame header, the client logical header, the result envelope, the topology answer, the catalog page answer, and the inter-server envelope with its heartbeat and RPC message types. It restates the wire representation fixed by the SRS requirements in Table 1; it does not add protocol behavior.
+This document is the published wire contract for version `1` of the HomeCloud application protocol. It covers the frame body layout, the external frame header, the client logical header, the result envelope, the topology answer, the catalog page answer, and the inter-server envelope with its heartbeat and RPC message types. It restates the wire representation fixed by the SRS requirements in Table 1; it does not add protocol behavior.
 
 The cited SRS requirements are normative. If a statement here differs from a cited requirement, the requirement prevails. `OPEN-003` is an open decision, not a requirement: §9 records what it leaves unfixed and this contract does not fill those gaps. The numeric value of a configured limit is not a wire constant; where a requirement delegates a limit to configuration, this contract names the configuration requirement and does not supply a number.
 
@@ -16,6 +16,7 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | 2 | Canonical encoding | `INT-NET-005 / 1`, `INT-NET-006 / 2`, `INT-NET-011 / 1`, `INT-NET-047 / 2`, `INT-NET-049 / 1`; field rules from `INT-NET-050 / 4`, `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-063 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `FR-DED-027 / 1` |
 | 3 | Protocol version negotiation | `INT-NET-079 / 1`; `INT-NET-007 / 1` and `INT-NET-043 / 1` as the rejection rules named by `INT-NET-079` |
 | 4 | External frame header | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-050 / 4`; `INT-NET-009 / 1` and `INT-NET-011 / 1` for `upload_id`; `CFG-CL-031 / 1` for the label limit |
+| 4.1 | Frame body layout | `INT-NET-002 / 1`, `INT-NET-003 / 1`, `INT-NET-018 / 1`, `INT-NET-019 / 1`, `INT-NET-020 / 1`, `INT-NET-024 / 2`, `INT-NET-025 / 1`, `INT-NET-027 / 1`, `INT-NET-028 / 1`, `INT-NET-033 / 1`, `INT-NET-034 / 1`, `INT-NET-037 / 1`, `INT-NET-081 / 1`; `CFG-CL-021 / 1` for the server identity |
 | 5 | Client logical header | `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-051 / 3`, `INT-NET-060 / 1`; `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-057 / 1` for the worked topology and catalog operations, `FR-CAT-015 / 1` and `INT-NET-080 / 1` for the catalog page request; `FR-DED-027 / 1` and `CFG-CL-029 / 1` for the login and password |
 | 6 | Result envelope | `INT-NET-061 / 1`, `INT-NET-062 / 1`, `INT-NET-063 / 1`, `INT-NET-064 / 1`, `INT-NET-069 / 1`, `INT-NET-070 / 5`, `INT-NET-080 / 1` |
 | 7 | Topology answer | `INT-NET-070 / 5`; `CFG-CL-031 / 1` for the label limit |
@@ -92,6 +93,33 @@ primary registration: [1, null, <request_id>, <frame_number>, <upload_id or null
 
 The final position is `null` for an ordinary message because `bootstrap_signing_public_key` applies only to primary registration (`INT-NET-050 / 4`).
 
+
+## 4.1 Frame body layout
+
+Every application frame has one fixed byte order inside the length prefix (`INT-NET-081 / 1`):
+
+```text
+[4-byte length prefix][external header][signature 64 bytes][payload]
+```
+
+| Part | Bytes | Content | Requirement |
+|---|---|---|---|
+| length prefix | 4 | unsigned big-endian value of the length of the external header, the signature and the payload together, excluding the prefix itself | `INT-NET-002 / 1`, `INT-NET-003 / 1`, `INT-NET-081 / 1` |
+| external header | variable | the deterministic CBOR array of §4 | `INT-NET-050 / 4` |
+| signature | 64 | Ed25519 signature over the length-prefix bytes, the external-header bytes and the payload bytes, in that order | `INT-NET-018 / 1`, `INT-NET-019 / 1`, `INT-NET-028 / 1`, `INT-NET-081 / 1` |
+| payload | variable | the encrypted payload, or the plaintext bootstrap payload | `INT-NET-024 / 2`, `INT-NET-081 / 1` |
+
+**Encrypted payload.** For every frame except the bootstrap frame, the payload is the 32-byte HPKE encapsulated key followed by the AES-256-GCM ciphertext with its 16-byte tag (`INT-NET-024 / 2`, `INT-NET-027 / 1`, `INT-NET-081 / 1`). HPKE uses base mode with DHKEM(X25519, HKDF-SHA-256), HKDF-SHA-256 and AES-256-GCM, and both `info` and `aad` are empty (`INT-NET-027 / 1`, `INT-NET-081 / 1`). The plaintext inside the ciphertext is the logical header of §5 or §8. A response is encrypted to the X25519 key of the installation that sent the request (`INT-NET-033 / 1`), and an inter-server message is encrypted to the authenticated receiver (`INT-NET-037 / 1`).
+
+**Bootstrap payload.** The only plaintext payload is the dedicated server's bootstrap frame of the first contact (`INT-NET-024 / 2`): the payload is the CBOR array
+
+```text
+[<x25519_public_key>, <ed25519_public_key>]
+```
+
+with two 32-byte CBOR byte strings (`INT-NET-034 / 1`, `INT-NET-081 / 1`). The frame is still signed with the server's Ed25519 key; the client stores the two keys without independent verification (`INT-NET-025 / 1`) and verifies later frames against them. The bootstrap frame carries the server's manifest `sender_id` in the external header, because the dedicated server always has an assigned identifier in the static manifest (`CFG-CL-021 / 1`); the `null`-`sender_id` form of §4 applies only to a client's primary-registration frame.
+
+**Verification order.** The receiver reads the prefix, rejects a value above the configured frame limit, reads the header, the signature and the payload, resolves the sender's public key from the trusted registry (`INT-NET-021 / 3`), verifies the signature over all three byte ranges, and only then decrypts the payload (`INT-NET-020 / 1`, `INT-NET-081 / 1`). A frame whose signature fails is discarded without decryption.
 ## 5. Client logical header
 
 The logical header of a client request authenticated by an account begins with four elements in this order: operation type, login, password, and the operation-arguments array (`INT-NET-051 / 3`). The client logical schema is independent of the external-header schema (`INT-NET-048 / 2`), is a CBOR array rather than a map (`INT-NET-047 / 2`), and contains every schema position, using `null` for an optional element (`INT-NET-049 / 1`). The operation type is encoded as CBOR `uint32` in the minimal deterministic representation (`INT-NET-055 / 2`).
