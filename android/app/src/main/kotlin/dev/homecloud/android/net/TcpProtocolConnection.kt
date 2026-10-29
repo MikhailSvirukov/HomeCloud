@@ -22,8 +22,8 @@ internal class ProtocolTransportException(
  * programming error and is rejected with [IllegalArgumentException].
  */
 internal data class ConnectionTimeouts(
-    val connectMillis: Int = 10_000,
-    val readMillis: Int = 30_000,
+    val connectMillis: Int = ClientNetworkConfiguration.DEFAULT_CONNECT_TIMEOUT_MILLIS,
+    val readMillis: Int = ClientNetworkConfiguration.DEFAULT_OPERATION_TIMEOUT_MILLIS,
 ) {
     init {
         require(connectMillis > 0) { "connectMillis must be positive but was $connectMillis" }
@@ -122,8 +122,6 @@ internal class TcpProtocolConnection private constructor(
     }
 
     companion object {
-        const val DEFAULT_MAX_FRAME_BYTES = 1_048_576
-
         /**
          * Resolves `host` and `port` and opens a TCP connection with the connect timeout, the read
          * timeout and TCP_NODELAY set. Resolution or connection failures are reported as
@@ -133,7 +131,7 @@ internal class TcpProtocolConnection private constructor(
             host: String,
             port: Int,
             timeouts: ConnectionTimeouts = ConnectionTimeouts(),
-            maxFrameBytes: Int = DEFAULT_MAX_FRAME_BYTES,
+            maxFrameBytes: Int = ClientNetworkConfiguration.DEFAULT_MAX_FRAME_BYTES,
         ): TcpProtocolConnection {
             require(host.isNotBlank()) { "host must not be blank" }
             require(port in MIN_PORT..MAX_PORT) { "port must be between 1 and 65535 but was $port" }
