@@ -19,8 +19,13 @@ internal data class SetupConfiguration(
 
 /** Persists the setup values that are safe to keep across restarts. */
 internal interface SetupConfigStore {
-    fun load(): SetupConfiguration?
+    /**
+     * Returns the stored configuration when its host, port and login fit [limits], and nothing when
+     * the file is absent, malformed or outside those bounds (`FR-AND-040 / 2`, `CFG-CL-029 / 1`).
+     */
+    fun load(limits: SetupLimits = SetupValidator.defaultLimits): SetupConfiguration?
 
+    /** Replaces the stored configuration with the supplied values. */
     fun save(configuration: SetupConfiguration)
 }
 
@@ -33,13 +38,14 @@ internal interface SetupConfigStore {
  * all. A write builds a temporary sibling and renames it over the target, using an atomic move
  * where the file system supports it, so a partial file is never read back; the caller owns the
  * directory and a missing directory is not created. Reading an absent file or content that does
- * not parse into a valid configuration yields no configuration instead of an exception. Not
+ * not parse into a configuration valid for the supplied [SetupLimits] yields no configuration
+ * instead of an exception, so load, edit and submit share one set of credential bounds. Not
  * thread-safe; access must stay on one thread or be externally synchronized.
  */
 internal class FileSetupConfigStore(
     private val file: File,
 ) : SetupConfigStore {
-    override fun load(): SetupConfiguration? {
+    override fun load(limits: SetupLimits): SetupConfiguration? {
         if (!file.exists()) return null
         val content =
             try {
@@ -47,7 +53,7 @@ internal class FileSetupConfigStore(
             } catch (failure: IOException) {
                 return null
             }
-        return parse(content)
+        return parse(content, limits)
     }
 
     override fun save(configuration: SetupConfiguration) {
@@ -72,21 +78,18 @@ internal class FileSetupConfigStore(
             MODE_KEY to configuration.mode.name,
         ).joinToString(NEWLINE) { (key, value) -> "$key$KEY_SEPARATOR$value" }
 
-    private fun parse(content: String): SetupConfiguration? {
+    private fun parse(
+        content: String,
+        limits: SetupLimits,
+    ): SetupConfiguration? {
         val values = parseLines(content) ?: return null
         val host = values[HOST_KEY] ?: return null
         val port = values[PORT_KEY]?.toIntOrNull() ?: return null
         val login = values[LOGIN_KEY] ?: return null
         val mode = values[MODE_KEY]?.let(::parseMode) ?: return null
-        val draft =
-            SetupDraft(
-                host = host,
-                port = port.toString(),
-                login = login,
-                password = UNUSED_PASSWORD_PROBE,
-                mode = mode,
-            )
-        if (!SetupValidator.validate(draft).isValid) return null
+        if (!SetupValidator.validateStored(host = host, port = port, login = login, limits = limits).isValid) {
+            return null
+        }
         return SetupConfiguration(host = host, port = port, login = login, mode = mode)
     }
 
@@ -138,10 +141,6 @@ internal class FileSetupConfigStore(
 
         const val TEMPORARY_FILE_PREFIX = "setup-config-"
         const val TEMPORARY_FILE_SUFFIX = ".tmp"
-
-        // The stored format has no password line; the shared field rules would reject an empty
-        // probe for a configuration that is otherwise valid, so loading validates with this value.
-        const val UNUSED_PASSWORD_PROBE = "unused"
 
         val COLUMNS = setOf(HOST_KEY, PORT_KEY, LOGIN_KEY, MODE_KEY)
     }

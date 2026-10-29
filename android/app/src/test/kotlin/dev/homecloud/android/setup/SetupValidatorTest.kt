@@ -88,11 +88,17 @@ class SetupValidatorTest {
     }
 
     @Test
-    fun `login of two utf8 bytes above the default maximum is rejected by the character set`() {
-        val login = TWO_BYTE_CHARACTER.repeat(SetupValidator.defaultLimits.loginMaxBytes / 2 + 1)
-        val validation = SetupValidator.validate(validDraft(login = login))
+    fun `login of the configured minimum is accepted`() {
+        val validation =
+            SetupValidator.validate(
+                validDraft(
+                    login = "u".repeat(CONFIGURED_LIMITS.loginMinBytes),
+                    password = CONFIGURED_PASSWORD,
+                ),
+                CONFIGURED_LIMITS,
+            )
 
-        assertEquals(SetupError.LOGIN_CHARACTERS, validation.errors[SetupField.LOGIN])
+        assertTrue(validation.errors.toString(), validation.isValid)
     }
 
     @Test
@@ -133,6 +139,34 @@ class SetupValidatorTest {
         val validation = SetupValidator.validate(validDraft(password = password))
 
         assertEquals(SetupError.PASSWORD_TOO_LONG, validation.errors[SetupField.PASSWORD])
+    }
+
+    @Test
+    fun `password of the configured minimum is accepted`() {
+        val validation =
+            SetupValidator.validate(
+                validDraft(
+                    login = CONFIGURED_LOGIN,
+                    password = "p".repeat(CONFIGURED_LIMITS.passwordMinBytes),
+                ),
+                CONFIGURED_LIMITS,
+            )
+
+        assertTrue(validation.errors.toString(), validation.isValid)
+    }
+
+    @Test
+    fun `whitespace only password of the configured maximum is accepted`() {
+        val validation =
+            SetupValidator.validate(
+                validDraft(
+                    login = CONFIGURED_LOGIN,
+                    password = " ".repeat(CONFIGURED_LIMITS.passwordMaxBytes),
+                ),
+                CONFIGURED_LIMITS,
+            )
+
+        assertTrue(validation.errors.toString(), validation.isValid)
     }
 
     @Test

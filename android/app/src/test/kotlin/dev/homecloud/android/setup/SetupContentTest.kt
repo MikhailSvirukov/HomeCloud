@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -63,6 +64,19 @@ class SetupContentTest {
     }
 
     @Test
+    fun `saved configuration is shown in the host and port fields`() {
+        render(
+            SetupStateMachine.initialState(
+                saved = SAVED_CONFIGURATION,
+                prerequisites = unmetPrerequisites(),
+            ),
+        )
+
+        composeRule.onNodeWithText(RESTORED_HOST).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(RESTORED_PORT).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
     fun `password field carries password semantics instead of exposing the raw value`() {
         render(stateFor(validDraft(), unmetPrerequisites()))
 
@@ -101,6 +115,20 @@ class SetupContentTest {
     }
 
     @Test
+    fun `minimum port keeps submit enabled`() {
+        render(stateFor(validDraft().copy(port = MIN_PORT), unmetPrerequisites()))
+
+        composeRule.onNodeWithText(submitAction()).performScrollTo().assertIsEnabled()
+    }
+
+    @Test
+    fun `maximum port keeps submit enabled`() {
+        render(stateFor(validDraft().copy(port = MAX_PORT), unmetPrerequisites()))
+
+        composeRule.onNodeWithText(submitAction()).performScrollTo().assertIsEnabled()
+    }
+
+    @Test
     fun `valid draft with unmet prerequisites shows them and still submits`() {
         render(stateFor(validDraft(), unmetPrerequisites()))
 
@@ -111,6 +139,20 @@ class SetupContentTest {
         composeRule.onNodeWithText(submitAction()).performScrollTo().performClick()
 
         assertEquals(1, submitCount)
+    }
+
+    @Test
+    fun `a met prerequisite is not shown`() {
+        render(
+            stateFor(
+                validDraft(),
+                SetupPrerequisites(hasMediaAccess = true, isAuthenticated = false),
+            ),
+        )
+
+        composeRule.onNodeWithText(prerequisitesTitle()).performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText(mediaAccessMissing()).assertCountEquals(0)
+        composeRule.onNodeWithText(authenticationMissing()).performScrollTo().assertIsDisplayed()
     }
 
     private fun render(initialState: SetupState) {
@@ -178,5 +220,19 @@ class SetupContentTest {
         const val TEXT_FIELD_COUNT = 4
         const val PASSWORD_FIELD_COUNT = 1
         const val PASSWORD = "secret"
+
+        const val MIN_PORT = "1"
+        const val MAX_PORT = "65535"
+
+        const val RESTORED_HOST = "198.51.100.7"
+        const val RESTORED_PORT = "9000"
+        const val RESTORED_LOGIN = "saved-user"
+        val SAVED_CONFIGURATION =
+            SetupConfiguration(
+                host = RESTORED_HOST,
+                port = RESTORED_PORT.toInt(),
+                login = RESTORED_LOGIN,
+                mode = SetupMode.CONNECT,
+            )
     }
 }

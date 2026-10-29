@@ -82,12 +82,12 @@ class SetupStateTest {
     }
 
     @Test
-    fun `submit of a valid draft returns the configuration`() {
+    fun `submit of a valid draft returns the configuration and the entered password`() {
         val state = SetupStateMachine.edit(initialState(), DRAFT)
 
-        val configuration = SetupStateMachine.submit(state)
+        val submission = SetupStateMachine.submit(state)
 
-        assertEquals(CONFIGURATION, configuration)
+        assertEquals(SetupSubmission(configuration = CONFIGURATION, password = PASSWORD), submission)
     }
 
     @Test
@@ -95,6 +95,25 @@ class SetupStateTest {
         val state = SetupStateMachine.edit(initialState(), DRAFT.copy(host = "example.com"))
 
         assertNull(SetupStateMachine.submit(state))
+    }
+
+    @Test
+    fun `saved records the configuration and refills the draft without a password`() {
+        val state = SetupStateMachine.edit(initialState(), DRAFT)
+
+        val savedState = SetupStateMachine.saved(state, SAVED)
+
+        val expectedDraft =
+            SetupDraft(
+                host = SAVED.host,
+                port = SAVED.port.toString(),
+                login = SAVED.login,
+                password = "",
+                mode = SAVED.mode,
+            )
+        assertEquals(expectedDraft, savedState.draft)
+        assertEquals(SAVED, savedState.saved)
+        assertEquals(mapOf(SetupField.PASSWORD to SetupError.REQUIRED), savedState.validation.errors)
     }
 
     @Test

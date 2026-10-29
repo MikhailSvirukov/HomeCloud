@@ -31,10 +31,21 @@ internal data class SetupState(
 }
 
 /**
+ * The values a valid submission hands to the registration or connection step
+ * (`FR-AND-041 / 2`, `FR-AND-042 / 1`): the configuration that may be persisted and the password
+ * that must stay in memory only and never reach storage or a log.
+ */
+internal data class SetupSubmission(
+    val configuration: SetupConfiguration,
+    val password: String,
+)
+
+/**
  * The setup transitions (`FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1`, `CFG-CL-029 / 1`):
  * opening a state from an optional saved configuration and the configured credential bounds,
- * editing the draft, and submitting it only once valid. Editing and submitting revalidate with the
- * bounds already held by the state, so a configuration change never mixes limits within one state.
+ * editing the draft, submitting it only once valid, and recording a configuration after it was
+ * persisted. Editing, submitting and recording a save revalidate with the bounds already held by
+ * the state, so a configuration change never mixes limits within one state.
  */
 internal object SetupStateMachine {
     fun initialState(
@@ -70,16 +81,39 @@ internal object SetupStateMachine {
             validation = SetupValidator.validate(draft, state.limits),
         )
 
-    fun submit(state: SetupState): SetupConfiguration? {
+    fun submit(state: SetupState): SetupSubmission? {
         val draft = state.draft
         val validation = SetupValidator.validate(draft, state.limits)
         if (!validation.isValid) return null
         val port = draft.port.toIntOrNull() ?: return null
-        return SetupConfiguration(
-            host = draft.host,
-            port = port,
-            login = draft.login,
-            mode = draft.mode,
+        return SetupSubmission(
+            configuration =
+                SetupConfiguration(
+                    host = draft.host,
+                    port = port,
+                    login = draft.login,
+                    mode = draft.mode,
+                ),
+            password = draft.password,
+        )
+    }
+
+    fun saved(
+        state: SetupState,
+        configuration: SetupConfiguration,
+    ): SetupState {
+        val draft =
+            state.draft.copy(
+                host = configuration.host,
+                port = configuration.port.toString(),
+                login = configuration.login,
+                password = "",
+                mode = configuration.mode,
+            )
+        return state.copy(
+            draft = draft,
+            validation = SetupValidator.validate(draft, state.limits),
+            saved = configuration,
         )
     }
 }

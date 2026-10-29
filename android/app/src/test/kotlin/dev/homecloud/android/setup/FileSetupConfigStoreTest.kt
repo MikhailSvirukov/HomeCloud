@@ -28,6 +28,14 @@ class FileSetupConfigStoreTest {
     }
 
     @Test
+    fun `load applies the supplied limits to the stored login`() {
+        val store = storeWithContent(content(HOST_LINE, PORT_LINE, LONG_LOGIN_LINE, MODE_LINE))
+
+        assertEquals(CONFIGURATION.copy(login = LONG_LOGIN), store.load(WIDE_LIMITS))
+        assertNull(store.load())
+    }
+
+    @Test
     fun `missing file loads no configuration`() {
         val store = FileSetupConfigStore(configFile())
 
@@ -109,6 +117,11 @@ class FileSetupConfigStoreTest {
         const val PORT_LINE = "port=8443"
         const val LOGIN_LINE = "login=user"
         const val MODE_LINE = "mode=REGISTER"
+
+        /** One byte above the default login maximum, so only a wider [SetupLimits] accepts it. */
+        val LONG_LOGIN = "u".repeat(SetupValidator.defaultLimits.loginMaxBytes + 1)
+        val LONG_LOGIN_LINE = "login=$LONG_LOGIN"
+        val WIDE_LIMITS = SetupLimits(loginMaxBytes = LONG_LOGIN.length)
         const val UNKNOWN_KEY_LINE = "user=user"
         const val OUT_OF_RANGE_PORT_LINE = "port=70000"
         const val UNKNOWN_MODE_LINE = "mode=DELETE"

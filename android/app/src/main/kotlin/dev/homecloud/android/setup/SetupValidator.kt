@@ -75,8 +75,11 @@ internal data class SetupValidation(
 /**
  * Validates the setup draft against the v1 field rules (`FR-AND-040 / 2`, `FR-AND-041 / 2`,
  * `CFG-CL-029 / 1`). The host must be one canonical IP literal, the port must be in the TCP range,
- * the login must use the permitted ASCII characters and both credentials are bounded by their
- * UTF-8 byte lengths. Each field reports only its first applicable error.
+ * an empty login is required, a login with any character outside the permitted ASCII set is
+ * rejected, and a login is bounded by its configured UTF-8 byte length. An empty password is
+ * required, a password is only bounded by its configured UTF-8 byte length, and the entered bytes
+ * are never trimmed or normalized (`wire-v1.md` section 5). Each field reports only its first
+ * applicable error.
  *
  * The credential bounds come from [limits], the configuration input required by `CFG-CL-029 / 1`.
  * [defaultLimits] holds the chosen `OPEN-017` client defaults (1/64 for the login and 1/128 for the
@@ -95,6 +98,24 @@ internal object SetupValidator {
         validatePort(draft.port)?.let { errors[SetupField.PORT] = it }
         validateLogin(draft.login, limits)?.let { errors[SetupField.LOGIN] = it }
         validatePassword(draft.password, limits)?.let { errors[SetupField.PASSWORD] = it }
+        return SetupValidation(errors)
+    }
+
+    /**
+     * Validates the values that a persisted configuration holds against [limits]
+     * (`FR-AND-040 / 2`, `CFG-CL-029 / 1`): the host, port and login only, because a stored
+     * configuration never carries a password.
+     */
+    fun validateStored(
+        host: String,
+        port: Int,
+        login: String,
+        limits: SetupLimits = defaultLimits,
+    ): SetupValidation {
+        val errors = LinkedHashMap<SetupField, SetupError>()
+        validateHost(host)?.let { errors[SetupField.HOST] = it }
+        validatePort(port.toString())?.let { errors[SetupField.PORT] = it }
+        validateLogin(login, limits)?.let { errors[SetupField.LOGIN] = it }
         return SetupValidation(errors)
     }
 
@@ -117,7 +138,7 @@ internal object SetupValidator {
     ): SetupError? {
         val byteLength = login.encodeToByteArray().size
         return when {
-            login.isBlank() -> SetupError.REQUIRED
+            login.isEmpty() -> SetupError.REQUIRED
             !LOGIN_PATTERN.matches(login) -> SetupError.LOGIN_CHARACTERS
             byteLength < limits.loginMinBytes -> SetupError.LOGIN_TOO_SHORT
             byteLength > limits.loginMaxBytes -> SetupError.LOGIN_TOO_LONG
@@ -131,7 +152,7 @@ internal object SetupValidator {
     ): SetupError? {
         val byteLength = password.encodeToByteArray().size
         return when {
-            password.isBlank() -> SetupError.REQUIRED
+            password.isEmpty() -> SetupError.REQUIRED
             byteLength < limits.passwordMinBytes -> SetupError.PASSWORD_TOO_SHORT
             byteLength > limits.passwordMaxBytes -> SetupError.PASSWORD_TOO_LONG
             else -> null

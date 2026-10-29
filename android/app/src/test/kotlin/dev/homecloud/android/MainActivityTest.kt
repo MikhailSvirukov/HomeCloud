@@ -5,7 +5,6 @@ import android.content.Intent
 import android.provider.MediaStore
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -16,6 +15,9 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import dev.homecloud.android.backup.BackupWorkScheduler
 import dev.homecloud.android.notifications.NotificationPermissionPolicy
 import dev.homecloud.android.permissions.MediaPermissionPolicy
+import dev.homecloud.android.setup.FileSetupConfigStore
+import dev.homecloud.android.setup.SetupConfiguration
+import dev.homecloud.android.setup.SetupMode
 import dev.homecloud.android.testsupport.MediaTestData
 import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertArrayEquals
@@ -36,6 +38,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
+import java.io.File
 
 /**
  * Launches the activity the manifest declares and asserts the permission surface a first launch
@@ -63,6 +66,14 @@ class MainActivityTest {
     val testWorkManagerRule = TestWorkManagerRule()
 
     @get:Rule(order = 2)
+    val setupConfigRule =
+        SetupConfigFileRule(
+            host = RESTORED_HOST,
+            port = RESTORED_PORT,
+            login = RESTORED_LOGIN,
+        )
+
+    @get:Rule(order = 3)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
@@ -128,12 +139,23 @@ class MainActivityTest {
     }
 
     @Test
-    fun `launch with every media permission granted shows the granted message and offers no action`() {
+    fun `launch with every media permission granted shows the granted message and offers no permission action`() {
         grantRequiredPermissions()
         resumeAgain()
 
         composeRule.onNodeWithText(grantedMessage()).assertIsDisplayed()
-        composeRule.onAllNodes(hasClickAction()).assertCountEquals(0)
+        composeRule.onAllNodesWithText(requestAction()).assertCountEquals(0)
+        composeRule.onAllNodesWithText(settingsAction()).assertCountEquals(0)
+    }
+
+    @Test
+    fun `launch displays the setup host saved before the activity started`() {
+        grantRequiredPermissions()
+        resumeAgain()
+
+        waitForText(RESTORED_HOST)
+
+        composeRule.onNodeWithText(RESTORED_HOST).assertIsDisplayed()
     }
 
     @Test
@@ -257,6 +279,8 @@ class MainActivityTest {
 
     private fun requestAction(): String = composeRule.activity.getString(R.string.media_permission_request_action)
 
+    private fun settingsAction(): String = composeRule.activity.getString(R.string.media_permission_settings_action)
+
     private companion object {
         const val PER_TYPE_PERMISSIONS_SDK_INT = 33
         const val LEGACY_SDK_INT = 32
@@ -265,6 +289,10 @@ class MainActivityTest {
         const val DISPLAY_NAME_PREFIX = "item-"
         const val EXPECTED_MEDIA_COUNT = 2
         const val LIBRARY_TIMEOUT_MILLIS = 5_000L
+
+        const val RESTORED_HOST = "198.51.100.7"
+        const val RESTORED_PORT = 9000
+        const val RESTORED_LOGIN = "saved-user"
     }
 }
 
@@ -306,3 +334,23 @@ class TestWorkManagerRule : ExternalResource() {
         WorkManagerTestInitHelper.initializeTestWorkManager(ApplicationProvider.getApplicationContext<Context>())
     }
 }
+
+/** Writes the setup configuration that the activity restores before the Compose rule launches it. */
+class SetupConfigFileRule(
+    private val host: String,
+    private val port: Int,
+    private val login: String,
+) : ExternalResource() {
+    override fun before() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        FileSetupConfigStore(File(context.filesDir, SETUP_CONFIG_FILE_NAME))
+            .save(SetupConfiguration(host = host, port = port, login = login, mode = SetupMode.CONNECT))
+    }
+
+    override fun after() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        File(context.filesDir, SETUP_CONFIG_FILE_NAME).delete()
+    }
+}
+
+private const val SETUP_CONFIG_FILE_NAME = "setup.conf"
