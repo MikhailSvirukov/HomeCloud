@@ -64,7 +64,9 @@ clients; it does not relay Raft or blob traffic.
   marker), `src/integrity_scan.rs` (periodic scan over committed blobs with a
   bounded number of concurrent checks), `src/blob_writer.rs` (writes a received
   blob directly into its final path, verifying the declared byte size and
-  SHA-256 before syncing the file and its parent directory), `src/raft/`
+  SHA-256 before syncing the file and its parent directory),
+  `src/blob_restore.rs` (restores a missing or marked-corrupt blob through the
+  same verified durable write, refusing an unmarked local copy), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
   persistence), `src/frame_sequence.rs` (contiguous client frame-number
@@ -93,7 +95,7 @@ clients; it does not relay Raft or blob traffic.
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
-  `blob_writer_public_api.rs`,
+  `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
   `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
@@ -147,7 +149,10 @@ that matches the committed hash removes the marker. `integrity_public_api.rs`
 covers the healthy, mismatching, restored, and missing paths. A received blob
 is written directly into its final path with declared-size and SHA-256
 verification, file and parent-directory fsync, refusal to overwrite, and
-partial-file cleanup. The connection actors and `io_uring` are not
+partial-file cleanup. A missing or marked-corrupt blob is restored from a
+repair source through the same verified durable write, while an unmarked
+existing blob is refused; `blob_restore_public_api.rs` covers those paths and
+the marker kept by a failed restore. The connection actors and `io_uring` are not
 implemented yet. Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
@@ -359,6 +364,19 @@ are synced, so the content and the metadata needed to discover it survive a cras
 returned `StoredBlob` carries the final path, byte size, and content hash. The write
 does not by itself publish the version; the catalog includes it only after the Raft
 metadata commit.
+
+## Blob restore
+
+`restore_blob_direct` replaces a missing or marked-corrupt local blob with bytes
+streamed from a repair source. An existing blob without a corruption marker is
+never replaced: the call fails with `ExistingBlob` and the local bytes stay
+untouched. A restored blob counts as repaired only after the same verified,
+durable write used for received blobs accepts it: the streamed SHA-256 and byte
+size must match the expected values, and the file and its parent directory are
+synced before success is reported. A successful restore removes the
+`<blob>.corrupt` marker; a failed restore writes the marker, removes the
+rejected partial blob, and leaves the copy marked until a later restore
+succeeds.
 
 ## Integrity scan
 
