@@ -61,6 +61,9 @@
 //! Direct durable blob writes ([`write_blob_direct`], [`StoredBlob`],
 //! [`BlobWriteError`]) stream a verified payload into its final location and
 //! fsync the file and its parent directory before reporting it durable.
+//! Upload failures map to the published protocol result codes in
+//! [`UploadErrorCode`], covering request, authentication, file, frame-sequence,
+//! upload-id, capacity, and internal error classes (`INT-NET-064 / 1`).
 //! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! monitoring listener, using plaintext HTTP only on loopback and TLS with the
@@ -119,6 +122,7 @@ mod response;
 mod sealing;
 mod signing;
 mod storage_layout;
+mod upload_error;
 mod upload_exchange;
 mod version_negotiation;
 
@@ -181,6 +185,7 @@ pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
 };
 pub use storage_layout::{LayoutError, StorageLayout};
+pub use upload_error::UploadErrorCode;
 pub use upload_exchange::{
     decode_upload_request, encode_upload_request, UploadExchangeError, UploadRequest,
     UploadRequestHeader,
