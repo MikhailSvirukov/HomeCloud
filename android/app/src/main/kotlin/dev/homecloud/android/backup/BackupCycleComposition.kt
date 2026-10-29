@@ -9,6 +9,7 @@ import dev.homecloud.android.media.MediaStoreMediaRowSource
 import dev.homecloud.android.media.MediaStoreVersionScanner
 import dev.homecloud.android.queue.FileUploadQueueStore
 import dev.homecloud.android.queue.InMemoryUploadQueue
+import dev.homecloud.android.status.FileLastCycleStore
 import java.io.File
 import java.time.ZoneId
 
@@ -23,10 +24,13 @@ import java.time.ZoneId
  */
 internal object BackupCycleComposition {
     /**
-     * Snapshot file inside the app's private storage. Keeping the queue on disk rather than only in
-     * memory lets the next cycle restore pending uploads after the process ends.
+     * Snapshot file of the upload queue inside the app's private storage. Keeping the queue on disk
+     * rather than only in memory lets the next cycle restore pending uploads after the process ends.
      */
-    private const val QUEUE_SNAPSHOT_FILE_NAME = "upload-queue.snapshot"
+    internal const val QUEUE_SNAPSHOT_FILE_NAME = "upload-queue.snapshot"
+
+    /** File that records the last completed backup cycle. */
+    internal const val LAST_CYCLE_FILE_NAME = "last-cycle"
 
     /**
      * Attempts allowed for each queued upload before the queue marks it failed, so a persistently
@@ -53,6 +57,7 @@ internal object BackupCycleComposition {
         val queue = InMemoryUploadQueue(maxAttempts = MAX_UPLOAD_ATTEMPTS)
         val planner = MediaBackupPlanner(scanner, queue, maxQueueSize = MAX_QUEUE_SIZE)
         val store = FileUploadQueueStore(File(context.filesDir, QUEUE_SNAPSHOT_FILE_NAME))
-        return BackupCycleRunner(planner, store, AndroidBackupCycleLog())
+        val lastCycleStore = FileLastCycleStore(File(context.filesDir, LAST_CYCLE_FILE_NAME))
+        return BackupCycleRunner(planner, store, AndroidBackupCycleLog(), lastCycleStore)
     }
 }
