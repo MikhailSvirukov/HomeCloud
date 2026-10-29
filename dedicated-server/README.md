@@ -9,12 +9,13 @@ addresses, labels, and public keys here, then send files straight to storage.
 ## Current status
 
 Configuration loading and validation, key-identity loading for the server's own
-key pair, internal heartbeat tracking for the fixed cluster, and the in-memory
-account registration model are implemented. The binary loads the configuration,
-installs the configured structured log file, loads the key identity, logs
-startup and shutdown events, and exits. Network I/O, the wire protocol,
-registration over the network, cluster replication, and topology responses are
-not implemented yet.
+key pair, internal heartbeat tracking for the fixed cluster, availability
+observability for the tracked nodes and quorum, and the in-memory account
+registration model are implemented. The binary loads the configuration, installs
+the configured structured log file, loads the key identity, logs startup and
+shutdown events, and exits. Network I/O, the wire protocol, registration over
+the network, cluster replication, and topology responses are not implemented
+yet.
 
 ## Build and run
 
@@ -160,6 +161,29 @@ followed by one `shutdown` event with `outcome` set to `success` and the message
 last record. Records never contain file paths or names, logins, cryptographic
 keys, verifiers, payloads or other user metadata.
 
+### Runtime events
+
+While the server runs, only significant state changes and failures are
+recorded; a successful periodic heartbeat and each internal step of a request
+produce no record (`NFR-OBS-002`). `AvailabilityMonitor` in
+`src/availability.rs` owns the heartbeat tracker and reports each transition
+exactly once, in the configured cluster order:
+
+- a storage node becoming unavailable is one `availability` event with the
+  node label in `peer_id`, `outcome` set to `unavailable` and level `WARN`;
+- a node that was unavailable and responds again is one `availability` event
+  with `outcome` set to `available` and level `INFO`;
+- losing or regaining a quorum is one `quorum` event with `outcome` set to
+  `lost` or `restored` and a message carrying only the available and total
+  counts. A quorum requires a strict majority of the configured nodes
+  (`available * 2 > total`), the narrowest reading of the SRS.
+
+A rejected heartbeat response is one `heartbeat` event with `outcome` set to
+`failure`, the `heartbeat_error` code, the node label in `peer_id` when the
+error names one, and a fixed message. The monitor logs these errors itself and
+returns them to the caller. Wiring the monitor into the request loop and the
+wire layer is part of the networking work.
+
 ### Two-phase start and the non-blocking writer
 
 The configuration names the log file, so the binary starts in two phases:
@@ -189,10 +213,15 @@ for the whole process and flushes buffered records when dropped.
 
 ## Configuration schema
 
-- Top level: `listen` (socket address string), `max_label_bytes`, `[identity]`,
-  `[heartbeat]`, `[password]`, `[logging]`, `[[cluster.nodes]]`.
+- Top level: `listen` (socket address string), `max_label_bytes`,
+  `max_frame_bytes`, `[identity]`, `[heartbeat]`, `[password]`, `[logging]`,
+  `[[cluster.nodes]]`.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
+- `max_frame_bytes`: the largest frame payload the server accepts from a peer,
+  in bytes (`NonZeroU32`, no default). The receiver checks the announced
+  length against it before allocating the payload, so an oversized frame is
+  refused without reading its body.
 - `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
 - `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
   (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
@@ -222,6 +251,7 @@ Example:
 ```toml
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
+max_frame_bytes = 1048576
 
 [identity]
 label = "dedicated-1"
@@ -260,6 +290,19 @@ address = "10.0.0.12:7100"
 encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
+
+
+## Framing
+
+Every application message on the wire is a 4-byte unsigned big-endian length
+prefix followed by exactly that many payload bytes (`INT-NET-002`). The prefix
+counts only the bytes after itself (`INT-NET-003`), so a 100-byte payload starts
+with `00 00 00 64`. `src/frame.rs` provides the codec every TCP connection
+will use: the writer emits the prefix and then the payload, and the reader
+checks the announced length against the configured `max_frame_bytes` before
+allocating the payload buffer (`INT-NET-004`), refusing an oversized frame
+without reading its body. A zero-length frame is valid at this layer; the
+message layer decides whether an empty payload is meaningful.
 
 ## Key identity
 

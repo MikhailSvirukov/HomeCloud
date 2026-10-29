@@ -1,8 +1,12 @@
 package dev.homecloud.android
 
+import android.content.ComponentName
 import android.content.pm.PackageManager
+import dev.homecloud.android.notifications.NotificationPermissionPolicy
 import dev.homecloud.android.permissions.MediaPermissionPolicy
+import dev.homecloud.android.transfer.UploadTransferService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -36,6 +40,18 @@ class AndroidManifestPermissionsTest {
         assertEquals(POST_CAP_PLATFORM_PERMISSIONS, platformPermissions())
     }
 
+    @Test
+    fun `manifest declares the upload transfer service without exporting it`() {
+        val application = RuntimeEnvironment.getApplication()
+        val serviceInfo =
+            application.packageManager.getServiceInfo(
+                ComponentName(application, UploadTransferService::class.java),
+                0,
+            )
+
+        assertFalse(serviceInfo.exported)
+    }
+
     private fun platformPermissions(): Set<String> {
         val application = RuntimeEnvironment.getApplication()
         val packageInfo =
@@ -60,6 +76,12 @@ class AndroidManifestPermissionsTest {
         const val LEGACY_READ_MAX_SDK_INT = 32
         const val POST_CAP_SDK_INT = MediaPermissionPolicy.PER_TYPE_MEDIA_PERMISSIONS_SDK_INT
         const val INTERNET_PERMISSION = "android.permission.INTERNET"
+        const val WAKE_LOCK_PERMISSION = "android.permission.WAKE_LOCK"
+        const val ACCESS_NETWORK_STATE_PERMISSION = "android.permission.ACCESS_NETWORK_STATE"
+        const val RECEIVE_BOOT_COMPLETED_PERMISSION = "android.permission.RECEIVE_BOOT_COMPLETED"
+        const val FOREGROUND_SERVICE_PERMISSION = "android.permission.FOREGROUND_SERVICE"
+        const val FOREGROUND_SERVICE_DATA_SYNC_PERMISSION =
+            "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
         val CAPPED_PLATFORM_PERMISSIONS =
             setOf(
                 MediaPermissionPolicy.READ_MEDIA_IMAGES,
@@ -67,6 +89,12 @@ class AndroidManifestPermissionsTest {
                 MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
                 MediaPermissionPolicy.READ_EXTERNAL_STORAGE,
                 INTERNET_PERMISSION,
+                NotificationPermissionPolicy.POST_NOTIFICATIONS,
+                FOREGROUND_SERVICE_DATA_SYNC_PERMISSION,
+                WAKE_LOCK_PERMISSION,
+                ACCESS_NETWORK_STATE_PERMISSION,
+                RECEIVE_BOOT_COMPLETED_PERMISSION,
+                FOREGROUND_SERVICE_PERMISSION,
             )
         val POST_CAP_PLATFORM_PERMISSIONS =
             setOf(
@@ -74,6 +102,12 @@ class AndroidManifestPermissionsTest {
                 MediaPermissionPolicy.READ_MEDIA_VIDEO,
                 MediaPermissionPolicy.READ_MEDIA_VISUAL_USER_SELECTED,
                 INTERNET_PERMISSION,
+                NotificationPermissionPolicy.POST_NOTIFICATIONS,
+                FOREGROUND_SERVICE_DATA_SYNC_PERMISSION,
+                WAKE_LOCK_PERMISSION,
+                ACCESS_NETWORK_STATE_PERMISSION,
+                RECEIVE_BOOT_COMPLETED_PERMISSION,
+                FOREGROUND_SERVICE_PERMISSION,
             )
     }
 }

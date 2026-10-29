@@ -20,7 +20,7 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | 6 | Result envelope | `INT-NET-061 / 1`, `INT-NET-062 / 1`, `INT-NET-063 / 1`, `INT-NET-064 / 1`, `INT-NET-069 / 1`, `INT-NET-070 / 5` |
 | 7 | Topology answer | `INT-NET-070 / 5`; `CFG-CL-031 / 1` for the label limit |
 | 8 | Inter-server envelope and message types | `INT-NET-051 / 3`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-075 / 1`; `INT-NET-074 / 2` for RPC OpenRaft; `FR-TIME-005 / 3` for the offset source |
-| 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-060 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `CFG-CL-031 / 1`; `OPEN-003`, `OPEN-007` (open decisions, not requirements) |
+| 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-060 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `CFG-CL-031 / 1`; `OPEN-003` (open decision, not a requirement) |
 
 ## 2. Canonical encoding
 
@@ -232,11 +232,11 @@ The response returns the received `sequence_number` without modification (`INT-N
 
 ### 8.3 RPC OpenRaft
 
-`message_type = 3` denotes RPC OpenRaft (`INT-NET-075 / 1`). Each RPC between storage nodes is a separate inter-server message with arguments `[rpc_bytes]`, where `rpc_bytes` is a CBOR byte string containing the serialized RPC message produced by the OpenRaft transport adapter (`INT-NET-074 / 2`). The serialization format of `rpc_bytes` is the subject of `OPEN-007` (`INT-NET-074 / 2`); this contract fixes only the byte-string wrapper.
+`message_type = 3` denotes RPC OpenRaft (`INT-NET-075 / 1`). Each RPC between storage nodes is a separate inter-server message with arguments `[rpc_bytes]`, where `rpc_bytes` is a CBOR byte string containing the serialized RPC message produced by the OpenRaft transport adapter (`INT-NET-074 / 2`). The serialization format of `rpc_bytes` is fixed by `NFR-MAINT-005 / 1` (OpenRaft `0.9.25` with the `serde` feature) and `NFR-MAINT-006 / 1` (CBOR per RFC 8949 through `ciborium` over the serde representation of the RPC types); `INT-NET-074 / 2` defines only the byte-string wrapper that this contract restates.
 
 ## 9. Elements left unfixed by the SRS
 
-`OPEN-003` is an open decision, not a requirement. It records that the remaining positions, types, mandatory-ness and maximum sizes of the external and logical header CBOR arrays for each explicitly supported version are not fixed. It also records that the external-header order and primary-registration rules are fixed by `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3` and `INT-NET-050 / 4`; the inter-server shell `[message_type, args]` and the CBOR type of `message_type` are fixed by `INT-NET-072 / 2`; the heartbeat schemas are fixed by `INT-NET-073 / 5`; the RPC OpenRaft wrapper is fixed by `INT-NET-074 / 2`; the message-type code values, including the heartbeat and RPC OpenRaft codes, are fixed by `INT-NET-075 / 1`; the OpenRaft serialization format is considered under `OPEN-007`; and the schemas of the remaining inter-server message types are not fixed.
+`OPEN-003` is an open decision, not a requirement. It records that the remaining positions, types, mandatory-ness and maximum sizes of the external and logical header CBOR arrays for each explicitly supported version are not fixed. It also records that the external-header order and primary-registration rules are fixed by `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3` and `INT-NET-050 / 4`; the inter-server shell `[message_type, args]` and the CBOR type of `message_type` are fixed by `INT-NET-072 / 2`; the heartbeat schemas are fixed by `INT-NET-073 / 5`; the RPC OpenRaft wrapper is fixed by `INT-NET-074 / 2`; the message-type code values, including the heartbeat and RPC OpenRaft codes, are fixed by `INT-NET-075 / 1`; the OpenRaft serialization format is fixed by `NFR-MAINT-005 / 1` and `NFR-MAINT-006 / 1` (closed `OPEN-007`); and the schemas of the remaining inter-server message types are not fixed.
 
 The following elements are left unfixed by the cited requirements, so this contract does not define them:
 
@@ -246,7 +246,7 @@ The following elements are left unfixed by the cited requirements, so this contr
 - **Zero `previous_clock_offset_ms`.** `INT-NET-073 / 5` fixes `int64` for a non-zero `previous_clock_offset_ms` and CBOR `null` before the first calculated estimate. It does not state how a computed offset of exactly zero is encoded; this contract does not choose an encoding for that case.
 - **Client operations other than topology.** The operation-arguments schema is determined by the operation type (`INT-NET-051 / 3`). This contract restates only the topology request's empty array (`INT-NET-060 / 1`); the argument schemas of the other client operations are defined by requirements outside the cited set and are not restated here.
 - **Inter-server message types other than 1, 2 and 3.** Only the heartbeat request, the heartbeat response and RPC OpenRaft have a schema stated in this contract. The schemas of the remaining inter-server message types are not fixed (`OPEN-003`).
-- **RPC serialization.** `rpc_bytes` is opaque at this layer. Its serialization format is not fixed by this contract (`OPEN-007`, referenced by `INT-NET-074 / 2`).
+- **RPC serialization.** `rpc_bytes` is opaque at this layer. Its serialization format is fixed outside this contract by `NFR-MAINT-005 / 1` and `NFR-MAINT-006 / 1` (OpenRaft `0.9.25` with the `serde` feature, CBOR per RFC 8949 through `ciborium`) and is not restated here; `INT-NET-074 / 2` fixes only the byte-string wrapper.
 - **Future protocol versions.** Only version `1` and the negotiation list `[1]` are defined for v1; future-version policy and schemas are outside v1 (`INT-NET-079 / 1`).
 
 Where a field's type, size, mandatory rule or limit is not stated in §§4–8, it is not fixed by this contract, and no value should be inferred for it.

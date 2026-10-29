@@ -1,14 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Media read policy: API 33+ uses per-type photo/video reads; API 34+ adds the user-selected visual access permission; below 33 the legacy broad read is capped at API 32. INTERNET is a normal permission for the server connection and is never requested at runtime. No other permission may be declared (no audio, contacts, location, camera, or storage write). -->
+    <!-- Media read policy: API 33+ uses per-type photo/video reads; API 34+ adds the user-selected visual access permission; below 33 the legacy broad read is capped at API 32. INTERNET is a normal permission for the server connection and is never requested at runtime. The media reads are the only runtime media permissions; the remaining declared permissions are listed in android/PERMISSIONS.md with their requirements. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+
 
     <application
+        android:name=".HomeCloudApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
@@ -26,6 +33,22 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".transfer.UploadTransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

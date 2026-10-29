@@ -1,5 +1,6 @@
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
+max_frame_bytes = 1048576
 
 [identity]
 label = ""

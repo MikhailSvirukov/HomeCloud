@@ -17,8 +17,14 @@ const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
 const KEY_PEERS: &str = "peers";
+const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
+const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
+const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
 const MAX_FRAME_LEN: &str = "1048576";
 const QUEUE_CAPACITY: &str = "16";
+const CATALOG_PAGE_SIZE: &str = "2";
+const CATALOG_SNAPSHOT_TTL_MS: &str = "60000";
+const MAX_SOURCE_NAME_LEN: &str = "64";
 
 #[test]
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
@@ -30,6 +36,9 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
         (KEY_PEERS, " 10.0.0.2:9000 ,10.0.0.3:9000 "),
     ])
     .expect("valid pairs build a config");
@@ -44,13 +53,21 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.signing_key_path, PathBuf::from(SIGNING_KEY_PATH));
     assert_eq!(config.max_frame_len.get(), 1_048_576);
     assert_eq!(config.queue_capacity.get(), 16);
+    assert_eq!(config.catalog_page_size.get(), 2);
+    assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
+    assert_eq!(config.max_source_name_len.get(), 64);
     assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
 }
 
 #[test]
 fn from_pairs_without_node_id_reports_missing_key() {
-    let result =
-        NodeConfig::from_pairs(&[(KEY_LISTEN_ADDR, LISTEN_ADDR), (KEY_DATA_DIR, DATA_DIR)]);
+    let result = NodeConfig::from_pairs(&[
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
 
     assert_eq!(result, Err(ConfigError::MissingKey { key: KEY_NODE_ID }));
 }
@@ -62,6 +79,9 @@ fn from_pairs_without_encryption_key_path_reports_missing_key() {
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -79,6 +99,9 @@ fn from_pairs_without_signing_key_path_reports_missing_key() {
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -97,6 +120,9 @@ fn from_pairs_without_max_frame_len_reports_missing_key() {
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -116,6 +142,9 @@ fn from_pairs_with_zero_max_frame_len_reports_invalid_max_frame_len() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, "0"),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -135,6 +164,9 @@ fn from_pairs_with_unparsable_max_frame_len_reports_invalid_max_frame_len() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, "not-a-number"),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -154,6 +186,9 @@ fn from_pairs_without_queue_capacity_reports_missing_key() {
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -174,6 +209,9 @@ fn from_pairs_with_zero_queue_capacity_reports_invalid_queue_capacity() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, "0"),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -194,11 +232,218 @@ fn from_pairs_with_unparsable_queue_capacity_reports_invalid_queue_capacity() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, "not-a-number"),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
         result,
         Err(ConfigError::InvalidQueueCapacity {
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_catalog_page_size_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_CATALOG_PAGE_SIZE,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_catalog_page_size_reports_invalid_catalog_page_size() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, "0"),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidCatalogPageSize {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_catalog_page_size_reports_invalid_catalog_page_size() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, "not-a-number"),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidCatalogPageSize {
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_catalog_snapshot_ttl_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_CATALOG_SNAPSHOT_TTL_MS,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_ttl() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, "0"),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidCatalogSnapshotTtl {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_ttl() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, "not-a-number"),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidCatalogSnapshotTtl {
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_without_max_source_name_len_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_MAX_SOURCE_NAME_LEN,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_max_source_name_len_reports_invalid_max_source_name_len() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, "0"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidMaxSourceNameLen {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_max_source_name_len_reports_invalid_max_source_name_len() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, "not-a-number"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidMaxSourceNameLen {
             value: "not-a-number".to_owned(),
         })
     );
@@ -214,6 +459,9 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
     ]);
 
     assert_eq!(
@@ -234,6 +482,9 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
         (KEY_PEERS, "10.0.0.2"),
     ]);
 
@@ -255,6 +506,9 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
         (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
         (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
         (KEY_PEERS, "10.0.0.2:9000,10.0.0.2:9000"),
     ]);
 

@@ -3,10 +3,11 @@
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
 //! a data directory, the paths of its encryption and signing key files, the
 //! maximum frame length its framing layer accepts, the per-connection queue
-//! capacity, and the addresses of its fixed peers. v1 clusters are fixed, so
-//! this model is validated when it is built.
+//! capacity, the catalog page size and snapshot lifetime, the source-name byte
+//! limit, and the addresses of its fixed peers. v1 clusters are fixed, so this
+//! model is validated when it is built.
 
-use core::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
+use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 
 /// Fallible configuration operation result.
@@ -29,6 +30,12 @@ const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// Recognized `from_pairs` key for the per-connection queue capacity.
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
+/// Recognized `from_pairs` key for the catalog page size.
+const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
+/// Recognized `from_pairs` key for the catalog snapshot lifetime in milliseconds.
+const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
+/// Recognized `from_pairs` key for the maximum source-name length in bytes.
+const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
 /// Recognized `from_pairs` key for the peer address list.
 const KEY_PEERS: &str = "peers";
 /// Separator between peer addresses in the `peers` pair value.
@@ -86,6 +93,9 @@ pub struct NodeConfig {
     pub signing_key_path: PathBuf,
     pub max_frame_len: NonZeroU32,
     pub queue_capacity: NonZeroUsize,
+    pub catalog_page_size: NonZeroUsize,
+    pub catalog_snapshot_ttl_ms: NonZeroU64,
+    pub max_source_name_len: NonZeroUsize,
     pub peers: Vec<String>,
 }
 
@@ -103,6 +113,9 @@ impl NodeConfig {
         signing_key_path: PathBuf,
         max_frame_len: NonZeroU32,
         queue_capacity: NonZeroUsize,
+        catalog_page_size: NonZeroUsize,
+        catalog_snapshot_ttl_ms: NonZeroU64,
+        max_source_name_len: NonZeroUsize,
         peers: Vec<String>,
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
@@ -115,11 +128,23 @@ impl NodeConfig {
             signing_key_path,
             max_frame_len,
             queue_capacity,
+            catalog_page_size,
+            catalog_snapshot_ttl_ms,
+            max_source_name_len,
             peers: normalize_peers(peers)?,
         })
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, and `peers` pairs.
+    /// Builds a catalog service with this node's configured page size, snapshot lifetime, and source-name limit.
+    pub fn catalog_service(&self) -> crate::catalog_service::CatalogService {
+        crate::catalog_service::CatalogService::new(
+            self.catalog_page_size,
+            core::time::Duration::from_millis(self.catalog_snapshot_ttl_ms.get()),
+            self.max_source_name_len,
+        )
+    }
+
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, catalog settings, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -128,6 +153,9 @@ impl NodeConfig {
         let mut signing_key_path = None;
         let mut max_frame_len = None;
         let mut queue_capacity = None;
+        let mut catalog_page_size = None;
+        let mut catalog_snapshot_ttl_ms = None;
+        let mut max_source_name_len = None;
         let mut peers = Vec::new();
 
         for (key, value) in pairs {
@@ -143,6 +171,13 @@ impl NodeConfig {
                 }
                 KEY_MAX_FRAME_LEN if !value.is_empty() => max_frame_len = Some(*value),
                 KEY_QUEUE_CAPACITY if !value.is_empty() => queue_capacity = Some(*value),
+                KEY_CATALOG_PAGE_SIZE if !value.is_empty() => catalog_page_size = Some(*value),
+                KEY_CATALOG_SNAPSHOT_TTL_MS if !value.is_empty() => {
+                    catalog_snapshot_ttl_ms = Some(*value);
+                }
+                KEY_MAX_SOURCE_NAME_LEN if !value.is_empty() => {
+                    max_source_name_len = Some(*value);
+                }
                 KEY_PEERS => peers = split_peers(value),
                 _ => {}
             }
@@ -181,6 +216,24 @@ impl NodeConfig {
             });
         };
         let queue_capacity = parse_queue_capacity(queue_capacity)?;
+        let Some(catalog_page_size) = catalog_page_size else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_CATALOG_PAGE_SIZE,
+            });
+        };
+        let catalog_page_size = parse_catalog_page_size(catalog_page_size)?;
+        let Some(catalog_snapshot_ttl_ms) = catalog_snapshot_ttl_ms else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_CATALOG_SNAPSHOT_TTL_MS,
+            });
+        };
+        let catalog_snapshot_ttl_ms = parse_catalog_snapshot_ttl(catalog_snapshot_ttl_ms)?;
+        let Some(max_source_name_len) = max_source_name_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_MAX_SOURCE_NAME_LEN,
+            });
+        };
+        let max_source_name_len = parse_max_source_name_len(max_source_name_len)?;
 
         Self::new(
             node_id,
@@ -190,6 +243,9 @@ impl NodeConfig {
             signing_key_path,
             max_frame_len,
             queue_capacity,
+            catalog_page_size,
+            catalog_snapshot_ttl_ms,
+            max_source_name_len,
             peers,
         )
     }
@@ -225,6 +281,15 @@ pub enum ConfigError {
     /// The queue capacity was zero or not an integer.
     #[error("invalid queue capacity {value}")]
     InvalidQueueCapacity { value: String },
+    /// The catalog page size was zero or not an integer.
+    #[error("invalid catalog page size {value}")]
+    InvalidCatalogPageSize { value: String },
+    /// The catalog snapshot TTL was zero or not an integer.
+    #[error("invalid catalog snapshot TTL {value}")]
+    InvalidCatalogSnapshotTtl { value: String },
+    /// The maximum source-name length was zero or not an integer.
+    #[error("invalid maximum source name length {value}")]
+    InvalidMaxSourceNameLen { value: String },
     /// The same peer address appeared more than once.
     #[error("duplicate peer address {addr}")]
     DuplicatePeer { addr: String },
@@ -317,14 +382,49 @@ fn parse_queue_capacity(value: &str) -> Result<NonZeroUsize> {
         })
 }
 
+/// Parses a catalog page size that must be a non-zero `usize`.
+fn parse_catalog_page_size(value: &str) -> Result<NonZeroUsize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .and_then(NonZeroUsize::new)
+        .ok_or_else(|| ConfigError::InvalidCatalogPageSize {
+            value: value.to_owned(),
+        })
+}
+
+/// Parses a catalog snapshot lifetime that must be a non-zero `u64` of milliseconds.
+fn parse_catalog_snapshot_ttl(value: &str) -> Result<NonZeroU64> {
+    value
+        .parse::<u64>()
+        .ok()
+        .and_then(NonZeroU64::new)
+        .ok_or_else(|| ConfigError::InvalidCatalogSnapshotTtl {
+            value: value.to_owned(),
+        })
+}
+
+/// Parses a maximum source-name length that must be a non-zero `usize`.
+fn parse_max_source_name_len(value: &str) -> Result<NonZeroUsize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .and_then(NonZeroUsize::new)
+        .ok_or_else(|| ConfigError::InvalidMaxSourceNameLen {
+            value: value.to_owned(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
-    use core::num::{NonZeroU32, NonZeroUsize};
+    use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
     use std::path::PathBuf;
 
     use super::{
-        ConfigError, NodeConfig, NodeId, KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR,
-        KEY_MAX_FRAME_LEN, KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
+        ConfigError, NodeConfig, NodeId, KEY_CATALOG_PAGE_SIZE, KEY_CATALOG_SNAPSHOT_TTL_MS,
+        KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR, KEY_MAX_FRAME_LEN,
+        KEY_MAX_SOURCE_NAME_LEN, KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH,
+        MAX_NODE_ID_LEN,
     };
 
     const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
@@ -340,6 +440,18 @@ mod tests {
 
     fn queue_capacity() -> NonZeroUsize {
         NonZeroUsize::new(16).expect("test capacity is non-zero")
+    }
+
+    fn catalog_page_size() -> NonZeroUsize {
+        NonZeroUsize::new(50).expect("test page size is non-zero")
+    }
+
+    fn catalog_snapshot_ttl_ms() -> NonZeroU64 {
+        NonZeroU64::new(30_000).expect("test snapshot TTL is non-zero")
+    }
+
+    fn max_source_name_len() -> NonZeroUsize {
+        NonZeroUsize::new(255).expect("test name limit is non-zero")
     }
 
     fn data_dir() -> PathBuf {
@@ -384,6 +496,9 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            catalog_page_size(),
+            catalog_snapshot_ttl_ms(),
+            max_source_name_len(),
             vec![" 10.0.0.2:9000 ".to_owned()],
         )
         .expect("config is valid");
@@ -409,6 +524,9 @@ mod tests {
                 signing_key_path(),
                 max_frame_len(),
                 queue_capacity(),
+                catalog_page_size(),
+                catalog_snapshot_ttl_ms(),
+                max_source_name_len(),
                 Vec::new(),
             );
             let expected = ConfigError::InvalidListenAddr {
@@ -428,6 +546,9 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            catalog_page_size(),
+            catalog_snapshot_ttl_ms(),
+            max_source_name_len(),
             vec!["   ".to_owned()],
         );
         assert_eq!(result, Err(ConfigError::EmptyPeerAddr));
@@ -443,6 +564,9 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            catalog_page_size(),
+            catalog_snapshot_ttl_ms(),
+            max_source_name_len(),
             vec!["10.0.0.2".to_owned()],
         );
         let expected = ConfigError::InvalidPeerAddr {
@@ -461,6 +585,9 @@ mod tests {
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
+            (KEY_CATALOG_PAGE_SIZE, "50"),
+            (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
+            (KEY_MAX_SOURCE_NAME_LEN, "255"),
             ("peers", ""),
         ])
         .expect("pairs are valid");
@@ -556,6 +683,9 @@ mod tests {
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
+            (KEY_CATALOG_PAGE_SIZE, "50"),
+            (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
+            (KEY_MAX_SOURCE_NAME_LEN, "255"),
         ])
         .expect("unknown keys are ignored");
 

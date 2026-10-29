@@ -25,8 +25,16 @@ Non-goals (not in v1): download/view/restore, client-side version management, ch
 - A structured cycle log that a backup cycle records its outcome through, carrying only the cycle counts, defaulting to a no-op and with an `android.util.Log` implementation (`log/BackupCycleLog`, which also declares the no-op default, and `log/AndroidBackupCycleLog`).
 - The launched activity's media-read permission surface, which shows the current permission status, requests the media-read permissions in one runtime operation (including the partial-access permission from Android 14), reports limited coverage when the user allows only some photos and videos, and opens the application's settings page when access was permanently refused (`permissions/MediaPermissionRequestContent`, `permissions/MediaPermissionPrompt`).
 - The media-library summary shown once access is granted, reporting the combined number of photos and videos available to back up, with a loading line while the library is read and a failure line when it cannot be read (`media/MediaLibrarySummaryContent`, `media/MediaLibrarySummary`).
+- The scanner that turns discovered rows into version candidates: it keeps photos and videos, hashes each item's original bytes once, resolves its tracked capture time and builds the version identity (`media/MediaStoreVersionScanner`, `media/MediaContentSource`, `media/MediaMetadataTimeSource`).
+- Platform adapters for the scanner seams: original bytes through the content resolver, Exif capture time with the media store taken time as fallback, and the media store taken-time column carried through the row model (`media/ContentResolverMediaContentSource`, `media/ExifMediaMetadataTimeSource`, `media/ContentResolverExifDateTimeReader`).
+- The tracked capture time rule: Exif date and offset parsing, metadata over media store, zone-less times in the device zone, Unix milliseconds (`media/CaptureTimeResolver`).
+- Zstandard compression of a version into a bounded payload buffer chain with the full compressed size known before the first frame and a validated 1..19 level (`payload/MediaCompressor`, `payload/CompressedPayload`).
+- Queue capacity from configuration (1..1 000 000 versions, default 10 000): planning stops at the limit, keeps every accepted entry and reports the rejected count through the cycle log (`backup/MediaBackupPlanner`, `log/BackupCycleLog`).
+- Restoring the queue requeues an upload that was in flight when the process stopped (`queue/InMemoryUploadQueue`).
+- Background execution through WorkManager: a worker runs one cycle, a factory builds the real graph, and a scheduler enqueues an idempotent six-hour periodic cycle and an on-demand one without charging, battery or network constraints (`backup/BackupWorker`, `backup/BackupWorkerFactory`, `backup/BackupCycleComposition`, `backup/BackupWorkScheduler`, `HomeCloudApplication`).
+- The v1 protocol serialization layer: the deterministic CBOR subset codec, the external and client logical headers, the result envelope, the topology codec, and the length-prefixed frame codec that applies the configured payload limit (`protocol/CborValue`, `protocol/ProtocolMessages`, `protocol/FrameCodec`).
 
-Not yet implemented: background scheduling (WorkManager), networking/protocol, and the media scanner that reads the store, hashes each candidate and resolves its capture time.
+Not yet implemented: the network client itself (the `protocol/` package only serializes and parses messages and is not connected to a socket), the foreground `dataSync` transfer service and upload notifications, and the setup and main screens.
 
 ## Declared permissions
 
@@ -56,7 +64,7 @@ The manifest permission set and the requirement each permission serves are track
 - Kotlin test sources live under `app/src/test/kotlin` in package `dev.homecloud.android`.
 - Test framework is JUnit 4.
 - Everything in the module is `internal` except `MainActivity`, the launched activity; the module surface is not a published contract.
-- Planned background mechanism is Android WorkManager, to be introduced by a later issue, not in this scaffold.
+- Background cycles run through Android WorkManager; `HomeCloudApplication` supplies the worker factory and the manifest removes the default startup initializer so WorkManager initialises on demand.
 
 ## Directory layout
 
@@ -91,6 +99,10 @@ android/
         │   │   ├── MediaPermissionRequestPolicy.kt     missing permissions and whether to ask
         │   │   ├── MediaPermissionPrompt.kt            message and action for a permission state
         │   │   └── MediaPermissionRequestContent.kt    permission surface that requests or opens settings
+        │   ├── protocol/         v1 wire serialization
+        │   │   ├── CborValue.kt          deterministic CBOR subset codec
+        │   │   ├── ProtocolMessages.kt   external and logical headers, result envelope, topology codec
+        │   │   └── FrameCodec.kt         length-prefixed frame codec with the configured limit
         │   └── queue/            upload queue and its persisted snapshot
         │       ├── UploadQueue.kt           queue model and retry bookkeeping
         │       ├── InMemoryUploadQueue.kt   in-memory implementation
