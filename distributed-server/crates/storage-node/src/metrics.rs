@@ -1,15 +1,18 @@
 //! Prometheus-compatible metrics endpoint.
 //!
-//! SRS: `NFR-OBS-006 / 1`, `NFR-OBS-008 / 1`, `CFG-OBS-003 / 1`.
+//! SRS: `NFR-OBS-006 / 1`, `NFR-OBS-007 / 1`, `NFR-OBS-008 / 1`, `CFG-OBS-003 / 1`,
+//! `CFG-OBS-004 / 1`.
 
 use core::num::NonZeroUsize;
 use std::io;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 
 /// Maximum number of request bytes read before a response is written.
 const MAX_REQUEST_LEN: usize = 8 * 1024;
@@ -75,14 +78,24 @@ impl core::fmt::Debug for Metrics {
     }
 }
 
+/// Configured certificate and private-key paths for the TLS metrics endpoint.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricsTlsConfig {
+    /// Path of the PEM-encoded server certificate chain.
+    pub cert_path: PathBuf,
+    /// Path of the PEM-encoded matching private key.
+    pub key_path: PathBuf,
+}
+
 /// Bound monitoring listener that answers Prometheus scrapes.
 pub struct MetricsServer {
     listener: TcpListener,
     metrics: Arc<Metrics>,
+    tls: Option<TlsAcceptor>,
 }
 
 impl MetricsServer {
-    /// Binds the monitoring listener to a loopback `bind_addr`.
+    /// Binds a plaintext monitoring listener to a loopback `bind_addr`.
     pub async fn bind(bind_addr: SocketAddr, metrics: Arc<Metrics>) -> io::Result<Self> {
         if !bind_addr.ip().is_loopback() {
             return Err(io::Error::new(
@@ -91,7 +104,27 @@ impl MetricsServer {
             ));
         }
         let listener = TcpListener::bind(bind_addr).await?;
-        Ok(Self { listener, metrics })
+        Ok(Self {
+            listener,
+            metrics,
+            tls: None,
+        })
+    }
+
+    /// Binds a TLS monitoring listener to `bind_addr` with the configured PEM material.
+    pub async fn bind_tls(
+        bind_addr: SocketAddr,
+        metrics: Arc<Metrics>,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+    ) -> io::Result<Self> {
+        let tls = build_tls_acceptor(cert_pem, key_pem)?;
+        let listener = TcpListener::bind(bind_addr).await?;
+        Ok(Self {
+            listener,
+            metrics,
+            tls: Some(tls),
+        })
     }
 
     /// Returns the resolved monitoring listener address.
@@ -104,13 +137,62 @@ impl MetricsServer {
         loop {
             let (stream, _peer) = self.listener.accept().await?;
             let metrics = Arc::clone(&self.metrics);
+            let tls = self.tls.clone();
             tokio::spawn(async move {
-                if let Err(error) = handle_connection(stream, metrics).await {
+                let result = match tls {
+                    Some(acceptor) => match acceptor.accept(stream).await {
+                        Ok(stream) => handle_connection(stream, metrics).await,
+                        Err(error) => {
+                            tracing::debug!(error = %error, "metrics TLS handshake failed");
+                            return;
+                        }
+                    },
+                    None => handle_connection(stream, metrics).await,
+                };
+                if let Err(error) = result {
                     tracing::debug!(error = %error, "metrics connection failed");
                 }
             });
         }
     }
+}
+
+/// Builds the rustls acceptor from PEM certificate and private-key bytes.
+fn build_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> io::Result<TlsAcceptor> {
+    let mut cert_reader = cert_pem;
+    let certificates = rustls_pemfile::certs(&mut cert_reader)
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(|error| invalid_data("invalid metrics TLS certificate PEM", error))?;
+    if certificates.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "metrics TLS certificate PEM contains no certificates",
+        ));
+    }
+    let mut key_reader = key_pem;
+    let private_key = rustls_pemfile::private_key(&mut key_reader)
+        .map_err(|error| invalid_data("invalid metrics TLS private-key PEM", error))?
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "metrics TLS private-key PEM contains no private key",
+            )
+        })?;
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .and_then(|builder| {
+            builder
+                .with_no_client_auth()
+                .with_single_cert(certificates, private_key)
+        })
+        .map_err(|error| invalid_data("invalid metrics TLS configuration", error))?;
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+/// Wraps `error` as invalid input carrying `context`.
+fn invalid_data(context: &str, error: impl core::fmt::Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, format!("{context}: {error}"))
 }
 
 /// Route selected from the HTTP request line.
@@ -161,7 +243,10 @@ impl Status {
 }
 
 /// Reads one request and writes exactly one response.
-async fn handle_connection(mut stream: TcpStream, metrics: Arc<Metrics>) -> io::Result<()> {
+async fn handle_connection<S>(mut stream: S, metrics: Arc<Metrics>) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; READ_CHUNK_LEN];
 
@@ -228,7 +313,10 @@ fn parse_route(head: &str) -> Option<Route> {
 }
 
 /// Writes a complete response and closes the connection.
-async fn respond(stream: &mut TcpStream, status: Status, body: &str) -> io::Result<()> {
+async fn respond<S>(stream: &mut S, status: Status, body: &str) -> io::Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
     let response = format!(
         "HTTP/1.1 {} {}\r\n\
          Content-Type: {}\r\n\
