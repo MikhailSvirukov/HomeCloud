@@ -984,7 +984,11 @@ mod tests {
 
         assert!(matches!(
             ClientHeader::decode(&bytes),
-            Err(WireError::WrongLength { .. })
+            Err(WireError::WrongArgumentCount {
+                expected: 0,
+                actual: 1,
+                ..
+            })
         ));
     }
 
