@@ -493,11 +493,12 @@ fn tls_scrape(port: u16, trust: &Path) -> std::io::Result<String> {
 /// Scrape over TLS until the server answers `200`, failing fast if it exits.
 fn wait_for_tls_metrics(guard: &mut ChildGuard, port: u16, trust: &Path) -> String {
     let deadline = Instant::now() + TIMEOUT;
+    let mut last_error = String::from("no attempt yet");
     loop {
-        if let Ok(response) = tls_scrape(port, trust) {
-            if response.starts_with("HTTP/1.1 200 OK") {
-                return response;
-            }
+        match tls_scrape(port, trust) {
+            Ok(response) if response.starts_with("HTTP/1.1 200 OK") => return response,
+            Ok(response) => last_error = format!("unexpected response: {response}"),
+            Err(error) => last_error = error.to_string(),
         }
         if let Some(status) = guard
             .child()
@@ -508,7 +509,7 @@ fn wait_for_tls_metrics(guard: &mut ChildGuard, port: u16, trust: &Path) -> Stri
         }
         assert!(
             Instant::now() < deadline,
-            "the TLS metrics endpoint never answered on port {port}"
+            "the TLS metrics endpoint never answered on port {port}; last error: {last_error}"
         );
         std::thread::sleep(Duration::from_millis(50));
     }
