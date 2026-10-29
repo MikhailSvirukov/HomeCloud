@@ -306,6 +306,7 @@ mod tests {
             NodeId::from_bytes([0x11; IDENTIFIER_BYTES])
         );
         assert!(entries[0].encryption_public_key == PublicKey::from_bytes([0x22; KEY_BYTES]));
+        assert!(entries[0].signing_public_key == PublicKey::from_bytes([0x33; KEY_BYTES]));
         assert_eq!(entries[1].label, "storage-2");
         assert_eq!(entries[1].address, "[fd00::12]:7100".parse().expect("IPv6"));
     }
@@ -441,6 +442,31 @@ mod tests {
         assert!(matches!(
             decode_topology_answer(&bytes, MAX_LABEL_BYTES),
             Err(WireError::UnexpectedResultCode(2))
+        ));
+    }
+
+    #[test]
+    fn a_short_signing_key_is_rejected() {
+        let mut value = answer_value();
+        node_mut(&mut value)[5] = Value::Bytes(vec![0x33; KEY_BYTES - 1]);
+
+        assert!(matches!(
+            decode_topology_answer(&encode(&value), MAX_LABEL_BYTES),
+            Err(WireError::InvalidAnswer {
+                field: "signing_public_key",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_zero_port_is_rejected() {
+        let mut value = answer_value();
+        node_mut(&mut value)[3] = Value::Integer(0.into());
+
+        assert!(matches!(
+            decode_topology_answer(&encode(&value), MAX_LABEL_BYTES),
+            Err(WireError::InvalidAnswer { field: "port", .. })
         ));
     }
 }
