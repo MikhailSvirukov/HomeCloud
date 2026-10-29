@@ -85,7 +85,7 @@ internal object BackupStatusReader {
             }
         if (last == null) {
             return BackupStatus(
-                state = CycleState.IDLE,
+                state = state,
                 lastCompletedAtMillis = null,
                 lastOutcome = null,
                 pendingVersions = pendingVersions,

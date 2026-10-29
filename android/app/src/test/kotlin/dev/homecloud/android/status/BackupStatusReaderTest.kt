@@ -9,7 +9,7 @@ import org.junit.Test
 
 class BackupStatusReaderTest {
     @Test
-    fun `statusOf without a recorded cycle is idle and reports no completion time, outcome, or error`() {
+    fun `statusOf without a recorded cycle keeps the supplied state and reports no completion time, outcome, or error`() {
         val status =
             BackupStatusReader.statusOf(
                 entries = emptyList(),
@@ -17,7 +17,7 @@ class BackupStatusReaderTest {
                 state = CycleState.SCANNING,
             )
 
-        assertEquals(CycleState.IDLE, status.state)
+        assertEquals(CycleState.SCANNING, status.state)
         assertNull(status.lastCompletedAtMillis)
         assertNull(status.lastOutcome)
         assertNull(status.lastError)

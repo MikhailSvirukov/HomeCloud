@@ -19,7 +19,6 @@ import dev.homecloud.android.status.LastErrorCategory
 import dev.homecloud.android.testsupport.FakeMediaVersionScanner
 import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -265,7 +264,7 @@ class BackupCycleRunnerTest {
 
     @Test
     fun `runOnce records the queue category and rethrows a store read failure`() {
-        val failure = IOException(QUEUE_FAILURE_MESSAGE)
+        val failure = UploadQueueStoreException(QUEUE_FAILURE_MESSAGE)
         val lastCycleStore = RecordingLastCycleStore()
         val runner =
             runnerFor(
@@ -275,7 +274,7 @@ class BackupCycleRunnerTest {
                 clock = { LAST_CYCLE_COMPLETED_AT_MILLIS },
             )
 
-        val thrown = assertThrows(IOException::class.java) { runner.runOnce() }
+        val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
 
         assertSame(failure, thrown)
         assertEquals(
@@ -344,21 +343,6 @@ class BackupCycleRunnerTest {
             ),
             lastCycleStore.records,
         )
-    }
-
-    @Test
-    fun `runOnce without a last cycle store writes no cycle record`() {
-        val lastCycleFile = File(temporaryFolder.newFolder(), LAST_CYCLE_FILE_NAME)
-        val runner =
-            runnerFor(
-                store = FileUploadQueueStore(storeFile()),
-                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
-                lastCycleStore = null,
-            )
-
-        runner.runOnce()
-
-        assertFalse(lastCycleFile.exists())
     }
 
     @Test

@@ -86,6 +86,7 @@ private fun categoryOf(failure: Exception): LastErrorCategory =
     when (failure) {
         is MediaLibraryUnreadableException -> LastErrorCategory.MEDIA_LIBRARY_UNREADABLE
         is UploadQueueStoreException -> LastErrorCategory.QUEUE_UNAVAILABLE
-        is IOException -> LastErrorCategory.QUEUE_UNAVAILABLE
+        is java.io.FileNotFoundException -> LastErrorCategory.MEDIA_LIBRARY_UNREADABLE
+        is IOException -> LastErrorCategory.MEDIA_LIBRARY_UNREADABLE
         else -> LastErrorCategory.INTERNAL
     }
