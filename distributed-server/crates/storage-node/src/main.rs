@@ -7,8 +7,12 @@
 //! Ctrl-C shutdown signal. The `io_uring` disk thread is a later increment.
 
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use storage_node::{serve, Listener, NodeConfig, PrivateKey, StorageLayout, PROTOCOL_VERSION};
+use storage_node::{
+    serve, Listener, Metrics, MetricsServer, NodeConfig, PrivateKey, StorageLayout,
+    PROTOCOL_VERSION,
+};
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
 const DEFAULT_LOG_FILTER: &str = "info";
@@ -27,6 +31,8 @@ const ENV_SIGNING_KEY_PATH: &str = "SIGNING_KEY_PATH";
 const ENV_MAX_FRAME_LEN: &str = "MAX_FRAME_LEN";
 /// Environment variable carrying the per-connection queue capacity.
 const ENV_QUEUE_CAPACITY: &str = "QUEUE_CAPACITY";
+/// Environment variable carrying the metrics bind address.
+const ENV_METRICS_BIND_ADDR: &str = "METRICS_BIND_ADDR";
 /// Environment variable carrying the catalog page size.
 const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
 /// Environment variable carrying the catalog snapshot lifetime in milliseconds.
@@ -50,6 +56,8 @@ const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// `from_pairs` key for the per-connection queue capacity.
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
+/// `from_pairs` key for the metrics bind address.
+const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
 /// `from_pairs` key for the catalog page size.
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 /// `from_pairs` key for the catalog snapshot lifetime in milliseconds.
@@ -87,6 +95,7 @@ async fn run() -> ExitCode {
     let signing_key_path = env_value(ENV_SIGNING_KEY_PATH);
     let max_frame_len = env_value(ENV_MAX_FRAME_LEN);
     let queue_capacity = env_value(ENV_QUEUE_CAPACITY);
+    let metrics_bind_addr = env_value(ENV_METRICS_BIND_ADDR);
     let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
@@ -100,6 +109,7 @@ async fn run() -> ExitCode {
         (KEY_SIGNING_KEY_PATH, signing_key_path.as_str()),
         (KEY_MAX_FRAME_LEN, max_frame_len.as_str()),
         (KEY_QUEUE_CAPACITY, queue_capacity.as_str()),
+        (KEY_METRICS_BIND_ADDR, metrics_bind_addr.as_str()),
         (KEY_CATALOG_PAGE_SIZE, catalog_page_size.as_str()),
         (
             KEY_CATALOG_SNAPSHOT_TTL_MS,
@@ -167,6 +177,19 @@ async fn run() -> ExitCode {
     };
     tracing::info!(%address, "listening");
 
+    let metrics = Arc::new(Metrics::new(config.queue_capacity));
+    let metrics_server =
+        match MetricsServer::bind(config.metrics_bind_addr, Arc::clone(&metrics)).await {
+            Ok(server) => server,
+            Err(error) => {
+                tracing::error!(error = %error, "failed to bind metrics listener");
+                return ExitCode::FAILURE;
+            }
+        };
+    let metrics_addr = metrics_server.local_addr().ok();
+    tracing::info!(metrics_addr = ?metrics_addr, "metrics listening");
+    let metrics_task = tokio::spawn(metrics_server.serve());
+
     let outcome = serve(
         listener,
         shutdown_signal(),
@@ -174,6 +197,8 @@ async fn run() -> ExitCode {
         config.queue_capacity,
     )
     .await;
+    metrics_task.abort();
+
     match outcome {
         Ok(()) => {
             tracing::info!("storage node stopped");

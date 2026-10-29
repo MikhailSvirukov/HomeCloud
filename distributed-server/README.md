@@ -44,6 +44,8 @@ clients; it does not relay Raft or blob traffic.
   `src/listener.rs` (binds
   the node's listen address
   and yields frame reader/writer halves per accepted TCP connection),
+  `src/metrics.rs` (Prometheus-compatible metrics set and the loopback
+  `GET /metrics` server),
   `src/cpu_pool.rs` (bounded CPU pool for compression/crypto work off the Tokio
   worker threads), `src/node.rs` (node runtime: serves frame connections on
   a bound listener until shutdown), `src/storage_layout.rs` (on-disk
@@ -64,7 +66,8 @@ clients; it does not relay Raft or blob traffic.
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
   `upload_outcomes_public_api.rs`,
-  `listener_public_api.rs`, `cpu_pool_public_api.rs`, `node_public_api.rs`,
+  `listener_public_api.rs`, `metrics_public_api.rs`, `cpu_pool_public_api.rs`,
+  `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`, `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
@@ -133,11 +136,15 @@ at startup:
   (maps to the `catalog_snapshot_ttl_ms` key).
 - `MAX_SOURCE_NAME_LEN` — maximum `source_name` length in UTF-8 bytes; must be non-zero
   (maps to the `max_source_name_len` key).
+- `METRICS_BIND_ADDR` — loopback `SocketAddr` for the Prometheus-compatible metrics
+  endpoint; required, with no default (maps to the `metrics_bind_addr` key). The endpoint
+  is served over plain HTTP and rejects any non-loopback bind address.
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
 
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
-`catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`, and `peers` keys;
+`catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
+`metrics_bind_addr`, and `peers` keys;
 an absent or empty value for any required key is reported as missing, and unknown keys are
 ignored.
 Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
@@ -147,6 +154,16 @@ and a larger value is rejected.
 Startup loads both private key files after the configuration is validated and before
 the listener binds, so a missing or unreadable key stops the process without opening a
 port.
+
+## Metrics
+
+The node exposes a Prometheus-compatible metrics endpoint on `METRICS_BIND_ADDR`.
+`GET /metrics` returns the Prometheus text exposition format (`text/plain;
+version=0.0.4; charset=utf-8`) with the node liveness, build-info, queue-capacity, and
+scrape counters. Labels are limited to bounded static values such as the build version;
+they never contain logins, `request_id`, `upload_id`, file names, or other per-request
+values. Requests to other paths return `404`, and methods other than `GET` return `405`
+with `Allow: GET`. The metrics interface is separate from the application TCP protocol.
 
 ## Build and test
 

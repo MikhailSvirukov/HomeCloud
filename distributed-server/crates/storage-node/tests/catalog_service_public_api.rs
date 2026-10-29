@@ -152,6 +152,7 @@ fn configured_node_builds_a_matching_catalog_service() {
         ("signing_key_path", "/keys/signing.key"),
         ("max_frame_len", "1048576"),
         ("queue_capacity", "16"),
+        ("metrics_bind_addr", "127.0.0.1:9100"),
         ("catalog_page_size", "2"),
         ("catalog_snapshot_ttl_ms", "60000"),
         ("max_source_name_len", "64"),
