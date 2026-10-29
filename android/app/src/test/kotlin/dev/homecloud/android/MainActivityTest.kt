@@ -12,12 +12,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import dev.homecloud.android.backup.BackupCycleComposition
 import dev.homecloud.android.backup.BackupWorkScheduler
 import dev.homecloud.android.notifications.NotificationPermissionPolicy
 import dev.homecloud.android.permissions.MediaPermissionPolicy
+import dev.homecloud.android.queue.FileUploadQueueStore
+import dev.homecloud.android.queue.UploadQueueEntry
+import dev.homecloud.android.queue.UploadQueueState
 import dev.homecloud.android.setup.FileSetupConfigStore
 import dev.homecloud.android.setup.SetupConfiguration
 import dev.homecloud.android.setup.SetupMode
+import dev.homecloud.android.status.CycleOutcome
+import dev.homecloud.android.status.FileLastCycleStore
+import dev.homecloud.android.status.LastCycleRecord
 import dev.homecloud.android.testsupport.MediaTestData
 import dev.homecloud.android.testsupport.RecordingMediaContentProvider
 import org.junit.Assert.assertArrayEquals
@@ -39,6 +46,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.ConscryptMode
 import java.io.File
+import java.text.DateFormat
+import java.util.Date
 
 /**
  * Launches the activity the manifest declares and asserts the permission surface a first launch
@@ -66,6 +75,9 @@ class MainActivityTest {
     val testWorkManagerRule = TestWorkManagerRule()
 
     @get:Rule(order = 2)
+    val backupStatusFilesRule = BackupStatusFilesRule(completedAtMillis = LAST_CYCLE_COMPLETED_AT_MILLIS)
+
+    @get:Rule(order = 3)
     val setupConfigRule =
         SetupConfigFileRule(
             host = RESTORED_HOST,
@@ -73,7 +85,7 @@ class MainActivityTest {
             login = RESTORED_LOGIN,
         )
 
-    @get:Rule(order = 3)
+    @get:Rule(order = 4)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
@@ -156,6 +168,32 @@ class MainActivityTest {
         waitForText(RESTORED_HOST)
 
         composeRule.onNodeWithText(RESTORED_HOST).assertIsDisplayed()
+    }
+
+    @Test
+    @BackupStatusRecorded
+    fun `launch shows the recorded last cycle result and pending count after the asynchronous read`() {
+        grantRequiredPermissions()
+        resumeAgain()
+
+        val completedMessage = lastCompletedMessage(LAST_CYCLE_COMPLETED_AT_MILLIS)
+        waitForText(completedMessage)
+
+        composeRule.onNodeWithText(completedMessage).assertIsDisplayed()
+        composeRule.onNodeWithText(composeRule.activity.getString(R.string.backup_status_state_completed)).assertIsDisplayed()
+        composeRule.onNodeWithText(composeRule.activity.getString(R.string.backup_status_result_success)).assertIsDisplayed()
+        composeRule.onNodeWithText(pendingMessage(EXPECTED_PENDING_VERSIONS)).assertIsDisplayed()
+    }
+
+    @Test
+    fun `launch without a recorded cycle shows that no cycle has completed yet`() {
+        grantRequiredPermissions()
+        resumeAgain()
+
+        val neverMessage = composeRule.activity.getString(R.string.backup_status_last_never)
+        waitForText(neverMessage)
+
+        composeRule.onNodeWithText(neverMessage).assertIsDisplayed()
     }
 
     @Test
@@ -263,6 +301,15 @@ class MainActivityTest {
 
     private fun failureMessage(): String = composeRule.activity.getString(R.string.media_library_failed)
 
+    private fun lastCompletedMessage(millis: Long): String =
+        composeRule.activity.getString(
+            R.string.backup_status_last_completed,
+            DateFormat.getDateTimeInstance().format(Date(millis)),
+        )
+
+    private fun pendingMessage(count: Int): String =
+        composeRule.activity.resources.getQuantityString(R.plurals.backup_status_pending, count, count)
+
     private fun grantRequiredPermissions() {
         val permissions = MediaPermissionPolicy.requiredPermissions(PER_TYPE_PERMISSIONS_SDK_INT)
         shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(*permissions.toTypedArray())
@@ -293,6 +340,9 @@ class MainActivityTest {
         const val RESTORED_HOST = "198.51.100.7"
         const val RESTORED_PORT = 9000
         const val RESTORED_LOGIN = "saved-user"
+
+        const val LAST_CYCLE_COMPLETED_AT_MILLIS = 1_700_000_000_000L
+        const val EXPECTED_PENDING_VERSIONS = 2
     }
 }
 
@@ -300,6 +350,11 @@ class MainActivityTest {
 @Retention(AnnotationRetention.RUNTIME)
 @Target(AnnotationTarget.FUNCTION)
 private annotation class NotificationPermissionGranted
+
+/** Marks a test that must launch the activity with a completed last cycle and a queue snapshot. */
+@Retention(AnnotationRetention.RUNTIME)
+@Target(AnnotationTarget.FUNCTION)
+private annotation class BackupStatusRecorded
 
 /**
  * Applies the notification permission state before the Compose rule launches the activity, so the
@@ -350,6 +405,70 @@ class SetupConfigFileRule(
     override fun after() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         File(context.filesDir, SETUP_CONFIG_FILE_NAME).delete()
+    }
+}
+
+/**
+ * Writes the last-cycle record and upload queue snapshot before the Compose rule launches the
+ * activity when the test is marked [BackupStatusRecorded], and removes both files afterwards so a
+ * test without the marker launches with no recorded cycle.
+ */
+class BackupStatusFilesRule(
+    private val completedAtMillis: Long,
+) : TestRule {
+    override fun apply(
+        base: Statement,
+        description: Description,
+    ): Statement =
+        object : Statement() {
+            override fun evaluate() {
+                val context = ApplicationProvider.getApplicationContext<Context>()
+                val lastCycleFile = File(context.filesDir, BackupCycleComposition.LAST_CYCLE_FILE_NAME)
+                val queueFile = File(context.filesDir, BackupCycleComposition.QUEUE_SNAPSHOT_FILE_NAME)
+                if (description.getAnnotation(BackupStatusRecorded::class.java) != null) {
+                    FileLastCycleStore(lastCycleFile)
+                        .write(LastCycleRecord(completedAtMillis, CycleOutcome.SUCCESS, null))
+                    FileUploadQueueStore(queueFile).write(snapshotEntries())
+                } else {
+                    lastCycleFile.delete()
+                    queueFile.delete()
+                }
+                try {
+                    base.evaluate()
+                } finally {
+                    lastCycleFile.delete()
+                    queueFile.delete()
+                }
+            }
+        }
+
+    private fun snapshotEntries(): List<UploadQueueEntry> =
+        listOf(
+            snapshotEntry(PENDING_SOURCE_ID, UploadQueueState.PENDING),
+            snapshotEntry(IN_FLIGHT_SOURCE_ID, UploadQueueState.IN_FLIGHT),
+            snapshotEntry(COMPLETED_SOURCE_ID, UploadQueueState.COMPLETED),
+            snapshotEntry(FAILED_SOURCE_ID, UploadQueueState.FAILED),
+        )
+
+    private fun snapshotEntry(
+        sourceId: Long,
+        state: UploadQueueState,
+    ): UploadQueueEntry =
+        UploadQueueEntry(
+            uploadId = SNAPSHOT_UPLOAD_ID_PREFIX + sourceId,
+            sourceId = sourceId,
+            identity = MediaTestData.versionIdentity(sourceId = sourceId),
+            sizeBytes = MediaTestData.SIZE_BYTES,
+            attemptCount = 0,
+            state = state,
+        )
+
+    private companion object {
+        const val SNAPSHOT_UPLOAD_ID_PREFIX = "snapshot-"
+        const val PENDING_SOURCE_ID = 101L
+        const val IN_FLIGHT_SOURCE_ID = 102L
+        const val COMPLETED_SOURCE_ID = 103L
+        const val FAILED_SOURCE_ID = 104L
     }
 }
 

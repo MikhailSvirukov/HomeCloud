@@ -3,13 +3,19 @@ package dev.homecloud.android.backup
 import dev.homecloud.android.log.BackupCycleLog
 import dev.homecloud.android.log.NoOpBackupCycleLog
 import dev.homecloud.android.media.MediaKind
+import dev.homecloud.android.media.MediaLibraryUnreadableException
 import dev.homecloud.android.media.MediaVersionCandidate
+import dev.homecloud.android.media.MediaVersionScanner
 import dev.homecloud.android.queue.FileUploadQueueStore
 import dev.homecloud.android.queue.InMemoryUploadQueue
 import dev.homecloud.android.queue.UploadQueueEntry
 import dev.homecloud.android.queue.UploadQueueState
 import dev.homecloud.android.queue.UploadQueueStore
 import dev.homecloud.android.queue.UploadQueueStoreException
+import dev.homecloud.android.status.CycleOutcome
+import dev.homecloud.android.status.LastCycleRecord
+import dev.homecloud.android.status.LastCycleStore
+import dev.homecloud.android.status.LastErrorCategory
 import dev.homecloud.android.testsupport.FakeMediaVersionScanner
 import dev.homecloud.android.testsupport.MediaTestData
 import org.junit.Assert.assertEquals
@@ -20,6 +26,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 
 class BackupCycleRunnerTest {
     @get:Rule
@@ -81,7 +88,7 @@ class BackupCycleRunnerTest {
             runnerFor(
                 store = store,
                 queue = queue,
-                candidates = listOf(MediaTestData.candidate(id = CANDIDATE_ID, kind = MediaKind.IMAGE)),
+                scanner = FakeMediaVersionScanner(listOf(MediaTestData.candidate(id = CANDIDATE_ID, kind = MediaKind.IMAGE))),
             )
 
         val result = runner.runOnce()
@@ -123,7 +130,7 @@ class BackupCycleRunnerTest {
     fun `runOnce with no discovered candidates reports an empty plan and stores an empty snapshot`() {
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val store = FileUploadQueueStore(storeFile())
-        val runner = runnerFor(store = store, queue = queue, candidates = emptyList())
+        val runner = runnerFor(store = store, queue = queue, scanner = FakeMediaVersionScanner(emptyList()))
 
         val result = runner.runOnce()
 
@@ -230,15 +237,152 @@ class BackupCycleRunnerTest {
         )
     }
 
+    @Test
+    fun `runOnce records the completion time and success of a completed cycle`() {
+        val lastCycleStore = RecordingLastCycleStore()
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                lastCycleStore = lastCycleStore,
+                clock = { LAST_CYCLE_COMPLETED_AT_MILLIS },
+            )
+
+        runner.runOnce()
+
+        assertEquals(
+            listOf(
+                LastCycleRecord(
+                    completedAtMillis = LAST_CYCLE_COMPLETED_AT_MILLIS,
+                    outcome = CycleOutcome.SUCCESS,
+                    error = null,
+                ),
+            ),
+            lastCycleStore.records,
+        )
+    }
+
+    @Test
+    fun `runOnce records the queue category and rethrows a store read failure`() {
+        val failure = UploadQueueStoreException(QUEUE_FAILURE_MESSAGE)
+        val lastCycleStore = RecordingLastCycleStore()
+        val runner =
+            runnerFor(
+                store = FakeUploadQueueStore(readFailure = failure),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                lastCycleStore = lastCycleStore,
+                clock = { LAST_CYCLE_COMPLETED_AT_MILLIS },
+            )
+
+        val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
+
+        assertSame(failure, thrown)
+        assertEquals(
+            listOf(
+                LastCycleRecord(
+                    completedAtMillis = LAST_CYCLE_COMPLETED_AT_MILLIS,
+                    outcome = CycleOutcome.FAILURE,
+                    error = LastErrorCategory.QUEUE_UNAVAILABLE,
+                ),
+            ),
+            lastCycleStore.records,
+        )
+    }
+
+    @Test
+    fun `runOnce records the media category and rethrows a media library failure`() {
+        val failure = MediaLibraryUnreadableException(MEDIA_FAILURE_MESSAGE)
+        val lastCycleStore = RecordingLastCycleStore()
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                scanner = MediaVersionScanner { throw failure },
+                lastCycleStore = lastCycleStore,
+                clock = { LAST_CYCLE_COMPLETED_AT_MILLIS },
+            )
+
+        val thrown = assertThrows(MediaLibraryUnreadableException::class.java) { runner.runOnce() }
+
+        assertSame(failure, thrown)
+        assertEquals(
+            listOf(
+                LastCycleRecord(
+                    completedAtMillis = LAST_CYCLE_COMPLETED_AT_MILLIS,
+                    outcome = CycleOutcome.FAILURE,
+                    error = LastErrorCategory.MEDIA_LIBRARY_UNREADABLE,
+                ),
+            ),
+            lastCycleStore.records,
+        )
+    }
+
+    @Test
+    fun `runOnce records the internal category and rethrows an unexpected failure`() {
+        val failure = IllegalStateException(INTERNAL_FAILURE_MESSAGE)
+        val lastCycleStore = RecordingLastCycleStore()
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                scanner = MediaVersionScanner { throw failure },
+                lastCycleStore = lastCycleStore,
+                clock = { LAST_CYCLE_COMPLETED_AT_MILLIS },
+            )
+
+        val thrown = assertThrows(IllegalStateException::class.java) { runner.runOnce() }
+
+        assertSame(failure, thrown)
+        assertEquals(
+            listOf(
+                LastCycleRecord(
+                    completedAtMillis = LAST_CYCLE_COMPLETED_AT_MILLIS,
+                    outcome = CycleOutcome.FAILURE,
+                    error = LastErrorCategory.INTERNAL,
+                ),
+            ),
+            lastCycleStore.records,
+        )
+    }
+
+    @Test
+    fun `runOnce with a record store that fails to write still returns the planned result`() {
+        val runner =
+            runnerFor(
+                store = FileUploadQueueStore(storeFile()),
+                queue = InMemoryUploadQueue(MAX_ATTEMPTS),
+                lastCycleStore = FailingLastCycleStore(),
+            )
+
+        val result = runner.runOnce()
+
+        assertEquals(
+            PlanResult(
+                discoveredCandidates = CANDIDATE_COUNT,
+                newlyEnqueued = CANDIDATE_COUNT,
+                rejectedByCapacity = NO_CAPACITY_REJECTIONS,
+            ),
+            result,
+        )
+    }
+
     private fun runnerFor(
         store: UploadQueueStore,
         queue: InMemoryUploadQueue,
-        candidates: List<MediaVersionCandidate> = imageAndVideoCandidates(),
+        scanner: MediaVersionScanner = FakeMediaVersionScanner(imageAndVideoCandidates()),
         log: BackupCycleLog = NoOpBackupCycleLog,
         maxQueueSize: Int = NON_BINDING_CAPACITY,
+        lastCycleStore: LastCycleStore? = null,
+        clock: () -> Long = System::currentTimeMillis,
     ): BackupCycleRunner {
-        val planner = MediaBackupPlanner(FakeMediaVersionScanner(candidates), queue, maxQueueSize)
-        return BackupCycleRunner(planner = planner, store = store, log = log)
+        val planner = MediaBackupPlanner(scanner, queue, maxQueueSize)
+        return BackupCycleRunner(
+            planner = planner,
+            store = store,
+            log = log,
+            lastCycleStore = lastCycleStore,
+            clock = clock,
+        )
     }
 
     private fun imageAndVideoCandidates(): List<MediaVersionCandidate> =
@@ -264,8 +408,8 @@ class BackupCycleRunnerTest {
     private fun storeFile(): File = File(temporaryFolder.newFolder(), STORE_FILE_NAME)
 
     private class FakeUploadQueueStore(
-        private val readFailure: UploadQueueStoreException? = null,
-        private val writeFailure: UploadQueueStoreException? = null,
+        private val readFailure: Exception? = null,
+        private val writeFailure: Exception? = null,
     ) : UploadQueueStore {
         var writeCount: Int = 0
             private set
@@ -276,6 +420,25 @@ class BackupCycleRunnerTest {
             writeCount += 1
             writeFailure?.let { failure -> throw failure }
         }
+    }
+
+    private class RecordingLastCycleStore : LastCycleStore {
+        private val recorded = mutableListOf<LastCycleRecord>()
+
+        val records: List<LastCycleRecord>
+            get() = recorded
+
+        override fun read(): LastCycleRecord? = null
+
+        override fun write(record: LastCycleRecord) {
+            recorded += record
+        }
+    }
+
+    private class FailingLastCycleStore : LastCycleStore {
+        override fun read(): LastCycleRecord? = null
+
+        override fun write(record: LastCycleRecord) = throw IOException(RECORD_WRITE_FAILURE_MESSAGE)
     }
 
     private class RecordingBackupCycleLog : BackupCycleLog {
@@ -319,6 +482,13 @@ class BackupCycleRunnerTest {
         const val STORE_FILE_NAME = "upload-queue.txt"
         const val READ_FAILURE_MESSAGE = "store read failed"
         const val WRITE_FAILURE_MESSAGE = "store write failed"
+
+        const val LAST_CYCLE_FILE_NAME = "last-cycle"
+        const val LAST_CYCLE_COMPLETED_AT_MILLIS = 1_700_000_000_000L
+        const val QUEUE_FAILURE_MESSAGE = "queue read failed"
+        const val MEDIA_FAILURE_MESSAGE = "media library could not be read"
+        const val INTERNAL_FAILURE_MESSAGE = "unexpected cycle failure"
+        const val RECORD_WRITE_FAILURE_MESSAGE = "record write failed"
 
         const val NON_BINDING_CAPACITY = 100
         const val CAPACITY = 1

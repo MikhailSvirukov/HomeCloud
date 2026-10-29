@@ -9,6 +9,24 @@
     <string name="media_permission_settings_action">Open settings</string>
     <string name="media_library_loading">Checking your media library…</string>
     <string name="media_library_failed">Could not read the media library.</string>
+    <string name="backup_status_title">Backup status</string>
+    <string name="backup_status_state_idle">Idle</string>
+    <string name="backup_status_state_scanning">Scanning the media library</string>
+    <string name="backup_status_state_uploading">Uploading versions</string>
+    <string name="backup_status_state_completed">Completed</string>
+    <string name="backup_status_state_failed">Failed</string>
+    <string name="backup_status_last_never">No backup cycle has completed yet</string>
+    <string name="backup_status_last_completed">Last completed %1$s</string>
+    <string name="backup_status_result_success">Result: success</string>
+    <string name="backup_status_result_failure">Result: failed</string>
+    <string name="backup_status_error_media_library_unreadable">Last error: the media library could not be read.</string>
+    <string name="backup_status_error_queue_unavailable">Last error: the upload queue is unavailable.</string>
+    <string name="backup_status_error_transport_unavailable">Last error: the server could not be reached.</string>
+    <string name="backup_status_error_internal">Last error: the backup cycle failed.</string>
+    <plurals name="backup_status_pending">
+        <item quantity="one">%1$d version waiting to upload</item>
+        <item quantity="other">%1$d versions waiting to upload</item>
+    </plurals>
     <string name="upload_transfer_channel_name">Upload transfers</string>
     <string name="upload_transfer_channel_description">Shows when HomeCloud is uploading photos and videos in the background.</string>
     <string name="upload_transfer_notification_title">@string/app_name</string>
