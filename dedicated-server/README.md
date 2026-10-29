@@ -392,10 +392,13 @@ message layer decides whether an empty payload is meaningful.
 `src/wire.rs` encodes and decodes the CBOR structures inside a frame: the
 external header with its seven positions and null rules (`INT-NET-050`), the
 client logical header for the four v1 operations (`INT-NET-051`, `INT-NET-057`,
-with the registration, topology, catalog page and upload argument schemas) and
-the result envelope (`INT-NET-061`). Encoding is the deterministic minimal
+with the registration, topology, catalog page and upload argument schemas), the
+result envelope (`INT-NET-061`) and the inter-server envelope `[message_type,
+args]` with its heartbeat request, heartbeat response and Raft RPC messages
+(`INT-NET-072`-`INT-NET-075`). Encoding is the deterministic minimal
 representation, and decoding rejects a wrong element count, type, byte-string
-length, null rule, unknown operation code or trailing bytes.
+length or null rule, an unknown operation code, a reserved or unknown message
+type, a wrong argument count, type or value, and trailing bytes.
 
 ## Key identity
 
