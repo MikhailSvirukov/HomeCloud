@@ -6,12 +6,23 @@
 //! connections are handled sequentially and every response closes the
 //! connection, so a slow client cannot pin a worker indefinitely and the
 //! listener never accumulates threads or descriptors.
+//!
+//! When TLS material is configured the listener terminates TLS with `rustls`
+//! and serves the same endpoint over HTTPS, which is what `NFR-OBS-007`
+//! requires for a non-loopback bind. The trust file is loaded at startup so it
+//! is readable and carries PEM certificate material; whether a collecting
+//! client can build a chain from it is the client's responsibility.
 
-use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::fs::File;
+use std::io::{self, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener};
+use std::path::Path;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::StreamOwned;
 
 /// Maximum number of request bytes read from one connection.
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
@@ -27,6 +38,17 @@ pub const METRICS_PATH: &str = "/metrics";
 
 /// Content type of an HTTP error response.
 const ERROR_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
+
+/// TLS material paths of the metrics endpoint (`CFG-OBS-004`).
+#[derive(Clone, Copy, Debug)]
+pub struct TlsPaths<'a> {
+    /// Server certificate chain served by the endpoint.
+    pub certificate: &'a Path,
+    /// Private key of the server certificate.
+    pub private_key: &'a Path,
+    /// Trust material the collecting client verifies the server against.
+    pub trust: &'a Path,
+}
 
 /// Handle to a running metrics server.
 ///
@@ -46,10 +68,22 @@ impl MetricsServer {
 }
 
 /// Bind `bind` and serve `body` on `GET /metrics` from one background thread.
+///
+/// With `tls` the endpoint speaks HTTPS with the configured certificate. A
+/// non-loopback `bind` without TLS is refused before the socket is bound, so a
+/// plaintext endpoint can never be published outside the host.
 pub fn start(
     bind: SocketAddr,
     body: Arc<dyn Fn() -> String + Send + Sync>,
+    tls: Option<TlsPaths<'_>>,
 ) -> io::Result<MetricsServer> {
+    if !bind.ip().is_loopback() && tls.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a non-loopback metrics bind requires TLS",
+        ));
+    }
+    let tls = tls.map(load_tls).transpose()?.map(Arc::new);
     let listener = TcpListener::bind(bind)?;
     let local_addr = listener.local_addr()?;
 
@@ -63,7 +97,29 @@ pub fn start(
                     thread::sleep(ACCEPT_ERROR_BACKOFF);
                     continue;
                 };
-                let _ = serve(stream, body.as_ref());
+                if stream.set_read_timeout(Some(CONNECTION_TIMEOUT)).is_err()
+                    || stream.set_write_timeout(Some(CONNECTION_TIMEOUT)).is_err()
+                {
+                    continue;
+                }
+                match tls.as_ref() {
+                    Some(config) => {
+                        let Ok(connection) = rustls::ServerConnection::new(Arc::clone(config))
+                        else {
+                            continue;
+                        };
+                        let mut tls_stream = StreamOwned::new(connection, stream);
+                        let _ = serve(&mut tls_stream, body.as_ref());
+                        // A collector treats an EOF without close_notify as an
+                        // error, so end the TLS session explicitly.
+                        tls_stream.conn.send_close_notify();
+                        let _ = tls_stream.flush();
+                    }
+                    None => {
+                        let mut stream = stream;
+                        let _ = serve(&mut stream, body.as_ref());
+                    }
+                }
             }
         })?;
 
@@ -73,13 +129,49 @@ pub fn start(
     })
 }
 
-/// Serve one HTTP/1.1 request on `stream`.
-fn serve(stream: TcpStream, body: &(dyn Fn() -> String + Send + Sync)) -> io::Result<()> {
-    stream.set_read_timeout(Some(CONNECTION_TIMEOUT))?;
-    stream.set_write_timeout(Some(CONNECTION_TIMEOUT))?;
+/// Load the TLS material and build the server configuration.
+fn load_tls(paths: TlsPaths<'_>) -> io::Result<rustls::ServerConfig> {
+    let certificates = load_certificates(paths.certificate)?;
+    let private_key = load_private_key(paths.private_key)?;
+    // The trust material belongs to the collecting client: the server loads it to
+    // prove the file is readable and carries PEM certificate material. Chain
+    // verification stays the collecting client responsibility.
+    let _trust = load_certificates(paths.trust)?;
 
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        .with_no_client_auth()
+        .with_single_cert(certificates, private_key)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn load_certificates(path: &Path) -> io::Result<Vec<CertificateDer<'static>>> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let certificates = rustls_pemfile::certs(&mut reader).collect::<Result<Vec<_>, _>>()?;
+    if certificates.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "no PEM certificate found",
+        ));
+    }
+    Ok(certificates)
+}
+
+fn load_private_key(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
+    let mut reader = BufReader::new(File::open(path)?);
+    rustls_pemfile::private_key(&mut reader)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no PEM private key found"))
+}
+/// Serve one HTTP/1.1 request on `stream`.
+///
+/// Works for a plain TCP stream and for a TLS stream alike.
+fn serve<S: Read + Write>(
+    stream: &mut S,
+    body: &(dyn Fn() -> String + Send + Sync),
+) -> io::Result<()> {
     let mut request = [0_u8; MAX_REQUEST_BYTES];
-    let read = (&stream).read(&mut request)?;
+    let read = stream.read(&mut request)?;
     let request = &request[..read];
     let request_line = request
         .split(|byte| *byte == b'\n')
@@ -110,7 +202,7 @@ fn serve(stream: TcpStream, body: &(dyn Fn() -> String + Send + Sync)) -> io::Re
     write_response(stream, response)
 }
 
-fn write_response(mut stream: TcpStream, response: Response) -> io::Result<()> {
+fn write_response<W: Write>(stream: &mut W, response: Response) -> io::Result<()> {
     let bytes = response.as_bytes();
     stream.write_all(&bytes)?;
     stream.flush()
@@ -173,7 +265,8 @@ mod tests {
 
     fn server() -> MetricsServer {
         let body = Arc::new(body);
-        start("127.0.0.1:0".parse().expect("valid address"), body).expect("the server must bind")
+        start("127.0.0.1:0".parse().expect("valid address"), body, None)
+            .expect("the server must bind")
     }
 
     fn request(server: &MetricsServer, request: &str) -> String {
@@ -229,6 +322,17 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
         assert!(response.ends_with("only GET is supported\n"));
+    }
+
+    #[test]
+    fn a_non_loopback_bind_without_tls_is_refused() {
+        let body = Arc::new(body);
+        let result = start("0.0.0.0:0".parse().expect("valid address"), body, None);
+        let error = match result {
+            Ok(_) => panic!("a plaintext non-loopback bind must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

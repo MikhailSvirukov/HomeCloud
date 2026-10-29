@@ -6,12 +6,15 @@
 //! file proves the endpoint, the configuration, the run loop and the failure
 //! paths.
 
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::Value;
 
 use dedicated_server::CONFIG_PATH_ENV;
@@ -32,6 +35,8 @@ const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
 const LABEL: &str = "dedicated-1";
+/// Server name in the generated test certificate.
+const TLS_SERVER_NAME: &str = "localhost";
 /// Upper bound for starting the server, a scrape and a clean exit.
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -385,4 +390,272 @@ fn a_non_loopback_metrics_bind_is_rejected_by_the_configuration() {
         !log.exists(),
         "the log file must not be opened for an invalid configuration"
     );
+}
+
+/// Test certificate material: the server leaf, its key and the CA trust file.
+struct TlsMaterial {
+    certificate: PathBuf,
+    private_key: PathBuf,
+    trust: PathBuf,
+}
+
+/// Generate a CA and a server certificate for `localhost` signed by it.
+///
+/// The CA is the trust material a collecting client uses; a self-signed
+/// end-entity certificate is not a valid trust anchor for webpki.
+fn write_tls_material(dir: &TempDir, name: &str) -> TlsMaterial {
+    let mut ca_params = rcgen::CertificateParams::new(Vec::new()).expect("CA parameters");
+    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca_params.distinguished_name.push(
+        rcgen::DnType::CommonName,
+        format!("HomeCloud test CA {name}"),
+    );
+    let ca_key = rcgen::KeyPair::generate().expect("the CA key must be generated");
+    let ca_certificate = ca_params
+        .self_signed(&ca_key)
+        .expect("the CA certificate must be signed");
+
+    let mut server_params =
+        rcgen::CertificateParams::new(vec![TLS_SERVER_NAME.to_owned()]).expect("server parameters");
+    server_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, TLS_SERVER_NAME);
+    server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let server_key = rcgen::KeyPair::generate().expect("the server key must be generated");
+    let issuer = rcgen::Issuer::from_params(&ca_params, &ca_key);
+    let server_certificate = server_params
+        .signed_by(&server_key, &issuer)
+        .expect("the server certificate must be signed");
+
+    let certificate = dir.file(&format!("{name}-server.crt"));
+    let private_key = dir.file(&format!("{name}-server.key"));
+    let trust = dir.file(&format!("{name}-ca.crt"));
+    std::fs::write(&certificate, server_certificate.pem()).expect("certificate must be written");
+    std::fs::write(&private_key, server_key.serialize_pem()).expect("key must be written");
+    std::fs::write(&trust, ca_certificate.pem()).expect("trust material must be written");
+
+    TlsMaterial {
+        certificate,
+        private_key,
+        trust,
+    }
+}
+
+/// Append the TLS section to a written configuration document.
+fn append_tls_section(
+    config: &Path,
+    certificate: &Path,
+    private_key: &Path,
+    trust: &Path,
+) -> PathBuf {
+    let mut contents = std::fs::read_to_string(config).expect("the configuration must be readable");
+    contents.push_str(&format!(
+        "\n[metrics.tls]\ncertificate_path = \"{}\"\nprivate_key_path = \"{}\"\ntrust_path = \"{}\"\n",
+        certificate.display(),
+        private_key.display(),
+        trust.display()
+    ));
+    std::fs::write(config, contents).expect("the configuration must be written");
+    config.to_path_buf()
+}
+
+/// Scrape over TLS, verifying the server against `trust`.
+fn tls_scrape(port: u16, trust: &Path) -> std::io::Result<String> {
+    let mut roots = RootCertStore::empty();
+    let mut reader = BufReader::new(std::fs::File::open(trust)?);
+    for certificate in rustls_pemfile::certs(&mut reader) {
+        roots
+            .add(certificate.map_err(|error| std::io::Error::other(error.to_string()))?)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+    }
+
+    let config =
+        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+    let name = ServerName::try_from(TLS_SERVER_NAME)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let connection = ClientConnection::new(Arc::new(config), name)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+
+    let stream = TcpStream::connect(("127.0.0.1", port))?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let mut stream = StreamOwned::new(connection, stream);
+    stream.write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
+}
+
+/// Scrape over TLS until the server answers `200`, failing fast if it exits.
+fn wait_for_tls_metrics(guard: &mut ChildGuard, port: u16, trust: &Path) -> String {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let last_error = match tls_scrape(port, trust) {
+            Ok(response) if response.starts_with("HTTP/1.1 200 OK") => return response,
+            Ok(response) => format!("unexpected response: {response}"),
+            Err(error) => error.to_string(),
+        };
+        if let Some(status) = guard
+            .child()
+            .try_wait()
+            .expect("the child status must be readable")
+        {
+            panic!("the server exited before the TLS endpoint answered: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the TLS metrics endpoint never answered on port {port}; last error: {last_error}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn a_tls_scrape_with_the_trusted_certificate_succeeds() {
+    let dir = TempDir::new("tls");
+    let log = dir.file("dedicated-server.log");
+    let material = write_tls_material(&dir, "trusted");
+    let port = free_port();
+    let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
+
+    let mut guard = ChildGuard::spawn(&config);
+    let response = wait_for_tls_metrics(&mut guard, port, &material.trust);
+
+    assert!(response.contains("homecloud_dedicated_up 1"), "{response}");
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .expect("the response must carry a body");
+    assert_parseable_exposition(body);
+
+    let output = guard.terminate();
+    assert!(output.status.success(), "the server must exit cleanly");
+    let events = log_events(&log);
+    assert_eq!(events.len(), 2, "log events: {events:?}");
+    assert_eq!(events[1]["event"], "shutdown");
+}
+
+#[test]
+fn an_untrusted_certificate_is_rejected() {
+    let dir = TempDir::new("tls-untrusted");
+    let log = dir.file("dedicated-server.log");
+    let material = write_tls_material(&dir, "server");
+    let port = free_port();
+    let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
+
+    // A separate CA is what the collecting client trusts, so the handshake fails.
+    let other = write_tls_material(&dir, "untrusted");
+
+    let mut guard = ChildGuard::spawn(&config);
+    // Wait until the endpoint is up by scraping with the correct trust store.
+    wait_for_tls_metrics(&mut guard, port, &material.trust);
+    let error = tls_scrape(port, &other.trust)
+        .expect_err("a client that does not trust the server certificate must fail the handshake");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("UnknownIssuer"),
+        "the failure must be a certificate rejection, got: {rendered}"
+    );
+
+    let output = guard.terminate();
+    assert!(output.status.success(), "the server must exit cleanly");
+}
+
+#[test]
+fn a_plaintext_connection_to_the_tls_endpoint_is_refused() {
+    let dir = TempDir::new("tls-plaintext");
+    let log = dir.file("dedicated-server.log");
+    let material = write_tls_material(&dir, "plaintext");
+    let port = free_port();
+    let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
+
+    let mut guard = ChildGuard::spawn(&config);
+    wait_for_tls_metrics(&mut guard, port, &material.trust);
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("the port must accept");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("the timeout must be set");
+    stream
+        .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .expect("the request must be sent");
+    let mut response = String::new();
+    let _ = stream.read_to_string(&mut response);
+    assert!(
+        !response.contains("HTTP/1.1"),
+        "a TLS endpoint must not answer a plaintext request: {response}"
+    );
+
+    let output = guard.terminate();
+    assert!(output.status.success(), "the server must exit cleanly");
+}
+
+#[test]
+fn missing_tls_material_is_a_metrics_error_without_paths() {
+    let dir = TempDir::new("tls-missing");
+    let log = dir.file("dedicated-server.log");
+    let material = write_tls_material(&dir, "missing");
+    let port = free_port();
+    let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
+    let missing = dir.file("absent.crt");
+    let config = append_tls_section(&config, &missing, &material.private_key, &material.trust);
+
+    let output = ChildGuard::spawn(&config).wait();
+    assert_eq!(output.status.code(), Some(1), "the start must fail");
+
+    let events = log_events(&log);
+    let failure = events.last().expect("a failure record must be written");
+    assert_eq!(failure["event"], "startup");
+    assert_eq!(failure["outcome"], "failure");
+    assert_eq!(failure["error_code"], "metrics_error");
+
+    let contents = std::fs::read_to_string(&log).expect("the log must be readable");
+    assert!(
+        !contents.contains("absent.crt") && !contents.contains(&dir.path.display().to_string()),
+        "the log must not contain the TLS paths: {contents}"
+    );
+}
+
+#[test]
+fn a_non_loopback_tls_bind_serves_https() {
+    let dir = TempDir::new("tls-non-loopback");
+    let log = dir.file("dedicated-server.log");
+    let material = write_tls_material(&dir, "public");
+    let port = free_port();
+    let config = write_config(&dir, &log, &format!("0.0.0.0:{port}"));
+    let config = append_tls_section(
+        &config,
+        &material.certificate,
+        &material.private_key,
+        &material.trust,
+    );
+
+    let mut guard = ChildGuard::spawn(&config);
+    let response = wait_for_tls_metrics(&mut guard, port, &material.trust);
+    assert!(response.contains("homecloud_dedicated_up 1"), "{response}");
+
+    let output = guard.terminate();
+    assert!(output.status.success(), "the server must exit cleanly");
 }

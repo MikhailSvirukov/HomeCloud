@@ -23,8 +23,8 @@ mod topology;
 pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
-    ConfigError, LoggingConfig, MetricsConfig, NodeField, NodeId, PublicKey, ServerConfig,
-    CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+    ConfigError, LoggingConfig, MetricsConfig, MetricsTlsConfig, NodeField, NodeId, PublicKey,
+    ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
 pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
@@ -34,7 +34,7 @@ pub use logging::{
     startup_failed, startup_failed_to_stderr, LogError, LogGuard,
 };
 pub use metrics::{Metrics, Operation, CONTENT_TYPE};
-pub use metrics_server::{start as start_metrics_server, MetricsServer, METRICS_PATH};
+pub use metrics_server::{start as start_metrics_server, MetricsServer, TlsPaths, METRICS_PATH};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
     Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,

@@ -22,7 +22,7 @@ use dedicated_server::{
     init as init_logging, logging_failed_to_stderr, metrics_failed, runtime_failed,
     shutdown as log_shutdown, start_metrics_server, startup as log_startup,
     startup_failed as log_startup_failed, startup_failed_to_stderr, LogGuard, Metrics,
-    ServerConfig, Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+    ServerConfig, Startup, StartupError, TlsPaths, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
 
 /// How often the run loop checks the shutdown flag.
@@ -92,8 +92,14 @@ fn main() -> ExitCode {
         }
     };
 
-    let metrics_bind = startup.metrics_bind();
-    let _metrics = match start_metrics_server(metrics_bind, body) {
+    let metrics = startup.metrics();
+    let metrics_bind = metrics.bind;
+    let tls = metrics.tls.as_ref().map(|tls| TlsPaths {
+        certificate: &tls.certificate_path,
+        private_key: &tls.private_key_path,
+        trust: &tls.trust_path,
+    });
+    let _metrics = match start_metrics_server(metrics_bind, body, tls) {
         Ok(server) => server,
         Err(error) => {
             metrics_failed(metrics_bind, &error);
