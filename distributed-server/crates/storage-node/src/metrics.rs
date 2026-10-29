@@ -1,7 +1,7 @@
 //! Prometheus-compatible metrics endpoint.
 //!
-//! SRS: `NFR-OBS-006 / 1`, `NFR-OBS-007 / 1`, `NFR-OBS-008 / 1`, `CFG-OBS-003 / 1`,
-//! `CFG-OBS-004 / 1`.
+//! SRS: `NFR-OBS-005 / 3`, `NFR-OBS-006 / 1`, `NFR-OBS-007 / 1`, `NFR-OBS-008 / 1`,
+//! `CFG-OBS-003 / 1`, `CFG-OBS-004 / 1`.
 
 use core::num::NonZeroUsize;
 use std::io;
@@ -29,6 +29,7 @@ const CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 pub struct Metrics {
     queue_capacity: NonZeroUsize,
     scrapes: AtomicU64,
+    storage_bytes_used: AtomicU64,
 }
 
 impl Metrics {
@@ -37,16 +38,26 @@ impl Metrics {
         Self {
             queue_capacity,
             scrapes: AtomicU64::new(0),
+            storage_bytes_used: AtomicU64::new(0),
         }
+    }
+
+    /// Sets the local storage bytes used by the accounts and raft roots.
+    pub fn set_storage_bytes_used(&self, bytes: u64) {
+        self.storage_bytes_used.store(bytes, Ordering::Relaxed);
     }
 
     /// Renders the Prometheus text exposition; no user-controlled label values.
     pub fn render(&self) -> String {
         let scrapes = self.scrapes.load(Ordering::Relaxed);
+        let storage_bytes_used = self.storage_bytes_used.load(Ordering::Relaxed);
         format!(
             "# HELP homecloud_node_up Whether the storage node is running.\n\
              # TYPE homecloud_node_up gauge\n\
              homecloud_node_up 1\n\
+             # HELP homecloud_storage_bytes_used Local bytes used under the accounts and raft roots.\n\
+             # TYPE homecloud_storage_bytes_used gauge\n\
+             homecloud_storage_bytes_used {storage_bytes_used}\n\
              # HELP homecloud_connection_queue_capacity Configured per-connection queue capacity.\n\
              # TYPE homecloud_connection_queue_capacity gauge\n\
              homecloud_connection_queue_capacity {}\n\
@@ -74,6 +85,10 @@ impl core::fmt::Debug for Metrics {
             .debug_struct("Metrics")
             .field("queue_capacity", &self.queue_capacity)
             .field("scrapes", &self.scrapes.load(Ordering::Relaxed))
+            .field(
+                "storage_bytes_used",
+                &self.storage_bytes_used.load(Ordering::Relaxed),
+            )
             .finish()
     }
 }

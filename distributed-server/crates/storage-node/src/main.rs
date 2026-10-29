@@ -8,6 +8,7 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use storage_node::{
     serve, start_logging, Listener, LogEvent, LogLevel, Logger, Metrics, MetricsServer, NodeConfig,
@@ -16,6 +17,8 @@ use storage_node::{
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
 const DEFAULT_LOG_FILTER: &str = "info";
+/// Period between storage-usage gauge refreshes.
+const STORAGE_USAGE_REFRESH_PERIOD: Duration = Duration::from_secs(60);
 
 /// Environment variable carrying the node identity label.
 const ENV_NODE_ID: &str = "NODE_ID";
@@ -300,6 +303,10 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
     ));
 
     let metrics = Arc::new(Metrics::new(config.queue_capacity));
+    match layout.usage_bytes() {
+        Ok(bytes) => metrics.set_storage_bytes_used(bytes),
+        Err(error) => tracing::warn!(error = %error, "failed to measure storage usage"),
+    }
     let metrics_server = match bind_metrics_server(config, Arc::clone(&metrics)).await {
         Ok(server) => server,
         Err(error) => {
@@ -318,6 +325,8 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         StateChange::MetricsBound,
     ));
     let metrics_task = tokio::spawn(metrics_server.serve());
+    let storage_usage_task =
+        tokio::spawn(refresh_storage_usage(layout.clone(), Arc::clone(&metrics)));
 
     let outcome = serve(
         listener,
@@ -328,6 +337,7 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
     )
     .await;
     metrics_task.abort();
+    storage_usage_task.abort();
 
     match outcome {
         Ok(()) => {
@@ -337,6 +347,21 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         Err(error) => {
             tracing::error!(error = %error, "node runtime failed");
             false
+        }
+    }
+}
+
+/// Refreshes the storage-usage gauge every `STORAGE_USAGE_REFRESH_PERIOD`.
+async fn refresh_storage_usage(layout: StorageLayout, metrics: Arc<Metrics>) {
+    let mut interval = tokio::time::interval(STORAGE_USAGE_REFRESH_PERIOD);
+    interval.tick().await;
+    loop {
+        interval.tick().await;
+        let layout = layout.clone();
+        match tokio::task::spawn_blocking(move || layout.usage_bytes()).await {
+            Ok(Ok(bytes)) => metrics.set_storage_bytes_used(bytes),
+            Ok(Err(error)) => tracing::warn!(error = %error, "failed to refresh storage usage"),
+            Err(error) => tracing::warn!(error = %error, "storage usage task failed"),
         }
     }
 }

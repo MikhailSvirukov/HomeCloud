@@ -299,7 +299,9 @@ reject the server certificate. TLS and plaintext serving return the same bounded
 set.
 `GET /metrics` returns the Prometheus text exposition format (`text/plain;
 version=0.0.4; charset=utf-8`) with the node liveness, build-info, queue-capacity, and
-scrape counters. Labels are limited to bounded static values such as the build version;
+scrape counters, plus the `homecloud_storage_bytes_used` gauge. The gauge is the current
+total size of the regular files under the accounts and Raft roots, refreshed periodically.
+Labels are limited to bounded static values such as the build version;
 they never contain logins, `request_id`, `upload_id`, file names, or other per-request
 values. Requests to other paths return `404`, and methods other than `GET` return `405`
 with `Allow: GET`. The metrics interface is separate from the application TCP protocol.
