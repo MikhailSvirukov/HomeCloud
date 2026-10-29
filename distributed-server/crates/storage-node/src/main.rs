@@ -39,6 +39,10 @@ const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
 const ENV_CATALOG_SNAPSHOT_TTL_MS: &str = "CATALOG_SNAPSHOT_TTL_MS";
 /// Environment variable carrying the maximum source-name length in bytes.
 const ENV_MAX_SOURCE_NAME_LEN: &str = "MAX_SOURCE_NAME_LEN";
+/// Environment variable carrying the integrity scan period in seconds.
+const ENV_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "INTEGRITY_SCAN_PERIOD_SECONDS";
+/// Environment variable carrying the maximum concurrent integrity checks.
+const ENV_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "INTEGRITY_SCAN_MAX_CONCURRENT";
 /// Environment variable carrying the comma-separated peer list.
 const ENV_PEERS: &str = "PEERS";
 /// Environment variable carrying the structured log file path.
@@ -74,6 +78,10 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// `from_pairs` key for the integrity scan period in seconds.
+const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
+/// `from_pairs` key for the maximum concurrent integrity checks.
+const KEY_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "integrity_scan_max_concurrent";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
 /// `from_pairs` key for the structured log file path.
@@ -119,6 +127,8 @@ async fn run() -> ExitCode {
     let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
+    let integrity_scan_period_seconds = env_value(ENV_INTEGRITY_SCAN_PERIOD_SECONDS);
+    let integrity_scan_max_concurrent = env_value(ENV_INTEGRITY_SCAN_MAX_CONCURRENT);
     let peers = env_value(ENV_PEERS);
     let log_file_path = env_value(ENV_LOG_FILE_PATH);
     let log_queue_capacity = env_value(ENV_LOG_QUEUE_CAPACITY);
@@ -149,6 +159,14 @@ async fn run() -> ExitCode {
             catalog_snapshot_ttl_ms.as_str(),
         ),
         (KEY_MAX_SOURCE_NAME_LEN, max_source_name_len.as_str()),
+        (
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            integrity_scan_period_seconds.as_str(),
+        ),
+        (
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            integrity_scan_max_concurrent.as_str(),
+        ),
         (KEY_PEERS, peers.as_str()),
     ];
 
@@ -220,6 +238,8 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         catalog_page_size = config.catalog_page_size.get(),
         catalog_snapshot_ttl_ms = config.catalog_snapshot_ttl_ms.get(),
         max_source_name_len = config.max_source_name_len.get(),
+        integrity_scan_period_seconds = config.integrity_scan.period.as_secs(),
+        integrity_scan_max_concurrent = config.integrity_scan.max_concurrent.get(),
         peers = config.peers.len(),
         "storage node starting"
     );

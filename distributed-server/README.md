@@ -52,7 +52,8 @@ clients; it does not relay Raft or blob traffic.
   layout: `accounts/<hex-login>/<hex-upload-id>` plus `raft/`),
   `src/integrity.rs` (local blob integrity check that streams the stored blob,
   compares its SHA-256 with the committed hash, and keeps a `<blob>.corrupt`
-  marker), `src/raft/`
+  marker), `src/integrity_scan.rs` (periodic scan over committed blobs with a
+  bounded number of concurrent checks), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
   persistence), `src/message.rs` (inter-server `[message_type,
@@ -72,7 +73,8 @@ clients; it does not relay Raft or blob traffic.
   `listener_public_api.rs`, `metrics_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
-  `integrity_public_api.rs`, `signing_public_api.rs`, `sealing_public_api.rs`,
+  `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
+  `signing_public_api.rs`, `sealing_public_api.rs`,
   `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
@@ -144,6 +146,10 @@ at startup:
   (maps to the `catalog_snapshot_ttl_ms` key).
 - `MAX_SOURCE_NAME_LEN` — maximum `source_name` length in UTF-8 bytes; must be non-zero
   (maps to the `max_source_name_len` key).
+- `INTEGRITY_SCAN_PERIOD_SECONDS` — delay between full scans of committed blob data, in
+  seconds; must be non-zero (maps to the `integrity_scan_period_seconds` key).
+- `INTEGRITY_SCAN_MAX_CONCURRENT` — maximum number of blobs checked simultaneously
+  during one scan; must be non-zero (maps to the `integrity_scan_max_concurrent` key).
 - `METRICS_BIND_ADDR` — loopback `SocketAddr` for the Prometheus-compatible metrics
   endpoint; required, with no default (maps to the `metrics_bind_addr` key). The endpoint
   is served over plain HTTP and rejects any non-loopback bind address.
@@ -165,6 +171,7 @@ All five `LOG_*` settings are required and non-zero.
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
 `catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
+`integrity_scan_period_seconds`, `integrity_scan_max_concurrent`,
 `metrics_bind_addr`, `log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
 `log_max_total_bytes`, `log_max_file_age_seconds`, and `peers` keys;
 an absent or empty value for any required key is reported as missing, and unknown keys are
@@ -210,6 +217,22 @@ Log records exclude passwords, verifiers, cryptographic keys, file contents and 
 payloads, logins, and other user metadata. Allowed diagnostic identifiers are
 `request_id`, `upload_id`, peer identifiers, operation type, result code, and error
 category.
+
+## Integrity scan
+
+The integrity scanner walks the committed versions supplied by its source on the
+configured period. Each scan streams the local blob and compares its SHA-256 with
+the hash in the committed metadata, checking at most
+`INTEGRITY_SCAN_MAX_CONCURRENT` blobs at once. The source must yield only versions
+held by this node. Every scan produces a report with the number of digest-checked
+blobs, the upload ids whose local bytes differ from the committed hash, the
+upload ids whose file is absent, and the number of layout, permit, task-join,
+read, or marker failures. A mismatch creates the `<blob>.corrupt` marker for
+that copy; a later matching check removes it. Missing blobs and errors are
+reported without stopping the rest of the scan or the next period. The scan loop
+keeps running until its shutdown signal resolves. The node runtime does not start
+the loop yet; it becomes active when the runtime exposes the committed catalog
+source.
 
 ## Build and test
 

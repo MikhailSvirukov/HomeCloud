@@ -4,14 +4,16 @@
 //! a data directory, the paths of its encryption and signing key files, the
 //! maximum frame length its framing layer accepts, the per-connection queue
 //! capacity, the loopback metrics bind address, the structured log path and
-//! retention limits, the catalog page size and snapshot lifetime, the
-//! source-name byte limit, and the addresses of its fixed peers. v1 clusters
-//! are fixed, so this model is validated when it is built.
+//! retention limits, the integrity scan period and concurrency limit, the
+//! catalog page size and snapshot lifetime, the source-name byte limit, and the
+//! addresses of its fixed peers. v1 clusters are fixed, so this model is
+//! validated when it is built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use crate::integrity_scan::IntegrityScanConfig;
 use crate::logging::{LogConfig, LogConfigError};
 
 /// Fallible configuration operation result.
@@ -52,6 +54,10 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// Recognized `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// Recognized `from_pairs` key for the integrity scan period in seconds.
+const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
+/// Recognized `from_pairs` key for the maximum concurrent integrity checks.
+const KEY_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "integrity_scan_max_concurrent";
 /// Recognized `from_pairs` key for the peer address list.
 const KEY_PEERS: &str = "peers";
 /// Separator between peer addresses in the `peers` pair value.
@@ -111,6 +117,7 @@ pub struct NodeConfig {
     pub queue_capacity: NonZeroUsize,
     pub metrics_bind_addr: SocketAddr,
     pub log: LogConfig,
+    pub integrity_scan: IntegrityScanConfig,
     pub catalog_page_size: NonZeroUsize,
     pub catalog_snapshot_ttl_ms: NonZeroU64,
     pub max_source_name_len: NonZeroUsize,
@@ -133,6 +140,7 @@ impl NodeConfig {
         queue_capacity: NonZeroUsize,
         metrics_bind_addr: SocketAddr,
         log: LogConfig,
+        integrity_scan: IntegrityScanConfig,
         catalog_page_size: NonZeroUsize,
         catalog_snapshot_ttl_ms: NonZeroU64,
         max_source_name_len: NonZeroUsize,
@@ -151,6 +159,7 @@ impl NodeConfig {
             queue_capacity,
             metrics_bind_addr,
             log,
+            integrity_scan,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -167,7 +176,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, structured logging settings, catalog settings, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, structured logging settings, integrity scan settings, catalog settings, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -185,6 +194,8 @@ impl NodeConfig {
         let mut catalog_page_size = None;
         let mut catalog_snapshot_ttl_ms = None;
         let mut max_source_name_len = None;
+        let mut integrity_scan_period_seconds = None;
+        let mut integrity_scan_max_concurrent = None;
         let mut peers = Vec::new();
 
         for (key, value) in pairs {
@@ -216,6 +227,12 @@ impl NodeConfig {
                 }
                 KEY_MAX_SOURCE_NAME_LEN if !value.is_empty() => {
                     max_source_name_len = Some(*value);
+                }
+                KEY_INTEGRITY_SCAN_PERIOD_SECONDS if !value.is_empty() => {
+                    integrity_scan_period_seconds = Some(*value);
+                }
+                KEY_INTEGRITY_SCAN_MAX_CONCURRENT if !value.is_empty() => {
+                    integrity_scan_max_concurrent = Some(*value);
                 }
                 KEY_PEERS => peers = split_peers(value),
                 _ => {}
@@ -314,6 +331,26 @@ impl NodeConfig {
             });
         };
         let max_source_name_len = parse_max_source_name_len(max_source_name_len)?;
+        let Some(integrity_scan_period_seconds) = integrity_scan_period_seconds else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            });
+        };
+        let Some(integrity_scan_max_concurrent) = integrity_scan_max_concurrent else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            });
+        };
+        let integrity_scan_period_seconds = parse_integrity_scan_setting::<NonZeroU64>(
+            KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
+            integrity_scan_period_seconds,
+        )?;
+        let integrity_scan_max_concurrent = parse_integrity_scan_setting::<NonZeroUsize>(
+            KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+            integrity_scan_max_concurrent,
+        )?;
+        let integrity_scan =
+            IntegrityScanConfig::new(integrity_scan_period_seconds, integrity_scan_max_concurrent);
 
         Self::new(
             node_id,
@@ -325,6 +362,7 @@ impl NodeConfig {
             queue_capacity,
             metrics_bind_addr,
             log,
+            integrity_scan,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -384,6 +422,9 @@ pub enum ConfigError {
     /// The maximum source-name length was zero or not an integer.
     #[error("invalid maximum source name length {value}")]
     InvalidMaxSourceNameLen { value: String },
+    /// An integrity scan setting was zero or not an integer.
+    #[error("invalid integrity scan setting {key}={value}")]
+    InvalidIntegrityScanSetting { key: &'static str, value: String },
     /// The same peer address appeared more than once.
     #[error("duplicate peer address {addr}")]
     DuplicatePeer { addr: String },
@@ -541,6 +582,19 @@ fn parse_max_source_name_len(value: &str) -> Result<NonZeroUsize> {
         })
 }
 
+/// Parses an integrity scan setting that must be a non-zero integer.
+fn parse_integrity_scan_setting<T>(key: &'static str, value: &str) -> Result<T>
+where
+    T: core::str::FromStr,
+{
+    value
+        .parse::<T>()
+        .map_err(|_| ConfigError::InvalidIntegrityScanSetting {
+            key,
+            value: value.to_owned(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
@@ -549,11 +603,13 @@ mod tests {
 
     use super::{
         ConfigError, NodeConfig, NodeId, KEY_CATALOG_PAGE_SIZE, KEY_CATALOG_SNAPSHOT_TTL_MS,
-        KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR, KEY_LOG_FILE_PATH,
+        KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
+        KEY_INTEGRITY_SCAN_PERIOD_SECONDS, KEY_LISTEN_ADDR, KEY_LOG_FILE_PATH,
         KEY_LOG_MAX_FILE_AGE_SECONDS, KEY_LOG_MAX_FILE_BYTES, KEY_LOG_MAX_TOTAL_BYTES,
         KEY_LOG_QUEUE_CAPACITY, KEY_MAX_FRAME_LEN, KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR,
         KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
+    use crate::integrity_scan::IntegrityScanConfig;
     use crate::logging::LogConfig;
 
     const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
@@ -596,6 +652,13 @@ mod tests {
 
     fn max_source_name_len() -> NonZeroUsize {
         NonZeroUsize::new(255).expect("test name limit is non-zero")
+    }
+
+    fn integrity_scan_config() -> IntegrityScanConfig {
+        IntegrityScanConfig::new(
+            NonZeroU64::new(3600).expect("test scan period is non-zero"),
+            NonZeroUsize::new(2).expect("test concurrency is non-zero"),
+        )
     }
 
     fn data_dir() -> PathBuf {
@@ -642,6 +705,7 @@ mod tests {
             queue_capacity(),
             metrics_bind_addr(),
             log_config(),
+            integrity_scan_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -657,6 +721,7 @@ mod tests {
         assert_eq!(config.max_frame_len.get(), 1_048_576);
         assert_eq!(config.queue_capacity.get(), 16);
         assert_eq!(config.metrics_bind_addr, metrics_bind_addr());
+        assert_eq!(config.integrity_scan, integrity_scan_config());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
 
@@ -673,6 +738,7 @@ mod tests {
                 queue_capacity(),
                 metrics_bind_addr(),
                 log_config(),
+                integrity_scan_config(),
                 catalog_page_size(),
                 catalog_snapshot_ttl_ms(),
                 max_source_name_len(),
@@ -697,6 +763,7 @@ mod tests {
             queue_capacity(),
             metrics_bind_addr(),
             log_config(),
+            integrity_scan_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -717,6 +784,7 @@ mod tests {
             queue_capacity(),
             metrics_bind_addr(),
             log_config(),
+            integrity_scan_config(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -747,6 +815,8 @@ mod tests {
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
+            (KEY_INTEGRITY_SCAN_PERIOD_SECONDS, "3600"),
+            (KEY_INTEGRITY_SCAN_MAX_CONCURRENT, "2"),
             ("peers", ""),
         ])
         .expect("pairs are valid");
@@ -851,6 +921,8 @@ mod tests {
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
+            (KEY_INTEGRITY_SCAN_PERIOD_SECONDS, "3600"),
+            (KEY_INTEGRITY_SCAN_MAX_CONCURRENT, "2"),
         ])
         .expect("unknown keys are ignored");
 
