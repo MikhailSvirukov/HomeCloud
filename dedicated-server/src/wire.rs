@@ -1753,7 +1753,7 @@ mod tests {
             Value::Integer(1.into()),
             Value::Array(vec![
                 Value::Integer(0.into()),
-                Value::Integer(u64::from(u32::MAX).into()),
+                Value::Integer(u64::MAX.into()),
                 Value::Null,
             ]),
         ]))
