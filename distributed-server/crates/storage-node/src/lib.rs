@@ -42,7 +42,10 @@
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
 //! entries and serves paginated catalog pages, and the catalog protocol error
 //! codes ([`CatalogErrorCode`]) for invalid cursors, expired snapshots, and
-//! internal failures, and local blob integrity verification ([`verify_local_blob`],
+//! internal failures, and the catalog page handler ([`CatalogPageHandler`],
+//! [`CatalogHandlerError`]) that chooses the first or continuation page and
+//! encodes the `[result_code, result_args_array]` response, and local blob
+//! integrity verification ([`verify_local_blob`],
 //! [`BlobIntegrity`], [`IntegrityError`]) that streams a committed blob, compares
 //! its SHA-256 with the committed hash, and marks a mismatch with a
 //! `<blob>.corrupt` sidecar marker, and the periodic integrity scanner
@@ -83,6 +86,7 @@ mod buffer_pool;
 mod catalog;
 mod catalog_error;
 mod catalog_exchange;
+mod catalog_handler;
 mod catalog_pager;
 mod catalog_service;
 mod codec;
@@ -123,6 +127,7 @@ pub use catalog_exchange::{
     encode_catalog_page_response, encode_external_header, CatalogExchangeError, CatalogPageRequest,
     ExternalHeader, BOOTSTRAP_KEY_LEN, EXTERNAL_PROTOCOL_VERSION, REQUEST_ID_LEN, SENDER_ID_LEN,
 };
+pub use catalog_handler::{CatalogHandlerError, CatalogPageHandler};
 pub use catalog_pager::{CatalogPager, CatalogPagerError};
 pub use catalog_service::{CatalogService, CatalogServiceError};
 pub use codec::{decode_frame, encode_frame, DecodeOutcome};
