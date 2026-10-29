@@ -11,6 +11,16 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Base64
 
+private val BASE64_ENCODER = Base64.getEncoder()
+private val BASE64_DECODER = Base64.getDecoder()
+
+private fun decodeBase64(encoded: String): ByteArray? =
+    try {
+        BASE64_DECODER.decode(encoded).takeIf { decoded -> BASE64_ENCODER.encodeToString(decoded) == encoded }
+    } catch (_: IllegalArgumentException) {
+        null
+    }
+
 /**
  * [InstallationIdentityStore] backed by one app-private encrypted envelope (`FR-DED-022 / 1`,
  * `NFR-SEC-003 / 1`, `INT-NET-008 / 2`, `INT-NET-025 / 1`, `INT-NET-034 / 1`,
@@ -24,17 +34,16 @@ import java.util.Base64
  * in plaintext: [KeystoreIdentityCipher] protects the envelope with a non-exportable Android
  * KeyStore key (`FR-AND-026 / 2`).
  *
- * Loading never throws. An absent or unreadable file, an envelope that is not exactly one
- * `payload=` line, invalid Base64, an empty payload, a cipher failure such as a missing KeyStore
- * key, an unknown, missing, duplicated or malformed text line, invalid Base64 inside the payload, a
- * value of the wrong length, a public key that does not match the key derived from its private key,
- * a sender id of the wrong length, or one server key without the other all produce no identity.
+ * Loading reports an identity only when the envelope, the cipher output and the text format all
+ * validate. Unreadable or inconsistent stored content is reported as no identity so a new identity
+ * can be generated, and a sender id is accepted only together with the pinned dedicated server
+ * keys.
  *
- * Writing encrypts the text format and builds a temporary sibling before renaming it over the
- * target, using an atomic move where the file system supports it, so a partial file is never read
- * back. The caller owns the directory and a missing directory is not created. Reading and writing
- * are blocking file I/O, so callers run them off the main thread. Not thread-safe; access must stay
- * on one thread or be externally synchronized.
+ * Writing validates the identity before encrypting it, then builds a temporary sibling before
+ * renaming it over the target, using an atomic move where the file system supports it, so a partial
+ * file is never read back. The caller owns the directory and a missing directory is not created.
+ * Reading and writing are blocking file I/O, so callers run them off the main thread. Not
+ * thread-safe; access must stay on one thread or be externally synchronized.
  */
 internal class FileInstallationIdentityStore(
     private val file: File,
@@ -87,11 +96,7 @@ internal class FileInstallationIdentityStore(
         if (!payloadLine.startsWith(PAYLOAD_PREFIX)) return null
         val encoded = payloadLine.removePrefix(PAYLOAD_PREFIX)
         if (encoded.isEmpty()) return null
-        return try {
-            BASE64_DECODER.decode(encoded)
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        return decodeBase64(encoded)
     }
 
     private fun moveOver(
@@ -116,9 +121,6 @@ internal class FileInstallationIdentityStore(
         const val PAYLOAD_PREFIX = "payload="
         const val NEWLINE = "\n"
         const val EMPTY_LINE = ""
-
-        val BASE64_ENCODER = Base64.getEncoder()
-        val BASE64_DECODER = Base64.getDecoder()
     }
 }
 
@@ -126,14 +128,15 @@ internal class FileInstallationIdentityStore(
  * The text representation that [FileInstallationIdentityStore] reads and writes (`FR-DED-022 / 1`,
  * `INT-NET-008 / 2`, `INT-NET-025 / 1`).
  *
- * Every value is one `key=base64` line in UTF-8. Parsing rejects an unknown, missing or duplicated
- * key, a line without a key, invalid Base64 and a value of the wrong length, and it also rejects a
- * public key that does not match the key derived from the stored private key. A sender id and the
- * pair of dedicated server keys are optional, but each optional value is accepted only once
- * present, and the two server keys only together.
+ * Every value is one `key=base64` line in UTF-8 with canonical padded Base64. A sender id is
+ * meaningful only together with both dedicated server keys, because the client learns its sender
+ * id only after first contact has pinned them. Writing refuses an identity whose keys, sender id or
+ * server keys cannot form a valid text representation, and reading refuses content that does not
+ * form one.
  */
 internal class InstallationIdentityTextFormat {
     fun format(identity: InstallationIdentity): String {
+        validate(identity)
         val lines =
             mutableListOf(
                 line(KEY_SIGNING_PRIVATE, identity.signingKeyPair.privateKey),
@@ -147,6 +150,51 @@ internal class InstallationIdentityTextFormat {
             lines += line(KEY_SERVER_ED25519, keys.ed25519PublicKey)
         }
         return lines.joinToString(NEWLINE)
+    }
+
+    private fun validate(identity: InstallationIdentity) {
+        val signingPrivate = identity.signingKeyPair.privateKey
+        val signingPublic = identity.signingKeyPair.publicKey
+        val agreementPrivate = identity.agreementKeyPair.privateKey
+        val agreementPublic = identity.agreementKeyPair.publicKey
+
+        requireKeyLength(KEY_SIGNING_PRIVATE, signingPrivate)
+        requireKeyLength(KEY_SIGNING_PUBLIC, signingPublic)
+        requireKeyLength(KEY_AGREEMENT_PRIVATE, agreementPrivate)
+        requireKeyLength(KEY_AGREEMENT_PUBLIC, agreementPublic)
+
+        if (!Ed25519.publicKeyOf(signingPrivate).contentEquals(signingPublic)) {
+            throw IllegalArgumentException(KEY_SIGNING_PUBLIC)
+        }
+        if (!X25519.publicKeyOf(agreementPrivate).contentEquals(agreementPublic)) {
+            throw IllegalArgumentException(KEY_AGREEMENT_PUBLIC)
+        }
+
+        identity.senderId?.let { senderId ->
+            if (senderId.size != SENDER_ID_BYTES) throw IllegalArgumentException(KEY_SENDER_ID)
+        }
+
+        val serverX25519 = identity.dedicatedServerKeys?.x25519PublicKey
+        val serverEd25519 = identity.dedicatedServerKeys?.ed25519PublicKey
+        when {
+            serverX25519 == null && serverEd25519 != null -> throw IllegalArgumentException(KEY_SERVER_X25519)
+            serverX25519 != null && serverEd25519 == null -> throw IllegalArgumentException(KEY_SERVER_ED25519)
+            serverX25519 != null && serverEd25519 != null -> {
+                requireKeyLength(KEY_SERVER_X25519, serverX25519)
+                requireKeyLength(KEY_SERVER_ED25519, serverEd25519)
+            }
+        }
+
+        if (identity.senderId != null && serverX25519 == null) {
+            throw IllegalArgumentException(KEY_SENDER_ID)
+        }
+    }
+
+    private fun requireKeyLength(
+        field: String,
+        value: ByteArray,
+    ) {
+        if (value.size != KEY_BYTES) throw IllegalArgumentException(field)
     }
 
     fun parse(content: String): InstallationIdentity? {
@@ -176,6 +224,8 @@ internal class InstallationIdentityTextFormat {
 
         if (!Ed25519.publicKeyOf(signingPrivate).contentEquals(signingPublic)) return null
         if (!X25519.publicKeyOf(agreementPrivate).contentEquals(agreementPublic)) return null
+
+        if (senderId != null && dedicatedServerKeys == null) return null
 
         return InstallationIdentity(
             signingKeyPair = Ed25519KeyPair(privateKey = signingPrivate, publicKey = signingPublic),
@@ -212,12 +262,7 @@ internal class InstallationIdentityTextFormat {
         size: Int,
     ): ByteArray? = this[key]?.takeIf { value -> value.size == size }
 
-    private fun decode(value: String): ByteArray? =
-        try {
-            BASE64_DECODER.decode(value)
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+    private fun decode(value: String): ByteArray? = decodeBase64(value)
 
     private companion object {
         const val KEY_SEPARATOR = '='
@@ -245,8 +290,5 @@ internal class InstallationIdentityTextFormat {
                 KEY_SERVER_X25519,
                 KEY_SERVER_ED25519,
             )
-
-        val BASE64_ENCODER = Base64.getEncoder()
-        val BASE64_DECODER = Base64.getDecoder()
     }
 }

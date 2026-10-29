@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -19,8 +20,9 @@ import java.util.Base64
  * Asserts the persistence rules of `FR-DED-022 / 1`, `INT-NET-008 / 2`, `INT-NET-025 / 1`,
  * `INT-NET-034 / 1` and `FR-AND-026 / 2`: the identity survives a restart, the optional sender id
  * and dedicated server keys are preserved, the file holds only an encrypted `payload=` envelope,
- * malformed envelopes and cipher failures are reported as absence, and a later save replaces the
- * file.
+ * malformed envelopes, non-canonical Base64 and cipher failures are reported as absence, an
+ * identity that cannot form the text format is rejected before writing, and a later save replaces
+ * the file.
  *
  * The cipher is a test double so the envelope shape and the store's failure handling are exercised
  * without the Android KeyStore.
@@ -151,8 +153,42 @@ class FileInstallationIdentityStoreTest {
     }
 
     @Test
-    fun `one trailing newline is tolerated`() {
-        assertNotNull(storeWithPlaintext(validLines().joinToString(NEWLINE)).load())
+    fun `sender id without dedicated server keys loads no identity`() {
+        val lines = validLines(senderId = ByteArray(SENDER_ID_BYTES) { index -> (index + 1).toByte() })
+
+        assertNull(storeWithLines(lines).load())
+    }
+
+    @Test
+    fun `one trailing newline in the text format is tolerated`() {
+        val plaintext = validLines().joinToString(NEWLINE) + NEWLINE
+
+        assertNotNull(storeWithPlaintext(plaintext).load())
+    }
+
+    @Test
+    fun `two trailing newlines in the text format load no identity`() {
+        val plaintext = validLines().joinToString(NEWLINE) + NEWLINE + NEWLINE
+
+        assertNull(storeWithPlaintext(plaintext).load())
+    }
+
+    @Test
+    fun `unpadded base64 text value loads no identity`() {
+        val signing = Ed25519.generate()
+        val encoded = BASE64_ENCODER.encodeToString(signing.privateKey)
+        val lines = validLines(signing = signing).withRawValue(KEY_SIGNING_PRIVATE, encoded.trimEnd(BASE64_PADDING))
+
+        assertNull(storeWithLines(lines).load())
+    }
+
+    @Test
+    fun `extra-padded base64 text value loads no identity`() {
+        val signing = Ed25519.generate()
+        val encoded = BASE64_ENCODER.encodeToString(signing.privateKey)
+        val lines = validLines(signing = signing).withRawValue(KEY_SIGNING_PRIVATE, encoded + BASE64_PADDING)
+
+        assertNull(storeWithLines(lines).load())
     }
 
     @Test
@@ -187,6 +223,20 @@ class FileInstallationIdentityStoreTest {
     }
 
     @Test
+    fun `unpadded base64 payload loads no identity`() {
+        val payload = encodePayload(validLines().joinToString(NEWLINE))
+
+        assertNull(storeWithEnvelope(envelopeWithEncodedPayload(payload.trimEnd(BASE64_PADDING))).load())
+    }
+
+    @Test
+    fun `extra-padded base64 payload loads no identity`() {
+        val payload = encodePayload(validLines().joinToString(NEWLINE))
+
+        assertNull(storeWithEnvelope(envelopeWithEncodedPayload(payload + BASE64_PADDING)).load())
+    }
+
+    @Test
     fun `empty payload loads no identity`() {
         assertNull(storeWithEnvelope("$PAYLOAD_PREFIX$NEWLINE").load())
     }
@@ -205,6 +255,124 @@ class FileInstallationIdentityStoreTest {
         val failingStore = FileInstallationIdentityStore(file, FakeIdentityCipher(decryptFailure = true))
 
         assertNull(failingStore.load())
+    }
+
+    @Test
+    fun `save rejects a signing private key of the wrong length`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                signingKeyPair =
+                    Ed25519KeyPair(
+                        privateKey = ByteArray(KEY_BYTES - 1),
+                        publicKey = identity.signingKeyPair.publicKey,
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects a signing public key of the wrong length`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                signingKeyPair =
+                    Ed25519KeyPair(
+                        privateKey = identity.signingKeyPair.privateKey,
+                        publicKey = ByteArray(KEY_BYTES + 1),
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects an agreement private key of the wrong length`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                agreementKeyPair =
+                    X25519KeyPair(
+                        privateKey = ByteArray(KEY_BYTES - 1),
+                        publicKey = identity.agreementKeyPair.publicKey,
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects an agreement public key of the wrong length`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                agreementKeyPair =
+                    X25519KeyPair(
+                        privateKey = identity.agreementKeyPair.privateKey,
+                        publicKey = ByteArray(KEY_BYTES + 1),
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects a signing public key that does not match its private key`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                signingKeyPair =
+                    Ed25519KeyPair(
+                        privateKey = identity.signingKeyPair.privateKey,
+                        publicKey = Ed25519.generate().publicKey,
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects an agreement public key that does not match its private key`() {
+        val identity = InstallationIdentityFactory.newIdentity()
+        val malformed =
+            identity.copy(
+                agreementKeyPair =
+                    X25519KeyPair(
+                        privateKey = identity.agreementKeyPair.privateKey,
+                        publicKey = X25519.generate().publicKey,
+                    ),
+            )
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects a sender id of the wrong length`() {
+        val malformed = identityWithOptionalValues().copy(senderId = ByteArray(SENDER_ID_BYTES - 1))
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects a sender id without dedicated server keys`() {
+        val malformed = identityWithOptionalValues().copy(dedicatedServerKeys = null)
+
+        assertSaveRejects(malformed)
+    }
+
+    @Test
+    fun `save rejects a dedicated server key of the wrong length`() {
+        val malformed =
+            identityWithOptionalValues().copy(
+                dedicatedServerKeys =
+                    DedicatedServerKeys(
+                        x25519PublicKey = ByteArray(KEY_BYTES - 1),
+                        ed25519PublicKey = ByteArray(KEY_BYTES),
+                    ),
+            )
+
+        assertSaveRejects(malformed)
     }
 
     @Test
@@ -248,6 +416,10 @@ class FileInstallationIdentityStoreTest {
 
     private fun store(file: File = identityFile()): FileInstallationIdentityStore = FileInstallationIdentityStore(file, cipher)
 
+    private fun assertSaveRejects(identity: InstallationIdentity) {
+        assertThrows(IllegalArgumentException::class.java) { store().save(identity) }
+    }
+
     private fun identityWithOptionalValues(): InstallationIdentity =
         InstallationIdentityFactory.newIdentity().copy(
             senderId = ByteArray(SENDER_ID_BYTES) { index -> (index + 1).toByte() },
@@ -285,10 +457,12 @@ class FileInstallationIdentityStoreTest {
         return store(file)
     }
 
-    private fun envelope(plaintext: String): String {
-        val payload = cipher.encrypt(plaintext.toByteArray(Charsets.UTF_8))
-        return PAYLOAD_PREFIX + BASE64_ENCODER.encodeToString(payload) + NEWLINE
-    }
+    private fun envelope(plaintext: String): String = envelopeWithEncodedPayload(encodePayload(plaintext))
+
+    private fun envelopeWithEncodedPayload(encoded: String): String = PAYLOAD_PREFIX + encoded + NEWLINE
+
+    private fun encodePayload(plaintext: String): String =
+        BASE64_ENCODER.encodeToString(cipher.encrypt(plaintext.toByteArray(Charsets.UTF_8)))
 
     private fun formatLine(
         key: String,
@@ -356,6 +530,7 @@ class FileInstallationIdentityStoreTest {
 
         const val UNKNOWN_KEY = "unknown"
         const val INVALID_BASE64 = "not-base64"
+        const val BASE64_PADDING = '='
 
         val BASE64_ENCODER = Base64.getEncoder()
     }
