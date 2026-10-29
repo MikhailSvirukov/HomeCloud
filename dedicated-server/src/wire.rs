@@ -13,6 +13,9 @@
 //! type, an unknown operation code, a bad byte-string length, a broken null
 //! rule or trailing bytes are rejected (`INT-NET-038 / 2`).
 
+use std::fmt;
+use std::num::NonZeroU32;
+
 use ciborium::Value;
 use thiserror::Error;
 
@@ -22,7 +25,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Number of elements in the external header.
 pub const EXTERNAL_HEADER_ELEMENTS: usize = 7;
 
-/// Number of leading elements in a client logical header.
+/// Number of elements in a client logical header; later positions are undefined.
 pub const CLIENT_HEADER_ELEMENTS: usize = 4;
 
 /// Length of a sender or request identifier.
@@ -31,7 +34,7 @@ pub const IDENTIFIER_BYTES: usize = 16;
 /// Length of a public key or SHA-256 digest.
 pub const KEY_BYTES: usize = 32;
 
-/// Number of leading elements in a result envelope.
+/// Number of elements in a result envelope; later positions are undefined.
 pub const RESULT_ENVELOPE_ELEMENTS: usize = 2;
 
 /// Header name used in diagnostics for the external header.
@@ -67,13 +70,23 @@ pub enum WireError {
         /// One-based element position.
         position: usize,
     },
-    /// An element has the right type but a value the schema forbids.
-    #[error("{header}: {reason}")]
-    Invalid {
+    /// A byte string has a different length than the schema fixes.
+    #[error("{header} element {position} must be {expected} bytes long")]
+    ByteStringLength {
         /// Header being decoded.
         header: &'static str,
-        /// What the schema requires.
-        reason: &'static str,
+        /// One-based element position.
+        position: usize,
+        /// Required byte length.
+        expected: usize,
+    },
+    /// An integer does not fit the width the schema fixes.
+    #[error("{header} element {position} is outside the range the schema allows")]
+    IntegerOutOfRange {
+        /// Header being decoded.
+        header: &'static str,
+        /// One-based element position.
+        position: usize,
     },
     /// A label is longer than the configured limit.
     #[error("label is {actual} bytes, above the configured limit of {max}")]
@@ -85,10 +98,39 @@ pub enum WireError {
     },
     /// The protocol version is not the one this codec implements.
     #[error("unsupported protocol version {0}")]
-    UnsupportedVersion(u32),
+    UnsupportedVersion(u64),
     /// The operation code is not one of the four v1 operations.
     #[error("unknown client operation code {0}")]
     UnknownOperation(u32),
+    /// A header carries both or neither of the two mutually exclusive identities.
+    #[error(
+        "external header must carry exactly one of sender_id and bootstrap_signing_public_key"
+    )]
+    IdentityRule,
+    /// A nonzero result code carries arguments.
+    #[error("a nonzero result code carries an empty argument array")]
+    FailureArguments,
+    /// A catalog page carries only one of the two page tokens.
+    #[error("client logical header must carry both snapshot_token and cursor, or neither")]
+    CatalogTokenPair,
+    /// An operation argument array has the wrong number of elements.
+    #[error("operation {operation:?} takes {expected} arguments, got {actual}")]
+    WrongArgumentCount {
+        /// Operation whose schema is fixed.
+        operation: ClientOperation,
+        /// Required argument count.
+        expected: usize,
+        /// Observed argument count.
+        actual: usize,
+    },
+    /// An operation argument has a different CBOR type than the schema fixes.
+    #[error("operation {operation:?} argument {index} has the wrong CBOR type")]
+    WrongArgumentType {
+        /// Operation whose schema is fixed.
+        operation: ClientOperation,
+        /// Zero-based argument index.
+        index: usize,
+    },
     /// Bytes remain after the CBOR value.
     #[error("unexpected trailing bytes after the CBOR value")]
     TrailingBytes,
@@ -150,18 +192,11 @@ impl ExternalHeader {
         require_length(&elements, EXTERNAL_HEADER, EXTERNAL_HEADER_ELEMENTS)?;
 
         let version = uint(&elements[0], EXTERNAL_HEADER, 1)?;
-        let version = u32::try_from(version).unwrap_or(u32::MAX);
-        if version != PROTOCOL_VERSION {
+        if version != u64::from(PROTOCOL_VERSION) {
             return Err(WireError::UnsupportedVersion(version));
         }
 
-        let frame_number =
-            u32::try_from(uint(&elements[3], EXTERNAL_HEADER, 4)?).map_err(|_| {
-                WireError::Invalid {
-                    header: EXTERNAL_HEADER,
-                    reason: "frame_number must fit in 32 bits",
-                }
-            })?;
+        let frame_number = uint32(&elements[3], EXTERNAL_HEADER, 4)?;
 
         let header = Self {
             sender_id: optional_identifier(&elements[1], EXTERNAL_HEADER, 2)?,
@@ -179,12 +214,7 @@ impl ExternalHeader {
     fn validate(&self, max_label_bytes: usize) -> Result<()> {
         match (&self.sender_id, &self.bootstrap_signing_public_key) {
             (Some(_), None) | (None, Some(_)) => {}
-            _ => {
-                return Err(WireError::Invalid {
-                    header: EXTERNAL_HEADER,
-                    reason: "exactly one of sender_id and bootstrap_signing_public_key must be set",
-                })
-            }
+            _ => return Err(WireError::IdentityRule),
         }
         if let Some(label) = &self.responder_label {
             if label.len() > max_label_bytes {
@@ -200,7 +230,10 @@ impl ExternalHeader {
 }
 
 /// Credentials carried in a client logical header (`INT-NET-054 / 1`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The manual [`fmt::Debug`] implementation redacts the password so a stray
+/// debug print cannot leak it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
     /// Login of the account the request authenticates.
     pub login: String,
@@ -213,7 +246,9 @@ pub struct Credentials {
 /// The four leading elements are the operation type, the login, the password
 /// and the operation arguments. Elements beyond the fourth are not fixed by
 /// the v1 requirements (`OPEN-003`), so exactly four are accepted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The manual [`fmt::Debug`] implementation redacts the credentials.
+#[derive(Clone, PartialEq, Eq)]
 pub enum ClientHeader {
     /// Account or installation registration (`INT-NET-058 / 1`).
     Registration {
@@ -266,6 +301,16 @@ impl ClientHeader {
         }
     }
 
+    /// Account credentials carried by this header.
+    pub fn credentials(&self) -> &Credentials {
+        match self {
+            Self::Registration { credentials, .. }
+            | Self::Topology { credentials }
+            | Self::CatalogPage { credentials, .. }
+            | Self::Upload { credentials, .. } => credentials,
+        }
+    }
+
     /// Encode the header as the deterministic positional CBOR array.
     pub fn encode(&self) -> Result<Vec<u8>> {
         let (credentials, arguments) = match self {
@@ -287,10 +332,7 @@ impl ClientHeader {
                 cursor,
             } => {
                 if snapshot_token.is_some() != cursor.is_some() {
-                    return Err(WireError::Invalid {
-                        header: CLIENT_HEADER,
-                        reason: "snapshot_token and cursor must both be null or both be present",
-                    });
+                    return Err(WireError::CatalogTokenPair);
                 }
                 (
                     credentials,
@@ -327,13 +369,16 @@ impl ClientHeader {
     }
 
     /// Decode and validate a client logical header.
+    ///
+    /// Credentials are returned as sent: login syntax and password limits are
+    /// enforced by the registration layer, not by this schema codec.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let Value::Array(elements) = decode_value(bytes)? else {
             return Err(WireError::NotAnArray(CLIENT_HEADER));
         };
         require_length(&elements, CLIENT_HEADER, CLIENT_HEADER_ELEMENTS)?;
 
-        let code = u32::try_from(uint(&elements[0], CLIENT_HEADER, 1)?).unwrap_or(u32::MAX);
+        let code = uint32(&elements[0], CLIENT_HEADER, 1)?;
         let operation = ClientOperation::from_code(code)?;
         let credentials = Credentials {
             login: text(&elements[1], CLIENT_HEADER, 2)?.to_owned(),
@@ -348,26 +393,27 @@ impl ClientHeader {
 
         match operation {
             ClientOperation::Registration => {
-                require_arguments(arguments, 2)?;
+                require_arguments(operation, arguments, 2)?;
                 Ok(Self::Registration {
                     credentials,
-                    encryption_public_key: key(&arguments[0], CLIENT_HEADER, 4)?,
-                    signing_public_key: key(&arguments[1], CLIENT_HEADER, 4)?,
+                    encryption_public_key: key(&arguments[0], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 0))?,
+                    signing_public_key: key(&arguments[1], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 1))?,
                 })
             }
             ClientOperation::Topology => {
-                require_arguments(arguments, 0)?;
+                require_arguments(operation, arguments, 0)?;
                 Ok(Self::Topology { credentials })
             }
             ClientOperation::CatalogPage => {
-                require_arguments(arguments, 2)?;
-                let snapshot_token = optional_identifier(&arguments[0], CLIENT_HEADER, 4)?;
-                let cursor = optional_identifier(&arguments[1], CLIENT_HEADER, 4)?;
+                require_arguments(operation, arguments, 2)?;
+                let snapshot_token = optional_identifier(&arguments[0], CLIENT_HEADER, 4)
+                    .map_err(argument_error(operation, 0))?;
+                let cursor = optional_identifier(&arguments[1], CLIENT_HEADER, 4)
+                    .map_err(argument_error(operation, 1))?;
                 if snapshot_token.is_some() != cursor.is_some() {
-                    return Err(WireError::Invalid {
-                        header: CLIENT_HEADER,
-                        reason: "snapshot_token and cursor must both be null or both be present",
-                    });
+                    return Err(WireError::CatalogTokenPair);
                 }
                 Ok(Self::CatalogPage {
                     credentials,
@@ -376,31 +422,56 @@ impl ClientHeader {
                 })
             }
             ClientOperation::Upload => {
-                require_arguments(arguments, 5)?;
+                require_arguments(operation, arguments, 5)?;
                 let timestamp_ms = match &arguments[1] {
                     Value::Integer(value) => {
-                        i64::try_from(*value).map_err(|_| WireError::Invalid {
+                        i64::try_from(*value).map_err(|_| WireError::IntegerOutOfRange {
                             header: CLIENT_HEADER,
-                            reason: "timestamp_ms must fit in 64 bits",
+                            position: 4,
                         })?
                     }
                     _ => {
-                        return Err(WireError::WrongType {
-                            header: CLIENT_HEADER,
-                            position: 4,
+                        return Err(WireError::WrongArgumentType {
+                            operation,
+                            index: 1,
                         })
                     }
                 };
                 Ok(Self::Upload {
                     credentials,
-                    source_name: text(&arguments[0], CLIENT_HEADER, 4)?.to_owned(),
+                    source_name: text(&arguments[0], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 0))?
+                        .to_owned(),
                     timestamp_ms,
-                    original_size_bytes: uint(&arguments[2], CLIENT_HEADER, 4)?,
-                    compressed_size_bytes: uint(&arguments[3], CLIENT_HEADER, 4)?,
-                    sha256: key(&arguments[4], CLIENT_HEADER, 4)?,
+                    original_size_bytes: uint(&arguments[2], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 2))?,
+                    compressed_size_bytes: uint(&arguments[3], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 3))?,
+                    sha256: key(&arguments[4], CLIENT_HEADER, 4)
+                        .map_err(argument_error(operation, 4))?,
                 })
             }
         }
+    }
+}
+
+impl fmt::Debug for Credentials {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Credentials")
+            .field("login", &self.login)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+impl fmt::Debug for ClientHeader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClientHeader")
+            .field("operation", &self.operation())
+            .field("credentials", self.credentials())
+            .finish_non_exhaustive()
     }
 }
 
@@ -443,7 +514,9 @@ impl ClientOperation {
 /// Logical header of a server response (`INT-NET-061 / 1`).
 ///
 /// `code` is `0` for success and nonzero for every failure. A failure carries
-/// an empty argument array (`INT-NET-069 / 1`).
+/// an empty argument array (`INT-NET-069 / 1`). Positions beyond the two
+/// elements are not fixed by the v1 requirements (`OPEN-003`), so exactly two
+/// are accepted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResultEnvelope {
     /// Result code; `0` means success (`INT-NET-062 / 1`).
@@ -458,10 +531,10 @@ impl ResultEnvelope {
         Self { code: 0, arguments }
     }
 
-    /// Failure response without arguments.
-    pub fn failure(code: u32) -> Self {
+    /// Failure response without arguments; the code is nonzero by construction.
+    pub fn failure(code: NonZeroU32) -> Self {
         Self {
-            code,
+            code: code.get(),
             arguments: Vec::new(),
         }
     }
@@ -469,10 +542,7 @@ impl ResultEnvelope {
     /// Encode the envelope, enforcing the empty-arguments rule for failures.
     pub fn encode(&self) -> Result<Vec<u8>> {
         if self.code != 0 && !self.arguments.is_empty() {
-            return Err(WireError::Invalid {
-                header: RESULT_ENVELOPE,
-                reason: "a nonzero result code carries an empty argument array",
-            });
+            return Err(WireError::FailureArguments);
         }
         let value = Value::Array(vec![
             Value::Integer(u64::from(self.code).into()),
@@ -489,7 +559,7 @@ impl ResultEnvelope {
         };
         require_length(&elements, RESULT_ENVELOPE, RESULT_ENVELOPE_ELEMENTS)?;
 
-        let code = u32::try_from(uint(&elements[0], RESULT_ENVELOPE, 1)?).unwrap_or(u32::MAX);
+        let code = uint32(&elements[0], RESULT_ENVELOPE, 1)?;
         let Value::Array(arguments) = &elements[1] else {
             return Err(WireError::WrongType {
                 header: RESULT_ENVELOPE,
@@ -497,10 +567,7 @@ impl ResultEnvelope {
             });
         };
         if code != 0 && !arguments.is_empty() {
-            return Err(WireError::Invalid {
-                header: RESULT_ENVELOPE,
-                reason: "a nonzero result code carries an empty argument array",
-            });
+            return Err(WireError::FailureArguments);
         }
 
         Ok(Self {
@@ -539,24 +606,39 @@ fn require_length(elements: &[Value], header: &'static str, expected: usize) -> 
     }
 }
 
-fn require_arguments(arguments: &[Value], expected: usize) -> Result<()> {
+fn argument_error(operation: ClientOperation, index: usize) -> impl Fn(WireError) -> WireError {
+    move |error| match error {
+        WireError::WrongType { .. } => WireError::WrongArgumentType { operation, index },
+        other => other,
+    }
+}
+
+fn require_arguments(
+    operation: ClientOperation,
+    arguments: &[Value],
+    expected: usize,
+) -> Result<()> {
     if arguments.len() == expected {
         Ok(())
     } else {
-        Err(WireError::WrongLength {
-            header: CLIENT_HEADER,
-            expected: CLIENT_HEADER_ELEMENTS + expected,
-            actual: CLIENT_HEADER_ELEMENTS + arguments.len(),
+        Err(WireError::WrongArgumentCount {
+            operation,
+            expected,
+            actual: arguments.len(),
         })
     }
 }
 
+fn uint32(value: &Value, header: &'static str, position: usize) -> Result<u32> {
+    u32::try_from(uint(value, header, position)?)
+        .map_err(|_| WireError::IntegerOutOfRange { header, position })
+}
+
 fn uint(value: &Value, header: &'static str, position: usize) -> Result<u64> {
     match value {
-        Value::Integer(integer) => u64::try_from(*integer).map_err(|_| WireError::Invalid {
-            header,
-            reason: "an unsigned integer is required",
-        }),
+        Value::Integer(integer) => {
+            u64::try_from(*integer).map_err(|_| WireError::IntegerOutOfRange { header, position })
+        }
         _ => Err(WireError::WrongType { header, position }),
     }
 }
@@ -602,10 +684,16 @@ fn fixed_bytes<const N: usize>(
     position: usize,
 ) -> Result<[u8; N]> {
     match value {
-        Value::Bytes(bytes) => bytes.as_slice().try_into().map_err(|_| WireError::Invalid {
-            header,
-            reason: "byte string has the wrong length",
-        }),
+        Value::Bytes(bytes) => {
+            bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| WireError::ByteStringLength {
+                    header,
+                    position,
+                    expected: N,
+                })
+        }
         _ => Err(WireError::WrongType { header, position }),
     }
 }
@@ -722,19 +810,24 @@ mod tests {
     }
 
     #[test]
-    fn a_header_with_neither_or_both_identities_is_rejected() {
+    fn a_header_without_any_identity_is_rejected() {
         let mut neither = header();
         neither.sender_id = None;
+
         assert!(matches!(
             neither.encode(MAX_LABEL_BYTES),
-            Err(WireError::Invalid { .. })
+            Err(WireError::IdentityRule)
         ));
+    }
 
+    #[test]
+    fn a_header_with_both_identities_is_rejected() {
         let mut both = header();
         both.bootstrap_signing_public_key = Some([0x44; KEY_BYTES]);
+
         assert!(matches!(
             both.encode(MAX_LABEL_BYTES),
-            Err(WireError::Invalid { .. })
+            Err(WireError::IdentityRule)
         ));
     }
 
@@ -790,7 +883,7 @@ mod tests {
 
         assert!(matches!(
             ExternalHeader::decode(&bytes, MAX_LABEL_BYTES),
-            Err(WireError::Invalid { .. })
+            Err(WireError::ByteStringLength { .. })
         ));
     }
 
@@ -858,7 +951,7 @@ mod tests {
             cursor: None,
         };
 
-        assert!(matches!(header.encode(), Err(WireError::Invalid { .. })));
+        assert!(matches!(header.encode(), Err(WireError::CatalogTokenPair)));
     }
 
     #[test]
@@ -904,7 +997,8 @@ mod tests {
             success
         );
 
-        let failure = ResultEnvelope::failure(0x0004_0002);
+        let failure =
+            ResultEnvelope::failure(NonZeroU32::new(0x0004_0002).expect("a nonzero result code"));
         let bytes = failure.encode().expect("encoding must work");
         assert_eq!(
             ResultEnvelope::decode(&bytes).expect("decoding must work"),
@@ -919,7 +1013,10 @@ mod tests {
             arguments: vec![Value::Null],
         };
 
-        assert!(matches!(envelope.encode(), Err(WireError::Invalid { .. })));
+        assert!(matches!(
+            envelope.encode(),
+            Err(WireError::FailureArguments)
+        ));
 
         let value = Value::Array(vec![
             Value::Integer(1.into()),
@@ -928,7 +1025,7 @@ mod tests {
         let bytes = encode_value(&value).expect("encoding must work");
         assert!(matches!(
             ResultEnvelope::decode(&bytes),
-            Err(WireError::Invalid { .. })
+            Err(WireError::FailureArguments)
         ));
     }
 
@@ -945,5 +1042,261 @@ mod tests {
             ClientHeader::decode(&bytes),
             Err(WireError::TrailingBytes)
         ));
+    }
+
+    #[test]
+    fn the_registration_request_encodes_the_documented_layout() {
+        let header = ClientHeader::Registration {
+            credentials: credentials(),
+            encryption_public_key: [0x55; KEY_BYTES],
+            signing_public_key: [0x66; KEY_BYTES],
+        };
+        let mut expected = vec![
+            0x84, 0x01, 0x65, b'a', b'l', b'i', b'c', b'e', 0x66, b's', b'e', b'c', b'r', b'e',
+            b't', 0x82, 0x58, 0x20,
+        ];
+        expected.extend([0x55; KEY_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x66; KEY_BYTES]);
+
+        assert_eq!(header.encode().expect("encoding must work"), expected);
+    }
+
+    #[test]
+    fn a_catalog_first_page_encodes_two_nulls() {
+        let header = ClientHeader::CatalogPage {
+            credentials: credentials(),
+            snapshot_token: None,
+            cursor: None,
+        };
+        let expected = vec![
+            0x84, 0x03, 0x65, b'a', b'l', b'i', b'c', b'e', 0x66, b's', b'e', b'c', b'r', b'e',
+            b't', 0x82, 0xf6, 0xf6,
+        ];
+
+        assert_eq!(header.encode().expect("encoding must work"), expected);
+    }
+
+    #[test]
+    fn a_catalog_continuation_encodes_both_tokens() {
+        let header = ClientHeader::CatalogPage {
+            credentials: credentials(),
+            snapshot_token: Some([0x77; IDENTIFIER_BYTES]),
+            cursor: Some([0x88; IDENTIFIER_BYTES]),
+        };
+        let mut expected = vec![
+            0x84, 0x03, 0x65, b'a', b'l', b'i', b'c', b'e', 0x66, b's', b'e', b'c', b'r', b'e',
+            b't', 0x82, 0x50,
+        ];
+        expected.extend([0x77; IDENTIFIER_BYTES]);
+        expected.push(0x50);
+        expected.extend([0x88; IDENTIFIER_BYTES]);
+
+        assert_eq!(header.encode().expect("encoding must work"), expected);
+    }
+
+    #[test]
+    fn the_upload_request_encodes_the_documented_layout() {
+        let header = ClientHeader::Upload {
+            credentials: credentials(),
+            source_name: "photo.jpg".to_owned(),
+            timestamp_ms: -1,
+            original_size_bytes: 1_000,
+            compressed_size_bytes: 500,
+            sha256: [0x99; KEY_BYTES],
+        };
+        let mut expected = vec![
+            0x84, 0x04, 0x65, b'a', b'l', b'i', b'c', b'e', 0x66, b's', b'e', b'c', b'r', b'e',
+            b't', 0x85, 0x69, b'p', b'h', b'o', b't', b'o', b'.', b'j', b'p', b'g', 0x20, 0x19,
+            0x03, 0xe8, 0x19, 0x01, 0xf4, 0x58, 0x20,
+        ];
+        expected.extend([0x99; KEY_BYTES]);
+
+        assert_eq!(header.encode().expect("encoding must work"), expected);
+    }
+
+    #[test]
+    fn the_result_envelope_encodes_the_documented_layout() {
+        let success = ResultEnvelope::success(vec![Value::Bytes(vec![0xAA; IDENTIFIER_BYTES])]);
+        let mut expected = vec![0x82, 0x00, 0x81, 0x50];
+        expected.extend([0xAA; IDENTIFIER_BYTES]);
+        assert_eq!(success.encode().expect("encoding must work"), expected);
+
+        let failure =
+            ResultEnvelope::failure(NonZeroU32::new(0x0004_0002).expect("a nonzero code"));
+        assert_eq!(
+            failure.encode().expect("encoding must work"),
+            vec![0x82, 0x1a, 0x00, 0x04, 0x00, 0x02, 0x80]
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_result_code_is_rejected() {
+        let value = Value::Array(vec![
+            Value::Integer(0x1_0000_0000_u64.into()),
+            Value::Array(Vec::new()),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ResultEnvelope::decode(&bytes),
+            Err(WireError::IntegerOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn the_largest_result_code_is_accepted() {
+        let value = Value::Array(vec![
+            Value::Integer(u64::from(u32::MAX).into()),
+            Value::Array(Vec::new()),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert_eq!(
+            ResultEnvelope::decode(&bytes)
+                .expect("decoding must work")
+                .code,
+            u32::MAX
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_operation_code_is_rejected() {
+        let value = Value::Array(vec![
+            Value::Integer(0x1_0000_0000_u64.into()),
+            Value::Text("alice".to_owned()),
+            Value::Text("secret".to_owned()),
+            Value::Array(Vec::new()),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes),
+            Err(WireError::IntegerOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn an_out_of_range_version_is_reported_as_unsupported() {
+        let value = Value::Array(vec![
+            Value::Integer(0x1_0000_0000_u64.into()),
+            Value::Bytes(vec![0x11; IDENTIFIER_BYTES]),
+            Value::Bytes(vec![0x22; IDENTIFIER_BYTES]),
+            Value::Integer(0.into()),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ExternalHeader::decode(&bytes, MAX_LABEL_BYTES),
+            Err(WireError::UnsupportedVersion(version)) if version == 0x1_0000_0000
+        ));
+    }
+
+    #[test]
+    fn a_mixed_catalog_page_is_rejected_on_decode() {
+        let value = Value::Array(vec![
+            Value::Integer(3.into()),
+            Value::Text("alice".to_owned()),
+            Value::Text("secret".to_owned()),
+            Value::Array(vec![
+                Value::Bytes(vec![0x77; IDENTIFIER_BYTES]),
+                Value::Null,
+            ]),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes),
+            Err(WireError::CatalogTokenPair)
+        ));
+    }
+
+    #[test]
+    fn a_label_above_the_limit_is_rejected_on_decode() {
+        let value = Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Bytes(vec![0x11; IDENTIFIER_BYTES]),
+            Value::Bytes(vec![0x22; IDENTIFIER_BYTES]),
+            Value::Integer(0.into()),
+            Value::Null,
+            Value::Text("x".repeat(MAX_LABEL_BYTES + 1)),
+            Value::Null,
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ExternalHeader::decode(&bytes, MAX_LABEL_BYTES),
+            Err(WireError::LabelTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn a_wrong_cbor_type_in_a_header_position_is_rejected() {
+        let value = Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Text("sender".to_owned()),
+            Value::Bytes(vec![0x22; IDENTIFIER_BYTES]),
+            Value::Integer(0.into()),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ExternalHeader::decode(&bytes, MAX_LABEL_BYTES),
+            Err(WireError::WrongType { position: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn text_fields_preserve_spaces_and_unicode() {
+        let header = ExternalHeader {
+            responder_label: Some("узел 1".to_owned()),
+            ..header()
+        };
+        let bytes = header.encode(MAX_LABEL_BYTES).expect("encoding must work");
+        assert_eq!(
+            ExternalHeader::decode(&bytes, MAX_LABEL_BYTES)
+                .expect("decoding must work")
+                .responder_label,
+            Some("узел 1".to_owned())
+        );
+
+        let client = ClientHeader::Topology {
+            credentials: Credentials {
+                login: "alice".to_owned(),
+                password: "пароль с пробелом".to_owned(),
+            },
+        };
+        let bytes = client.encode().expect("encoding must work");
+        assert_eq!(
+            ClientHeader::decode(&bytes).expect("decoding must work"),
+            client
+        );
+    }
+
+    #[test]
+    fn cbor_undefined_is_treated_as_null_by_this_value_layer() {
+        // ciborium maps CBOR `undefined` (0xf7) to the same value as `null`, so
+        // the codec cannot distinguish them. Senders must emit `null`.
+        let mut bytes = vec![
+            0x84, 0x03, 0x65, b'a', b'l', b'i', b'c', b'e', 0x66, b's', b'e', b'c', b'r', b'e',
+            b't', 0x82,
+        ];
+        bytes.extend([0xf7, 0xf7]);
+
+        let decoded = ClientHeader::decode(&bytes).expect("undefined is read as null");
+        assert_eq!(
+            decoded,
+            ClientHeader::CatalogPage {
+                credentials: credentials(),
+                snapshot_token: None,
+                cursor: None,
+            }
+        );
     }
 }
