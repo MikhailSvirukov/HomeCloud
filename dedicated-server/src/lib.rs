@@ -19,6 +19,7 @@ mod password;
 mod registration;
 mod report;
 mod topology;
+mod wire;
 
 pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
@@ -42,3 +43,8 @@ pub use registration::{
 };
 pub use report::{Startup, StartupError};
 pub use topology::{Topology, TopologyNode};
+pub use wire::{
+    ClientHeader, ClientOperation, Credentials, ExternalHeader, ResultEnvelope, WireError,
+    CLIENT_HEADER_ELEMENTS, EXTERNAL_HEADER_ELEMENTS, IDENTIFIER_BYTES, KEY_BYTES,
+    PROTOCOL_VERSION, RESULT_ENVELOPE_ELEMENTS,
+};
