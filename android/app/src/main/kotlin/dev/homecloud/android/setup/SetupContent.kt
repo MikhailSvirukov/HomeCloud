@@ -29,11 +29,11 @@ import dev.homecloud.android.R
 /**
  * Renders the setup surface (`FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1`,
  * `FR-AND-043 / 1`): server host and port, account login and password, the registration or
- * connection choice, inline field errors and the remaining backup prerequisites. The password is
- * masked, the submit action stays disabled until the draft is valid, and the only actions are the
- * ones the caller supplies, so setup never offers a view, download, restore or delete action
- * (`FR-AND-048 / 1`). The composable keeps no state of its own and performs no network or storage
- * work.
+ * connection choice, inline field errors, any failed-save message and the remaining backup
+ * prerequisites. The password is masked, the submit action stays disabled until the draft is valid,
+ * and the only actions are the ones the caller supplies, so setup never offers a view, download,
+ * restore or delete action (`FR-AND-048 / 1`). The composable keeps no state of its own and
+ * performs no network or storage work.
  */
 @Composable
 internal fun SetupContent(
@@ -103,6 +103,13 @@ internal fun SetupContent(
             SetupPrerequisite(
                 met = state.prerequisites.isAuthenticated,
                 message = R.string.setup_prerequisite_authentication_missing,
+            )
+        }
+        if (state.saveFailed) {
+            Text(
+                text = stringResource(R.string.setup_save_error_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
             )
         }
         Button(

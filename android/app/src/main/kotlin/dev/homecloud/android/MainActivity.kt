@@ -44,7 +44,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.IOException
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Name of the app-private file that keeps the setup values across restarts. */
@@ -164,9 +163,10 @@ private fun readQueueSnapshot(filesDir: File): List<UploadQueueEntry> =
 /**
  * Holds the setup draft for the current screen, restores the saved address, port, login and mode
  * when it first enters composition (`FR-AND-040 / 2`) and persists a valid submission without
- * blocking the main thread (`FR-AND-042 / 1`, `CFG-CL-029 / 1`). The credentials of a submission
- * stay in the submission object only: the configuration is saved and the password is never stored
- * or logged (`FR-AND-041 / 2`).
+ * blocking the main thread (`FR-AND-042 / 1`, `CFG-CL-029 / 1`). A failed save is reported on the
+ * setup surface instead of being swallowed. The credentials of a submission stay in the submission
+ * object only: the configuration is saved and the password is never stored or logged
+ * (`FR-AND-041 / 2`).
  */
 @Composable
 private fun SetupSection(
@@ -195,6 +195,8 @@ private fun SetupSection(
                 scope.launch {
                     if (persist(store, submission)) {
                         state = SetupStateMachine.saved(state, submission.configuration)
+                    } else {
+                        state = SetupStateMachine.saveFailed(state)
                     }
                 }
             }
@@ -212,6 +214,6 @@ private suspend fun persist(
         true
     } catch (cancellation: CancellationException) {
         throw cancellation
-    } catch (failure: IOException) {
+    } catch (_: Exception) {
         false
     }

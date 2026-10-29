@@ -10,7 +10,8 @@ import org.junit.Test
  * Asserts the setup transitions of `FR-AND-040 / 2`, `FR-AND-041 / 2` and `FR-AND-042 / 1`, the
  * backup gate of `FR-AND-043 / 1` and the configured credential bounds of `CFG-CL-029 / 1`: a
  * restored configuration leaves the password to the user, every edit revalidates the draft with the
- * bounds its state holds, submission needs a valid draft, and backup needs both prerequisites.
+ * bounds its state holds, submission needs a valid draft, a failed save is marked until the draft
+ * changes or a save succeeds, and backup needs both prerequisites.
  */
 class SetupStateTest {
     @Test
@@ -114,6 +115,53 @@ class SetupStateTest {
         assertEquals(expectedDraft, savedState.draft)
         assertEquals(SAVED, savedState.saved)
         assertEquals(mapOf(SetupField.PASSWORD to SetupError.REQUIRED), savedState.validation.errors)
+    }
+
+    @Test
+    fun `initial state does not mark a save failure`() {
+        val state = initialState()
+
+        assertFalse(state.saveFailed)
+    }
+
+    @Test
+    fun `save failure is marked without changing the rest of the state`() {
+        val state =
+            SetupStateMachine.edit(
+                SetupStateMachine.initialState(
+                    saved = SAVED,
+                    prerequisites = SetupPrerequisites(hasMediaAccess = true, isAuthenticated = true),
+                    limits = CONFIGURED_LIMITS,
+                ),
+                DRAFT,
+            )
+
+        val failedState = SetupStateMachine.saveFailed(state)
+
+        assertTrue(failedState.saveFailed)
+        assertEquals(state.draft, failedState.draft)
+        assertEquals(state.validation, failedState.validation)
+        assertEquals(state.prerequisites, failedState.prerequisites)
+        assertEquals(state.saved, failedState.saved)
+        assertEquals(state.limits, failedState.limits)
+    }
+
+    @Test
+    fun `edit clears a marked save failure`() {
+        val failedState = SetupStateMachine.saveFailed(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val edited = SetupStateMachine.edit(failedState, DRAFT.copy(login = "other"))
+
+        assertFalse(edited.saveFailed)
+    }
+
+    @Test
+    fun `saved clears a marked save failure`() {
+        val failedState = SetupStateMachine.saveFailed(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val savedState = SetupStateMachine.saved(failedState, SAVED)
+
+        assertFalse(savedState.saveFailed)
     }
 
     @Test

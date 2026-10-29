@@ -15,8 +15,10 @@ internal data class SetupPrerequisites(
 
 /**
  * The setup surface state: the current draft, its validation, the backup prerequisites, the values
- * that were last saved and the configured credential bounds used to validate the draft
- * (`CFG-CL-029 / 1`). Every edit produces a new immutable state.
+ * that were last saved, the configured credential bounds used to validate the draft
+ * (`CFG-CL-029 / 1`) and whether the last save attempt failed (`FR-AND-040 / 2`). A failed save
+ * stays visible until the draft is edited or a later save succeeds. Every edit produces a new
+ * immutable state.
  */
 internal data class SetupState(
     val draft: SetupDraft,
@@ -24,6 +26,7 @@ internal data class SetupState(
     val prerequisites: SetupPrerequisites,
     val saved: SetupConfiguration?,
     val limits: SetupLimits = SetupValidator.defaultLimits,
+    val saveFailed: Boolean = false,
 ) {
     /** Whether the user may start backup: the draft is valid and both prerequisites are met. */
     val canStartBackup: Boolean
@@ -43,9 +46,10 @@ internal data class SetupSubmission(
 /**
  * The setup transitions (`FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1`, `CFG-CL-029 / 1`):
  * opening a state from an optional saved configuration and the configured credential bounds,
- * editing the draft, submitting it only once valid, and recording a configuration after it was
- * persisted. Editing, submitting and recording a save revalidate with the bounds already held by
- * the state, so a configuration change never mixes limits within one state.
+ * editing the draft, submitting it only once valid, recording a configuration after it was
+ * persisted and recording a failed save while keeping the draft and its validation unchanged.
+ * Editing, submitting and recording a save revalidate with the bounds already held by the state, so
+ * a configuration change never mixes limits within one state.
  */
 internal object SetupStateMachine {
     fun initialState(
@@ -79,6 +83,7 @@ internal object SetupStateMachine {
         state.copy(
             draft = draft,
             validation = SetupValidator.validate(draft, state.limits),
+            saveFailed = false,
         )
 
     fun submit(state: SetupState): SetupSubmission? {
@@ -114,6 +119,9 @@ internal object SetupStateMachine {
             draft = draft,
             validation = SetupValidator.validate(draft, state.limits),
             saved = configuration,
+            saveFailed = false,
         )
     }
+
+    fun saveFailed(state: SetupState): SetupState = state.copy(saveFailed = true)
 }
