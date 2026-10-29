@@ -12,6 +12,16 @@ const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
+const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
+
+/// Reserve a loopback port for the metrics endpoint so the configuration is valid.
+fn free_metrics_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral loopback port must be available")
+        .local_addr()
+        .expect("the local address must exist")
+        .port()
+}
 const LABEL: &str = "dedicated-1";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
@@ -75,6 +85,10 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
         .replace(
             LOG_PATH_PLACEHOLDER,
             &dir.file("dedicated-server.log").display().to_string(),
+        )
+        .replace(
+            METRICS_BIND_PLACEHOLDER,
+            &format!("127.0.0.1:{}", free_metrics_port()),
         );
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");

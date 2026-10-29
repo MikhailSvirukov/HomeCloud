@@ -4,18 +4,29 @@
 //! name, loads the configuration to learn the structured log path, installs the
 //! non-blocking file writer, and then loads the key identity. Startup failures
 //! before the writer exists are written directly to stderr; later startup and
-//! shutdown events go to the configured file. Networking runtime behavior is
-//! added in later issues.
+//! shutdown events go to the configured file.
+//!
+//! After a successful start the process serves the Prometheus metrics endpoint
+//! and runs until `SIGINT` or `SIGTERM`, then writes the shutdown event and
+//! exits. The application TCP protocol is added in later issues.
 
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use dedicated_server::{
-    init as init_logging, logging_failed_to_stderr, shutdown as log_shutdown,
-    startup as log_startup, startup_failed as log_startup_failed, startup_failed_to_stderr,
+    init as init_logging, logging_failed_to_stderr, metrics_failed, runtime_failed,
+    shutdown as log_shutdown, start_metrics_server, startup as log_startup,
+    startup_failed as log_startup_failed, startup_failed_to_stderr, LogGuard, Metrics,
     ServerConfig, Startup, StartupError, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
+
+/// How often the run loop checks the shutdown flag.
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Process allocator tuned for the concurrent workload of a server process
 /// rather than the system default.
@@ -33,25 +44,92 @@ fn main() -> ExitCode {
         }
     };
 
-    let _guard = match init_logging(config.logging()) {
+    let guard = match init_logging(config.logging()) {
         Ok(guard) => guard,
         Err(_) => {
             let _ = logging_failed_to_stderr();
             return ExitCode::FAILURE;
         }
     };
+    // The guard stays reachable from the metrics endpoint and is flushed
+    // explicitly at shutdown, before the process exits.
+    let log = Arc::new(Mutex::new(Some(guard)));
 
-    match Startup::from_config(config) {
-        Ok(startup) => {
-            log_startup(&startup.summary());
-            log_shutdown();
-            ExitCode::SUCCESS
-        }
+    let startup = match Startup::from_config(config) {
+        Ok(startup) => startup,
         Err(error) => {
             log_startup_failed(&error);
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+
+    let metrics = Arc::new(Metrics::new(&startup.cluster_labels()));
+    let body_metrics = Arc::clone(&metrics);
+    let body_log = Arc::clone(&log);
+    let body: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
+        let dropped_records = body_log
+            .lock()
+            .map(|slot| slot.as_ref().map(LogGuard::dropped_records).unwrap_or(0))
+            .unwrap_or_else(|poisoned| {
+                poisoned
+                    .into_inner()
+                    .as_ref()
+                    .map(LogGuard::dropped_records)
+                    .unwrap_or(0)
+            });
+        body_metrics.render(dropped_records)
+    });
+
+    // The signal handlers are installed before anything signals readiness, so a
+    // stop request observed by a test or an orchestrator can never fall into a
+    // window where the default disposition would kill the process unrecorded.
+    let stop = match shutdown_flag() {
+        Ok(stop) => stop,
+        Err(error) => {
+            runtime_failed(&error);
+            flush_log(&log);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let metrics_bind = startup.metrics_bind();
+    let _metrics = match start_metrics_server(metrics_bind, body) {
+        Ok(server) => server,
+        Err(error) => {
+            metrics_failed(metrics_bind, &error);
+            flush_log(&log);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    log_startup(&startup.summary());
+
+    while !stop.load(Ordering::Relaxed) {
+        thread::sleep(SHUTDOWN_POLL_INTERVAL);
     }
+
+    log_shutdown();
+    flush_log(&log);
+
+    ExitCode::SUCCESS
+}
+
+/// Drop the log guard so the background writer flushes every buffered record.
+fn flush_log(log: &Arc<Mutex<Option<LogGuard>>>) {
+    let mut slot = match log.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    drop(slot.take());
+}
+
+/// Install `SIGINT` and `SIGTERM` handlers that set the shutdown flag.
+fn shutdown_flag() -> std::io::Result<Arc<AtomicBool>> {
+    let stop = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stop))?;
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&stop))?;
+
+    Ok(stop)
 }
 
 /// Resolve the configuration path from [`CONFIG_PATH_ENV`] or the default file name.

@@ -44,7 +44,7 @@ const COMPONENT: &str = "dedicated-server";
 const DEFAULT_LOG_FILTER: &str = "info";
 
 /// Number of records the non-blocking writer buffers before dropping new ones.
-const BUFFERED_RECORDS: usize = 4096;
+pub(crate) const LOG_QUEUE_CAPACITY: usize = 4096;
 
 /// Event type for startup outcomes.
 const EVENT_STARTUP: &str = "startup";
@@ -117,6 +117,18 @@ const MESSAGE_HEARTBEAT_NO_ATTEMPT: &str = "heartbeat response without an attemp
 
 /// Static message for an invalid cluster node label.
 const MESSAGE_HEARTBEAT_INVALID_LABEL: &str = "cluster node label is empty or repeated";
+
+/// Error code for a metrics endpoint initialization failure.
+const ERROR_CODE_METRICS: &str = "metrics_error";
+
+/// Error code for a runtime initialization failure.
+const ERROR_CODE_RUNTIME: &str = "runtime_error";
+
+/// Message prefix for a metrics endpoint initialization failure.
+const MESSAGE_METRICS: &str = "metrics endpoint initialization failed";
+
+/// Message prefix for a runtime initialization failure.
+const MESSAGE_RUNTIME: &str = "runtime initialization failed";
 
 #[cfg(test)]
 const FIELD_TIMESTAMP: &str = "timestamp";
@@ -401,7 +413,7 @@ fn init_with_filter(logging: &LoggingConfig, filter: EnvFilter) -> Result<LogGua
     let errors = Arc::new(AtomicU64::new(0));
     let (non_blocking, worker) = NonBlockingBuilder::default()
         .lossy(true)
-        .buffered_lines_limit(BUFFERED_RECORDS)
+        .buffered_lines_limit(LOG_QUEUE_CAPACITY)
         .finish(CountingWriter::new(file, Arc::clone(&errors)));
     let dropped = non_blocking.error_counter();
 
@@ -543,6 +555,35 @@ pub fn heartbeat_error(error: &HeartbeatError) {
             message = message,
         );
     }
+}
+
+/// Log that the metrics endpoint on `bind` could not be started.
+///
+/// Only the address and the error kind are logged: an address is observable
+/// configuration data, and the kind carries the cause without a path.
+pub fn metrics_failed(bind: std::net::SocketAddr, error: &std::io::Error) {
+    let message = format!("{MESSAGE_METRICS} on {bind} ({:?})", error.kind());
+    event!(
+        target: COMPONENT,
+        Level::ERROR,
+        event = EVENT_STARTUP,
+        outcome = OUTCOME_FAILURE,
+        error_code = ERROR_CODE_METRICS,
+        message = %message,
+    );
+}
+
+/// Log that the process could not install its shutdown handling.
+pub fn runtime_failed(error: &std::io::Error) {
+    let message = format!("{MESSAGE_RUNTIME} ({:?})", error.kind());
+    event!(
+        target: COMPONENT,
+        Level::ERROR,
+        event = EVENT_STARTUP,
+        outcome = OUTCOME_FAILURE,
+        error_code = ERROR_CODE_RUNTIME,
+        message = %message,
+    );
 }
 
 fn heartbeat_failure(error: &HeartbeatError) -> (&'static str, Option<&str>) {
@@ -934,6 +975,36 @@ mod tests {
         assert_eq!(value[FIELD_OUTCOME], OUTCOME_FAILURE);
         assert_eq!(value[FIELD_ERROR_CODE], ERROR_CODE_HEARTBEAT);
         assert_eq!(value[FIELD_MESSAGE], MESSAGE_HEARTBEAT_NO_ATTEMPT);
+    }
+
+    #[test]
+    fn metrics_and_runtime_failures_are_startup_failure_records() {
+        let capture = CaptureWriter::default();
+        let subscriber = subscriber(capture.clone());
+        let bind = "127.0.0.1:9101".parse().expect("valid address");
+
+        tracing::subscriber::with_default(subscriber, || {
+            metrics_failed(bind, &std::io::Error::from(std::io::ErrorKind::AddrInUse));
+            runtime_failed(&std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        });
+
+        let output = capture.contents();
+        let lines = output.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+
+        let metrics = parse(lines[0]);
+        assert_eq!(metrics[FIELD_EVENT], EVENT_STARTUP);
+        assert_eq!(metrics[FIELD_OUTCOME], OUTCOME_FAILURE);
+        assert_eq!(metrics[FIELD_ERROR_CODE], ERROR_CODE_METRICS);
+        assert!(metrics[FIELD_MESSAGE]
+            .as_str()
+            .expect("message must be a string")
+            .contains("127.0.0.1:9101"));
+
+        let runtime = parse(lines[1]);
+        assert_eq!(runtime[FIELD_EVENT], EVENT_STARTUP);
+        assert_eq!(runtime[FIELD_OUTCOME], OUTCOME_FAILURE);
+        assert_eq!(runtime[FIELD_ERROR_CODE], ERROR_CODE_RUNTIME);
     }
 
     #[test]

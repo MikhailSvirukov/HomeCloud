@@ -27,3 +27,6 @@ max_total_size_bytes = 1073741824
 
 [cluster]
 nodes = []
+
+[metrics]
+bind = "127.0.0.1:9101"

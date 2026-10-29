@@ -76,12 +76,6 @@ jobs:
         run: |
           config_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-smoke.XXXXXX")"
           log_dir="$(mktemp -d "$RUNNER_TEMP/dedicated-server-logs.XXXXXX")"
-          stderr_file="$(mktemp "$RUNNER_TEMP/dedicated-server-stderr.XXXXXX")"
-          cleanup() {
-            sudo rm -rf "$config_dir" "$log_dir"
-            rm -f "$stderr_file"
-          }
-          trap cleanup EXIT
 
           mkdir -p "$config_dir/keys"
           cp dedicated-server/config/dedicated-server.example.toml "$config_dir/dedicated-server.toml"
@@ -94,19 +88,39 @@ jobs:
           sudo chown -R 10001:10001 "$config_dir" "$log_dir"
           sudo chmod 0755 "$log_dir"
 
-          status=0
-          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges \
+          container="dedicated-server-smoke-$$"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            sudo rm -rf "$config_dir" "$log_dir"
+          }
+          trap cleanup EXIT
+
+          docker run -d --name "$container" --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
             -v "$config_dir:/etc/homecloud:ro" \
             -v "$log_dir:/var/log/homecloud:rw" \
-            homecloud-dedicated-server:ci 2>"$stderr_file" || status=$?
+            homecloud-dedicated-server:ci >/dev/null
 
-          cat "$stderr_file" >&2
-          if [ "$status" -ne 0 ]; then
-            echo "runtime image exited with status $status" >&2
+          for _ in $(seq 1 60); do
+            grep -Fq '"event":"startup"' "$log_dir/dedicated-server.log" 2>/dev/null && break
+            sleep 1
+          done
+          if ! grep -Fq '"event":"startup"' "$log_dir/dedicated-server.log" 2>/dev/null; then
+            echo 'runtime image did not emit an "event":"startup" record in its log file' >&2
+            cat "$log_dir/dedicated-server.log" >&2 || true
+            docker logs "$container" >&2 || true
             exit 1
           fi
-          if ! grep -Fq '"event":"startup"' "$log_dir/dedicated-server.log"; then
-            echo 'runtime image did not emit an "event":"startup" record in its log file' >&2
+
+          docker stop --time 15 "$container" >/dev/null
+          status=$(docker inspect -f '{{.State.ExitCode}}' "$container")
+          if [ "$status" -ne 0 ]; then
+            echo "runtime image exited with status $status" >&2
+            cat "$log_dir/dedicated-server.log" >&2 || true
+            exit 1
+          fi
+          if ! grep -Fq '"event":"shutdown"' "$log_dir/dedicated-server.log"; then
+            echo 'runtime image did not emit an "event":"shutdown" record after SIGTERM' >&2
             cat "$log_dir/dedicated-server.log" >&2 || true
             exit 1
           fi

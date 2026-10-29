@@ -38,3 +38,6 @@ label = "storage-2"
 address = "10.0.0.12:7100"
 encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[metrics]
+bind = "127.0.0.1:9101"

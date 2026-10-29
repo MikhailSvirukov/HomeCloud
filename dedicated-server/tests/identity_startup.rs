@@ -5,7 +5,8 @@
 //! `ServerIdentity::load` in isolation, so this file drives the process instead.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -35,6 +36,17 @@ const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
+/// Placeholder for the loopback metrics bind address used by the tests.
+const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
+
+/// Reserve a loopback port for the metrics endpoint so the configuration is valid.
+fn free_metrics_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral loopback port must be available")
+        .local_addr()
+        .expect("the local address must exist")
+        .port()
+}
 
 /// Owns a per-test temporary directory and removes it on drop.
 struct TempDir {
@@ -72,7 +84,11 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) ->
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
-        .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string());
+        .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
+        .replace(
+            METRICS_BIND_PLACEHOLDER,
+            &format!("127.0.0.1:{}", free_metrics_port()),
+        );
     let path = dir.file("dedicated-server.toml");
     std::fs::write(&path, config).expect("test configuration must be written");
     path
@@ -93,16 +109,102 @@ fn run_with_config(config: &Path) -> Output {
         .expect("dedicated-server binary must run")
 }
 
-/// Run the binary without `RUST_LOG` so its built-in default filter applies.
-fn run_with_config_without_log_filter(config: &Path) -> Output {
-    Command::new(BINARY)
-        .env(CONFIG_PATH_ENV, config)
-        .env_remove(RUST_LOG_ENV)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("dedicated-server binary must run")
+/// A running server process that is killed and reaped if the test fails.
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    fn spawn(command: &mut Command) -> Self {
+        let child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("dedicated-server binary must start");
+        Self { child: Some(child) }
+    }
+
+    fn child(&mut self) -> &mut Child {
+        self.child.as_mut().expect("the child must be alive")
+    }
+
+    /// Send `SIGTERM`, wait at most fifteen seconds and collect the process.
+    fn stop(mut self) -> Output {
+        let pid = self.child().id().to_string();
+        let signal = Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("kill must run");
+        assert!(signal.success(), "SIGTERM must be delivered");
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let exited = self
+                .child()
+                .try_wait()
+                .expect("the child status must be readable")
+                .is_some();
+            if exited {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child().kill();
+                let _ = self.child().wait();
+                panic!("the server did not stop within fifteen seconds");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        self.child
+            .take()
+            .expect("the child must be alive")
+            .wait_with_output()
+            .expect("the server output must be collected")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Run the binary until it logs its startup event, then stop it with `SIGTERM`.
+fn run_until_started(config: &Path, log: &Path, with_log_filter: bool) -> Output {
+    let mut command = Command::new(BINARY);
+    command.env(CONFIG_PATH_ENV, config);
+    if with_log_filter {
+        command.env(RUST_LOG_ENV, RUST_LOG_LEVEL);
+    } else {
+        command.env_remove(RUST_LOG_ENV);
+    }
+    let mut guard = ChildGuard::spawn(&mut command);
+
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let started = std::fs::read_to_string(log)
+            .is_ok_and(|contents| contents.contains("\"event\":\"startup\""));
+        if started {
+            break;
+        }
+        let exited = guard
+            .child()
+            .try_wait()
+            .expect("the child status must be readable")
+            .is_some();
+        assert!(!exited, "the server exited before its startup event");
+        assert!(
+            Instant::now() < deadline,
+            "the server never logged its startup event"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    guard.stop()
 }
 
 fn stdout_of(output: &Output) -> String {
@@ -208,7 +310,7 @@ fn valid_config_and_distinct_keys_log_one_summary_and_exit_zero() {
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
     let config = write_config(&dir, &encryption, &signing, &log);
 
-    let output = run_with_config(&config);
+    let output = run_until_started(&config, &log, true);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
     assert!(
@@ -382,7 +484,7 @@ fn unset_log_filter_still_logs_startup_summary_and_exits_zero() {
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
     let config = write_config(&dir, &encryption, &signing, &log);
 
-    let output = run_with_config_without_log_filter(&config);
+    let output = run_until_started(&config, &log, false);
 
     assert!(output.status.success(), "stderr: {}", stderr_of(&output));
     assert!(

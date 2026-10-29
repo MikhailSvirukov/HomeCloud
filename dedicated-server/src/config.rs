@@ -55,6 +55,8 @@ pub struct ServerConfig {
     pub(crate) password: PasswordConfig,
     /// Structured log file configuration.
     pub(crate) logging: LoggingConfig,
+    /// Prometheus-compatible metrics endpoint.
+    pub(crate) metrics: MetricsConfig,
     /// Fixed storage cluster bootstrap information.
     pub(crate) cluster: ClusterConfig,
 }
@@ -95,6 +97,14 @@ pub(crate) struct PasswordConfig {
     pub(crate) parallelism: NonZeroU32,
     /// Salt length in bytes.
     pub(crate) salt_length_bytes: NonZeroUsize,
+}
+
+/// Prometheus-compatible metrics endpoint configuration.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Address and TCP port the metrics endpoint binds to.
+    pub(crate) bind: SocketAddr,
 }
 
 /// Structured log file configuration.
@@ -248,6 +258,12 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    /// [`MetricsConfig::bind`] uses port zero.
+    #[error("metrics.bind ({bind}) must use a port in 1..=65535")]
+    MetricsZeroPort {
+        /// Configured metrics bind address.
+        bind: SocketAddr,
+    },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
@@ -282,6 +298,12 @@ pub enum ConfigError {
         max_total_size_bytes: u64,
         /// Configured maximum size of one log file.
         max_file_size_bytes: u64,
+    },
+    /// [`MetricsConfig::bind`] is not a loopback address.
+    #[error("metrics.bind ({bind}) must be a loopback address")]
+    MetricsBindNotLoopback {
+        /// Configured metrics bind address.
+        bind: SocketAddr,
     },
 }
 
@@ -330,6 +352,11 @@ impl ServerConfig {
         &self.logging
     }
 
+    /// Prometheus-compatible metrics endpoint configuration.
+    pub fn metrics(&self) -> &MetricsConfig {
+        &self.metrics
+    }
+
     /// Read, parse and validate a configuration file.
     pub fn load(path: &Path) -> Result<Self> {
         std::fs::read_to_string(path)
@@ -345,7 +372,19 @@ impl ServerConfig {
         validate_identity(&self.identity, self.max_label_bytes)
             .and_then(|()| validate_cluster(&self.cluster, self.max_label_bytes))
             .and_then(|()| validate_logging(&self.logging))
+            .and_then(|()| validate_metrics(&self.metrics))
     }
+}
+
+/// The metrics endpoint must stay on loopback until TLS support is configured.
+fn validate_metrics(metrics: &MetricsConfig) -> Result<()> {
+    if !metrics.bind.ip().is_loopback() {
+        return Err(ConfigError::MetricsBindNotLoopback { bind: metrics.bind });
+    }
+    if metrics.bind.port() == 0 {
+        return Err(ConfigError::MetricsZeroPort { bind: metrics.bind });
+    }
+    Ok(())
 }
 
 fn validate_logging(logging: &LoggingConfig) -> Result<()> {
@@ -485,6 +524,10 @@ mod tests {
         );
         assert_eq!(config.max_label_bytes.get(), 64);
         assert_eq!(config.max_frame_bytes.get(), 1_048_576);
+        assert_eq!(
+            config.metrics().bind,
+            "127.0.0.1:9101".parse().expect("valid metrics address")
+        );
         assert_eq!(config.identity.label, "dedicated-1");
         assert_eq!(config.heartbeat.interval().as_millis(), 1000);
         assert_eq!(config.heartbeat.timeout().as_millis(), 500);
@@ -657,6 +700,35 @@ mod tests {
                 max_file_size_bytes: 104_857_600,
             })
         ));
+    }
+
+    #[test]
+    fn rejects_a_non_loopback_metrics_bind() {
+        let document = VALID_SERVER.replace("bind = \"127.0.0.1:9101\"", "bind = \"0.0.0.0:9101\"");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsBindNotLoopback { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_zero_metrics_port() {
+        let document = VALID_SERVER.replace("bind = \"127.0.0.1:9101\"", "bind = \"127.0.0.1:0\"");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsZeroPort { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_missing_metrics_section() {
+        let document = VALID_SERVER.replace("[metrics]\nbind = \"127.0.0.1:9101\"\n", "");
+
+        assert!(parse_error(&document)
+            .to_string()
+            .contains("missing field `metrics`"));
     }
 
     #[test]

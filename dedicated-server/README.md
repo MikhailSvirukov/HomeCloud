@@ -10,10 +10,12 @@ addresses, labels, and public keys here, then send files straight to storage.
 
 Configuration loading and validation, key-identity loading for the server's own
 key pair, internal heartbeat tracking for the fixed cluster, availability
-observability for the tracked nodes and quorum, and the in-memory account
-registration model are implemented. The binary loads the configuration, installs
-the configured structured log file, loads the key identity, logs startup and
-shutdown events, and exits. Network I/O, the wire protocol, registration over
+observability for the tracked nodes and quorum, the in-memory account
+registration model and a Prometheus metrics endpoint are implemented. The binary
+loads the configuration, installs the configured structured log file, loads the
+key identity, serves `GET /metrics` on the configured loopback address, logs
+startup, and runs until `SIGINT` or `SIGTERM`, then logs shutdown and exits. Application
+network I/O, the wire protocol, registration over
 the network, cluster replication, and topology responses are not implemented
 yet.
 
@@ -100,7 +102,9 @@ docker run --rm --read-only \
 The two key files named by `[identity]` must exist under the mounted directory,
 be non-empty and contain different material. The process validates its
 configuration, writes JSON Lines events to the file named by `[logging] path`,
-and exits; it does not listen on `listen` and publishes no ports until the
+serves `GET /metrics` on the loopback address named by `[metrics] bind`, and runs
+until the container is stopped (`SIGTERM`) before writing the shutdown record.
+It does not listen on `listen` and publishes no application ports until the
 network layer exists. The log directory must be writable by the container user.
 
 ## Logging
@@ -156,9 +160,16 @@ Each event carries:
 A successful startup is one `startup` event with `outcome` set to `success`,
 followed by one `shutdown` event with `outcome` set to `success` and the message
 `server stopped`. A failed startup is one `startup` event with `outcome` set to
-`failure`, an `error_code` of `configuration_error`, `logging_error`, or
-`identity_error`, and a fixed stage-specific `message`; the failure event is the
-last record. Records never contain file paths or names, logins, cryptographic
+`failure` and one of the stage error codes below, with a fixed
+stage-specific `message`:
+
+- `configuration_error` and `logging_error` are bootstrap failures written to
+  stderr before the log file exists; each is the only record of that run.
+- `identity_error` and `metrics_error` are written through the configured
+  writer and are the last record of the run.
+- `runtime_error` means the process could not install its shutdown handling; it
+  is written before a successful `startup` record, so a run may contain no
+  success record at all. Records never contain file paths or names, logins, cryptographic
 keys, verifiers, payloads or other user metadata.
 
 ### Runtime events
@@ -215,7 +226,7 @@ for the whole process and flushes buffered records when dropped.
 
 - Top level: `listen` (socket address string), `max_label_bytes`,
   `max_frame_bytes`, `[identity]`, `[heartbeat]`, `[password]`, `[logging]`,
-  `[[cluster.nodes]]`.
+  `[metrics]`, `[[cluster.nodes]]`.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
 - `max_frame_bytes`: the largest frame payload the server accepts from a peer,
@@ -240,6 +251,11 @@ for the whole process and flushes buffered records when dropped.
   loading fails. A path that cannot be initialized is a startup failure. Leave
   free space beyond `max_total_size_bytes` in the log directory for the active
   file and filesystem overhead.
+- `metrics` sets `bind`, the address and TCP port of the Prometheus metrics
+  endpoint (for example `127.0.0.1:9101`). It is required. The address must be
+  a loopback address with a non-zero port until TLS support lands; a
+  non-loopback bind or port `0` is rejected while loading the configuration, so
+  the endpoint is never exposed without TLS and always has a known port.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -252,6 +268,9 @@ Example:
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
 max_frame_bytes = 1048576
+
+[metrics]
+bind = "127.0.0.1:9101"
 
 [identity]
 label = "dedicated-1"
@@ -291,6 +310,57 @@ encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
 
+
+## Metrics endpoint
+
+The process serves a Prometheus-compatible endpoint on the configured loopback
+`metrics.bind` for its whole lifetime (`NFR-OBS-006`, `CFG-OBS-003`). It is a
+separate monitoring interface: it shares no port, framing or credentials with
+the application TCP protocol.
+
+- `GET /metrics` returns `200` with `Content-Type: text/plain; version=0.0.4;
+  charset=utf-8` and the Prometheus text exposition. Any other path returns
+  `404`; a non-`GET` request for `/metrics` returns `405`. A request is read
+  with one bounded read under a five-second timeout, connections are served
+  one at a time and every response sends `Connection: close`. The read and the
+  write each use the five-second socket timeout, so a slow client cannot pin a
+  worker for more than the request read plus the response write.
+- A non-loopback bind is rejected while loading the configuration, because
+  `NFR-OBS-007` requires TLS for a non-local endpoint and this version does not
+  serve TLS yet. The endpoint therefore never runs unencrypted outside the
+  host.
+
+Every label value is owned by the registry, so a scrape can never create a new
+one (`NFR-OBS-008`):
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `homecloud_dedicated_up` | gauge | none | `1` while the process serves metrics |
+| `homecloud_dedicated_node_available` | gauge | `node` (manifest label) | `1` while that storage node is available |
+| `homecloud_dedicated_quorum_available` | gauge | none | `1` while a strict majority of the configured nodes is available |
+| `homecloud_dedicated_log_dropped_records_total` | counter | none | records lost by the bounded log writer (`NFR-OBS-004`) |
+| `homecloud_dedicated_log_queue_capacity_records` | gauge | none | capacity of the bounded log writer queue |
+| `homecloud_dedicated_request_duration_seconds` | histogram | `operation` (`registration`, `topology`), `le` | duration of handled client requests |
+
+The label set is fixed at startup: `node` values come from the static manifest
+and `operation` values from the v1 operation table, so no login, `request_id`,
+`upload_id`, file name or other user-unique value can appear. The log-writer queue capacity is exported; its current occupancy is not,
+because the underlying appender does not report it, and the dropped-record
+counter is the diagnostic for a saturated queue.
+
+The node and quorum gauges are updated by the heartbeat loop and the request
+duration histogram by the request loop; both loops belong to the wire layer and
+are not part of this version yet. Until they land the gauges keep their initial
+`1` value, the histogram renders zero observations, and only `up`, the
+dropped-record counter and the queue capacity carry live values. They are
+registered now so the endpoint and its labels are fixed and tested, and the
+availability and request producers can fill them without changing the
+contract.
+
+After a successful start the process serves the endpoint and waits for
+`SIGINT` or `SIGTERM`, then writes the `shutdown` record, flushes the log writer
+and exits with status `0`. A failure to start the endpoint is a startup failure
+with the `metrics_error` code.
 
 ## Framing
 
