@@ -31,6 +31,15 @@ const NODE_ID_BYTES: usize = 16;
 /// Number of bytes in a public key.
 const PUBLIC_KEY_BYTES: usize = 32;
 
+/// Configuration field name of the metrics server certificate path.
+const FIELD_TLS_CERTIFICATE_PATH: &str = "certificate_path";
+
+/// Configuration field name of the metrics private key path.
+const FIELD_TLS_PRIVATE_KEY_PATH: &str = "private_key_path";
+
+/// Configuration field name of the metrics trust material path.
+const FIELD_TLS_TRUST_PATH: &str = "trust_path";
+
 /// Number of hexadecimal characters used to encode one byte.
 const HEX_CHARS_PER_BYTE: usize = 2;
 
@@ -403,7 +412,7 @@ impl ServerConfig {
     }
 }
 
-/// The metrics endpoint must stay on loopback until TLS support is configured.
+/// A non-loopback metrics bind requires TLS material; loopback may stay HTTP.
 fn validate_metrics(metrics: &MetricsConfig) -> Result<()> {
     if !metrics.bind.ip().is_loopback() && metrics.tls.is_none() {
         return Err(ConfigError::MetricsTlsRequired { bind: metrics.bind });
@@ -424,9 +433,9 @@ fn validate_metrics_tls(metrics: &MetricsConfig) -> Result<()> {
         return Ok(());
     };
     for (field, path) in [
-        ("certificate_path", &tls.certificate_path),
-        ("private_key_path", &tls.private_key_path),
-        ("trust_path", &tls.trust_path),
+        (FIELD_TLS_CERTIFICATE_PATH, &tls.certificate_path),
+        (FIELD_TLS_PRIVATE_KEY_PATH, &tls.private_key_path),
+        (FIELD_TLS_TRUST_PATH, &tls.trust_path),
     ] {
         if path.as_os_str().is_empty() {
             return Err(ConfigError::MetricsEmptyTlsPath { field });
@@ -772,17 +781,30 @@ mod tests {
 
     #[test]
     fn rejects_an_empty_metrics_tls_path() {
-        let document = VALID_SERVER.replace(
-            "bind = \"127.0.0.1:9101\"",
-            "bind = \"127.0.0.1:9101\"\n\n[metrics.tls]\ncertificate_path = \"\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
-        );
+        for (empty_field, section) in [
+            (
+                "certificate_path",
+                "[metrics.tls]\ncertificate_path = \"\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
+            ),
+            (
+                "private_key_path",
+                "[metrics.tls]\ncertificate_path = \"/etc/homecloud/metrics/server.crt\"\nprivate_key_path = \"\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
+            ),
+            (
+                "trust_path",
+                "[metrics.tls]\ncertificate_path = \"/etc/homecloud/metrics/server.crt\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"\"",
+            ),
+        ] {
+            let document = VALID_SERVER.replace(
+                "bind = \"127.0.0.1:9101\"",
+                &format!("bind = \"127.0.0.1:9101\"\n\n{section}"),
+            );
 
-        assert!(matches!(
-            ServerConfig::from_toml_str(&document),
-            Err(ConfigError::MetricsEmptyTlsPath {
-                field: "certificate_path"
-            })
-        ));
+            assert!(matches!(
+                ServerConfig::from_toml_str(&document),
+                Err(ConfigError::MetricsEmptyTlsPath { field }) if field == empty_field
+            ));
+        }
     }
 
     #[test]

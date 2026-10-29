@@ -9,9 +9,9 @@
 //!
 //! When TLS material is configured the listener terminates TLS with `rustls`
 //! and serves the same endpoint over HTTPS, which is what `NFR-OBS-007`
-//! requires for a non-loopback bind. The trust material is loaded and checked
-//! at startup so an endpoint whose collecting client could not verify it never
-//! starts.
+//! requires for a non-loopback bind. The trust file is loaded at startup so it
+//! is readable and carries PEM certificate material; whether a collecting
+//! client can build a chain from it is the client's responsibility.
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
@@ -69,17 +69,23 @@ impl MetricsServer {
 
 /// Bind `bind` and serve `body` on `GET /metrics` from one background thread.
 ///
-/// With `tls` the endpoint speaks HTTPS with the configured certificate; the
-/// trust material is validated at startup so the collector can verify the
-/// server.
+/// With `tls` the endpoint speaks HTTPS with the configured certificate. A
+/// non-loopback `bind` without TLS is refused before the socket is bound, so a
+/// plaintext endpoint can never be published outside the host.
 pub fn start(
     bind: SocketAddr,
     body: Arc<dyn Fn() -> String + Send + Sync>,
     tls: Option<TlsPaths<'_>>,
 ) -> io::Result<MetricsServer> {
+    if !bind.ip().is_loopback() && tls.is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a non-loopback metrics bind requires TLS",
+        ));
+    }
+    let tls = tls.map(load_tls).transpose()?.map(Arc::new);
     let listener = TcpListener::bind(bind)?;
     let local_addr = listener.local_addr()?;
-    let tls = tls.map(load_tls).transpose()?.map(Arc::new);
 
     let thread = thread::Builder::new()
         .name("metrics-listener".to_owned())
@@ -91,8 +97,11 @@ pub fn start(
                     thread::sleep(ACCEPT_ERROR_BACKOFF);
                     continue;
                 };
-                let _ = stream.set_read_timeout(Some(CONNECTION_TIMEOUT));
-                let _ = stream.set_write_timeout(Some(CONNECTION_TIMEOUT));
+                if stream.set_read_timeout(Some(CONNECTION_TIMEOUT)).is_err()
+                    || stream.set_write_timeout(Some(CONNECTION_TIMEOUT)).is_err()
+                {
+                    continue;
+                }
                 match tls.as_ref() {
                     Some(config) => {
                         let Ok(connection) = rustls::ServerConnection::new(Arc::clone(config))
@@ -124,9 +133,9 @@ pub fn start(
 fn load_tls(paths: TlsPaths<'_>) -> io::Result<rustls::ServerConfig> {
     let certificates = load_certificates(paths.certificate)?;
     let private_key = load_private_key(paths.private_key)?;
-    // The trust material belongs to the collecting client. Loading it proves
-    // the operator configured usable verification material, so the endpoint is
-    // never published with a certificate no collector can check.
+    // The trust material belongs to the collecting client: the server loads it to
+    // prove the file is readable and carries PEM certificate material. Chain
+    // verification stays the collecting client responsibility.
     let _trust = load_certificates(paths.trust)?;
 
     rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
@@ -313,6 +322,17 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
         assert!(response.ends_with("only GET is supported\n"));
+    }
+
+    #[test]
+    fn a_non_loopback_bind_without_tls_is_refused() {
+        let body = Arc::new(body);
+        let result = start("0.0.0.0:0".parse().expect("valid address"), body, None);
+        let error = match result {
+            Ok(_) => panic!("a plaintext non-loopback bind must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

@@ -13,7 +13,8 @@ key pair, internal heartbeat tracking for the fixed cluster, availability
 observability for the tracked nodes and quorum, the in-memory account
 registration model and a Prometheus metrics endpoint are implemented. The binary
 loads the configuration, installs the configured structured log file, loads the
-key identity, serves `GET /metrics` on the configured loopback address, logs
+key identity, serves `GET /metrics` on the configured address (plain HTTP on loopback,
+HTTPS when TLS is configured), logs
 startup, and runs until `SIGINT` or `SIGTERM`, then logs shutdown and exits. Application
 network I/O, the wire protocol, registration over
 the network, cluster replication, and topology responses are not implemented
@@ -102,7 +103,8 @@ docker run --rm --read-only \
 The two key files named by `[identity]` must exist under the mounted directory,
 be non-empty and contain different material. The process validates its
 configuration, writes JSON Lines events to the file named by `[logging] path`,
-serves `GET /metrics` on the loopback address named by `[metrics] bind`, and runs
+serves `GET /metrics` on the address named by `[metrics] bind` (HTTPS when
+`[metrics.tls]` is configured), and runs
 until the container is stopped (`SIGTERM`) before writing the shutdown record.
 It does not listen on `listen` and publishes no application ports until the
 network layer exists. The log directory must be writable by the container user.
@@ -259,7 +261,7 @@ for the whole process and flushes buffered records when dropped.
   configuration fails, so the endpoint is never exposed without TLS. The trust
   material is the certificate or CA the collecting client verifies the server
   against; the server checks at startup that all three TLS files exist and
-  contain usable PEM material.
+  contain PEM certificate material.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -317,7 +319,7 @@ signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 ## Metrics endpoint
 
-The process serves a Prometheus-compatible endpoint on the configured loopback
+The process serves a Prometheus-compatible endpoint on the configured
 `metrics.bind` for its whole lifetime (`NFR-OBS-006`, `CFG-OBS-003`). It is a
 separate monitoring interface: it shares no port, framing or credentials with
 the application TCP protocol.

@@ -23,8 +23,8 @@ mod topology;
 pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
-    ConfigError, LoggingConfig, MetricsConfig, NodeField, NodeId, PublicKey, ServerConfig,
-    CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
+    ConfigError, LoggingConfig, MetricsConfig, MetricsTlsConfig, NodeField, NodeId, PublicKey,
+    ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
 pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
