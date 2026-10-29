@@ -7,7 +7,7 @@ use core::time::Duration;
 
 use serde_json::Value;
 use storage_node::{serve, split_frames, start_logging, Listener, LogConfig, Logger};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 
@@ -143,12 +143,14 @@ async fn serve_logs_a_rejected_frame_with_peer_and_reason() {
         .await
         .expect("the accepted connection accepts the frame length prefix");
 
-    // Let `serve` spawn the pump and the pump reject the oversized prefix before
-    // the shutdown resolves and aborts the connection tasks.
-    for _ in 0..8 {
-        tokio::task::yield_now().await;
-    }
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The pump logs the rejection and then drops both socket halves, so the
+    // client observes EOF only after the structured event has been queued.
+    let mut eof = [0_u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(5), client.read(&mut eof))
+        .await
+        .expect("the rejected connection closes in time")
+        .expect("the client can observe the close");
+    assert_eq!(read, 0, "the server closes the rejected connection");
 
     shutdown_tx
         .send(())
@@ -177,6 +179,11 @@ async fn serve_logs_a_rejected_frame_with_peer_and_reason() {
         "the recorded peer identifier is not empty"
     );
     assert_eq!(rejected["error_category"], "invalid_request");
+    assert_eq!(rejected["outcome"], "rejected");
+    assert!(
+        rejected.get("request_id").is_none(),
+        "a rejection before request parsing has no request id"
+    );
     for key in ["payload", "file_name", "login"] {
         assert!(
             rejected.get(key).is_none(),
