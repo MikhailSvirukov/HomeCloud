@@ -37,6 +37,12 @@ pub const KEY_BYTES: usize = 32;
 /// Number of elements in a result envelope; later positions are undefined.
 pub const RESULT_ENVELOPE_ELEMENTS: usize = 2;
 
+/// Number of elements in the inter-server envelope.
+pub const INTER_SERVER_ELEMENTS: usize = 2;
+
+/// Header name used in diagnostics for the inter-server envelope.
+const INTER_SERVER_ENVELOPE: &str = "inter-server envelope";
+
 /// Header name used in diagnostics for the external header.
 const EXTERNAL_HEADER: &str = "external header";
 
@@ -99,6 +105,30 @@ pub enum WireError {
     /// The protocol version is not the one this codec implements.
     #[error("unsupported protocol version {0}")]
     UnsupportedVersion(u64),
+    /// The reserved inter-server message type `0` was received.
+    #[error("inter-server message type 0 is reserved")]
+    ReservedMessageType,
+    /// The inter-server message type is not one the protocol assigns.
+    #[error("unknown inter-server message type {0}")]
+    UnknownMessageType(u32),
+    /// An inter-server argument array has the wrong number of elements.
+    #[error("message type {message_type:?} takes {expected} arguments, got {actual}")]
+    WrongMessageArgumentCount {
+        /// Message type whose schema is fixed.
+        message_type: MessageType,
+        /// Required argument count.
+        expected: usize,
+        /// Observed argument count.
+        actual: usize,
+    },
+    /// An inter-server argument has a different CBOR type than the schema fixes.
+    #[error("message type {message_type:?} argument {index} has the wrong CBOR type")]
+    WrongMessageArgumentType {
+        /// Message type whose schema is fixed.
+        message_type: MessageType,
+        /// Zero-based argument index.
+        index: usize,
+    },
     /// The operation code is not one of the four v1 operations.
     #[error("unknown client operation code {0}")]
     UnknownOperation(u32),
@@ -735,6 +765,200 @@ fn optional_text_value(
     }
 }
 
+/// Inter-server message types of v1 (`INT-NET-075 / 1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageType {
+    /// Code `1`: dedicated liveness heartbeat request.
+    HeartbeatRequest,
+    /// Code `2`: dedicated liveness heartbeat response.
+    HeartbeatResponse,
+    /// Code `3`: RPC OpenRaft.
+    RaftRpc,
+}
+
+impl MessageType {
+    /// Numeric code of the message type.
+    pub fn code(self) -> u32 {
+        match self {
+            Self::HeartbeatRequest => 1,
+            Self::HeartbeatResponse => 2,
+            Self::RaftRpc => 3,
+        }
+    }
+
+    /// Message type for a numeric code, rejecting the reserved `0` and unknowns.
+    pub fn from_code(code: u32) -> Result<Self> {
+        match code {
+            0 => Err(WireError::ReservedMessageType),
+            1 => Ok(Self::HeartbeatRequest),
+            2 => Ok(Self::HeartbeatResponse),
+            3 => Ok(Self::RaftRpc),
+            other => Err(WireError::UnknownMessageType(other)),
+        }
+    }
+}
+
+/// Inter-server message carried in the `[message_type, args]` envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterServerMessage {
+    /// Dedicated liveness heartbeat request (`INT-NET-073 / 5`).
+    HeartbeatRequest {
+        /// Sequence number the response must repeat unchanged.
+        sequence_number: u64,
+        /// When the dedicated server sent the request, in Unix milliseconds.
+        dedicated_sent_at_ms: i64,
+        /// Estimate from the previous accepted exchange, absent before the first one.
+        previous_clock_offset_ms: Option<i64>,
+    },
+    /// Dedicated liveness heartbeat response (`INT-NET-073 / 5`).
+    HeartbeatResponse {
+        /// Sequence number of the request, unchanged.
+        sequence_number: u64,
+        /// When the node received the request, in Unix milliseconds.
+        node_received_at_ms: i64,
+        /// When the node sent the response, in Unix milliseconds.
+        node_sent_at_ms: i64,
+    },
+    /// RPC OpenRaft message (`INT-NET-074 / 2`).
+    RaftRpc {
+        /// Serialized OpenRaft RPC message, passed through unchanged.
+        rpc_bytes: Vec<u8>,
+    },
+}
+
+impl InterServerMessage {
+    /// Message type of this message.
+    pub fn message_type(&self) -> MessageType {
+        match self {
+            Self::HeartbeatRequest { .. } => MessageType::HeartbeatRequest,
+            Self::HeartbeatResponse { .. } => MessageType::HeartbeatResponse,
+            Self::RaftRpc { .. } => MessageType::RaftRpc,
+        }
+    }
+
+    /// Encode the envelope as the deterministic positional CBOR array.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let message_type = self.message_type();
+        let arguments = match self {
+            Self::HeartbeatRequest {
+                sequence_number,
+                dedicated_sent_at_ms,
+                previous_clock_offset_ms,
+            } => vec![
+                Value::Integer((*sequence_number).into()),
+                Value::Integer((*dedicated_sent_at_ms).into()),
+                match previous_clock_offset_ms {
+                    Some(offset) => Value::Integer((*offset).into()),
+                    None => Value::Null,
+                },
+            ],
+            Self::HeartbeatResponse {
+                sequence_number,
+                node_received_at_ms,
+                node_sent_at_ms,
+            } => vec![
+                Value::Integer((*sequence_number).into()),
+                Value::Integer((*node_received_at_ms).into()),
+                Value::Integer((*node_sent_at_ms).into()),
+            ],
+            Self::RaftRpc { rpc_bytes } => vec![Value::Bytes(rpc_bytes.clone())],
+        };
+
+        let value = Value::Array(vec![
+            Value::Integer(u64::from(message_type.code()).into()),
+            Value::Array(arguments),
+        ]);
+
+        encode_value(&value)
+    }
+
+    /// Decode and validate an inter-server envelope.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let Value::Array(elements) = decode_value(bytes)? else {
+            return Err(WireError::NotAnArray(INTER_SERVER_ENVELOPE));
+        };
+        require_length(&elements, INTER_SERVER_ENVELOPE, INTER_SERVER_ELEMENTS)?;
+
+        let message_type = MessageType::from_code(uint32(&elements[0], INTER_SERVER_ENVELOPE, 1)?)?;
+        let Value::Array(arguments) = &elements[1] else {
+            return Err(WireError::WrongType {
+                header: INTER_SERVER_ENVELOPE,
+                position: 2,
+            });
+        };
+
+        let expected = match message_type {
+            MessageType::HeartbeatRequest | MessageType::HeartbeatResponse => 3,
+            MessageType::RaftRpc => 1,
+        };
+        if arguments.len() != expected {
+            return Err(WireError::WrongMessageArgumentCount {
+                message_type,
+                expected,
+                actual: arguments.len(),
+            });
+        }
+
+        match message_type {
+            MessageType::HeartbeatRequest => Ok(Self::HeartbeatRequest {
+                sequence_number: uint64(&arguments[0], message_type, 0)?,
+                dedicated_sent_at_ms: int64(&arguments[1], message_type, 1)?,
+                previous_clock_offset_ms: optional_int64(&arguments[2], message_type, 2)?,
+            }),
+            MessageType::HeartbeatResponse => Ok(Self::HeartbeatResponse {
+                sequence_number: uint64(&arguments[0], message_type, 0)?,
+                node_received_at_ms: int64(&arguments[1], message_type, 1)?,
+                node_sent_at_ms: int64(&arguments[2], message_type, 2)?,
+            }),
+            MessageType::RaftRpc => match &arguments[0] {
+                Value::Bytes(rpc_bytes) => Ok(Self::RaftRpc {
+                    rpc_bytes: rpc_bytes.clone(),
+                }),
+                _ => Err(WireError::WrongMessageArgumentType {
+                    message_type,
+                    index: 0,
+                }),
+            },
+        }
+    }
+}
+
+fn uint64(value: &Value, message_type: MessageType, index: usize) -> Result<u64> {
+    match value {
+        Value::Integer(integer) => {
+            u64::try_from(*integer).map_err(|_| WireError::WrongMessageArgumentType {
+                message_type,
+                index,
+            })
+        }
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index,
+        }),
+    }
+}
+
+fn int64(value: &Value, message_type: MessageType, index: usize) -> Result<i64> {
+    match value {
+        Value::Integer(integer) => {
+            i64::try_from(*integer).map_err(|_| WireError::WrongMessageArgumentType {
+                message_type,
+                index,
+            })
+        }
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index,
+        }),
+    }
+}
+
+fn optional_int64(value: &Value, message_type: MessageType, index: usize) -> Result<Option<i64>> {
+    match value {
+        Value::Null => Ok(None),
+        other => int64(other, message_type, index).map(Some),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1302,5 +1526,168 @@ mod tests {
                 cursor: None,
             }
         );
+    }
+
+    #[test]
+    fn the_heartbeat_request_encodes_the_documented_layout() {
+        let message = InterServerMessage::HeartbeatRequest {
+            sequence_number: 7,
+            dedicated_sent_at_ms: 1_700_000_000_000,
+            previous_clock_offset_ms: None,
+        };
+        let expected = vec![
+            0x82, 0x01, 0x83, 0x07, 0x1b, 0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x00, 0xf6,
+        ];
+
+        assert_eq!(message.encode().expect("encoding must work"), expected);
+        assert_eq!(
+            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_negative_previous_offset_encodes_as_a_negative_integer() {
+        let message = InterServerMessage::HeartbeatRequest {
+            sequence_number: 1,
+            dedicated_sent_at_ms: 2,
+            previous_clock_offset_ms: Some(-5),
+        };
+        let expected = vec![0x82, 0x01, 0x83, 0x01, 0x02, 0x24];
+
+        assert_eq!(message.encode().expect("encoding must work"), expected);
+    }
+
+    #[test]
+    fn the_heartbeat_response_encodes_the_documented_layout() {
+        let message = InterServerMessage::HeartbeatResponse {
+            sequence_number: 7,
+            node_received_at_ms: 1_700_000_000_000,
+            node_sent_at_ms: 1_700_000_000_001,
+        };
+        let expected = vec![
+            0x82, 0x02, 0x83, 0x07, 0x1b, 0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x00, 0x1b,
+            0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x01,
+        ];
+
+        assert_eq!(message.encode().expect("encoding must work"), expected);
+        assert_eq!(
+            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn the_raft_rpc_message_encodes_the_documented_layout() {
+        let message = InterServerMessage::RaftRpc {
+            rpc_bytes: vec![0x01, 0x02],
+        };
+        let expected = vec![0x82, 0x03, 0x81, 0x42, 0x01, 0x02];
+
+        assert_eq!(message.encode().expect("encoding must work"), expected);
+        assert_eq!(
+            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+        );
+        assert_eq!(message.message_type(), MessageType::RaftRpc);
+    }
+
+    #[test]
+    fn the_reserved_message_type_is_rejected() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(0.into()),
+            Value::Array(vec![Value::Integer(1.into())]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes),
+            Err(WireError::ReservedMessageType)
+        ));
+    }
+
+    #[test]
+    fn an_unknown_message_type_is_rejected() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(4.into()),
+            Value::Array(vec![Value::Integer(1.into())]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes),
+            Err(WireError::UnknownMessageType(4))
+        ));
+    }
+
+    #[test]
+    fn message_argument_counts_and_types_are_enforced() {
+        let short = encode_value(&Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Array(vec![Value::Integer(1.into())]),
+        ]))
+        .expect("encoding must work");
+        assert!(matches!(
+            InterServerMessage::decode(&short),
+            Err(WireError::WrongMessageArgumentCount {
+                message_type: MessageType::HeartbeatRequest,
+                expected: 3,
+                actual: 1
+            })
+        ));
+
+        let wrong_type = encode_value(&Value::Array(vec![
+            Value::Integer(3.into()),
+            Value::Array(vec![Value::Integer(1.into())]),
+        ]))
+        .expect("encoding must work");
+        assert!(matches!(
+            InterServerMessage::decode(&wrong_type),
+            Err(WireError::WrongMessageArgumentType {
+                message_type: MessageType::RaftRpc,
+                index: 0
+            })
+        ));
+
+        let negative_sequence = encode_value(&Value::Array(vec![
+            Value::Integer(2.into()),
+            Value::Array(vec![
+                Value::Integer((-1).into()),
+                Value::Integer(0.into()),
+                Value::Integer(0.into()),
+            ]),
+        ]))
+        .expect("encoding must work");
+        assert!(matches!(
+            InterServerMessage::decode(&negative_sequence),
+            Err(WireError::WrongMessageArgumentType {
+                message_type: MessageType::HeartbeatResponse,
+                index: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn extreme_field_values_round_trip() {
+        let messages = [
+            InterServerMessage::HeartbeatRequest {
+                sequence_number: u64::MAX,
+                dedicated_sent_at_ms: i64::MIN,
+                previous_clock_offset_ms: Some(i64::MAX),
+            },
+            InterServerMessage::HeartbeatResponse {
+                sequence_number: 0,
+                node_received_at_ms: i64::MAX,
+                node_sent_at_ms: i64::MIN,
+            },
+        ];
+
+        for message in messages {
+            let bytes = message.encode().expect("encoding must work");
+            assert_eq!(
+                InterServerMessage::decode(&bytes).expect("decoding must work"),
+                message
+            );
+        }
     }
 }
