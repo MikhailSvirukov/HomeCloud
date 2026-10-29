@@ -37,7 +37,9 @@
 //! ([`CatalogService`], [`CatalogServiceError`]) that maps committed versions to
 //! entries and serves paginated catalog pages, and the catalog protocol error
 //! codes ([`CatalogErrorCode`]) for invalid cursors, expired snapshots, and
-//! internal failures.
+//! internal failures. The Prometheus-compatible metrics endpoint
+//! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
+//! loopback monitoring listener.
 //!
 //! Shared v1 specification constraints later increments must keep satisfying:
 //!
@@ -73,6 +75,7 @@ mod keys;
 mod listener;
 mod message;
 mod metadata;
+mod metrics;
 mod node;
 mod payload;
 mod payload_stream;
@@ -108,6 +111,7 @@ pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
     CONTENT_HASH_LEN, UPLOAD_ID_LEN,
 };
+pub use metrics::{Metrics, MetricsServer};
 pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};

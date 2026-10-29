@@ -3,11 +3,13 @@
 //! A storage node has a stable [`NodeId`] label, a `host:port` listen address,
 //! a data directory, the paths of its encryption and signing key files, the
 //! maximum frame length its framing layer accepts, the per-connection queue
-//! capacity, the catalog page size and snapshot lifetime, the source-name byte
-//! limit, and the addresses of its fixed peers. v1 clusters are fixed, so this
-//! model is validated when it is built.
+//! capacity, the loopback metrics bind address, the catalog page size and
+//! snapshot lifetime, the source-name byte limit, and the addresses of its
+//! fixed peers. v1 clusters are fixed, so this model is validated when it is
+//! built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 /// Fallible configuration operation result.
@@ -30,6 +32,8 @@ const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
 const KEY_MAX_FRAME_LEN: &str = "max_frame_len";
 /// Recognized `from_pairs` key for the per-connection queue capacity.
 const KEY_QUEUE_CAPACITY: &str = "queue_capacity";
+/// Recognized `from_pairs` key for the metrics bind address.
+const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
 /// Recognized `from_pairs` key for the catalog page size.
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 /// Recognized `from_pairs` key for the catalog snapshot lifetime in milliseconds.
@@ -93,6 +97,7 @@ pub struct NodeConfig {
     pub signing_key_path: PathBuf,
     pub max_frame_len: NonZeroU32,
     pub queue_capacity: NonZeroUsize,
+    pub metrics_bind_addr: SocketAddr,
     pub catalog_page_size: NonZeroUsize,
     pub catalog_snapshot_ttl_ms: NonZeroU64,
     pub max_source_name_len: NonZeroUsize,
@@ -113,6 +118,7 @@ impl NodeConfig {
         signing_key_path: PathBuf,
         max_frame_len: NonZeroU32,
         queue_capacity: NonZeroUsize,
+        metrics_bind_addr: SocketAddr,
         catalog_page_size: NonZeroUsize,
         catalog_snapshot_ttl_ms: NonZeroU64,
         max_source_name_len: NonZeroUsize,
@@ -120,6 +126,7 @@ impl NodeConfig {
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
         validate_listen_addr(listen_addr)?;
+        validate_metrics_bind_addr(metrics_bind_addr)?;
         Ok(Self {
             node_id,
             listen_addr: listen_addr.to_owned(),
@@ -128,6 +135,7 @@ impl NodeConfig {
             signing_key_path,
             max_frame_len,
             queue_capacity,
+            metrics_bind_addr,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -144,7 +152,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, catalog settings, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address, catalog settings, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -153,6 +161,7 @@ impl NodeConfig {
         let mut signing_key_path = None;
         let mut max_frame_len = None;
         let mut queue_capacity = None;
+        let mut metrics_bind_addr = None;
         let mut catalog_page_size = None;
         let mut catalog_snapshot_ttl_ms = None;
         let mut max_source_name_len = None;
@@ -171,6 +180,9 @@ impl NodeConfig {
                 }
                 KEY_MAX_FRAME_LEN if !value.is_empty() => max_frame_len = Some(*value),
                 KEY_QUEUE_CAPACITY if !value.is_empty() => queue_capacity = Some(*value),
+                KEY_METRICS_BIND_ADDR if !value.is_empty() => {
+                    metrics_bind_addr = Some(*value);
+                }
                 KEY_CATALOG_PAGE_SIZE if !value.is_empty() => catalog_page_size = Some(*value),
                 KEY_CATALOG_SNAPSHOT_TTL_MS if !value.is_empty() => {
                     catalog_snapshot_ttl_ms = Some(*value);
@@ -216,6 +228,12 @@ impl NodeConfig {
             });
         };
         let queue_capacity = parse_queue_capacity(queue_capacity)?;
+        let Some(metrics_bind_addr) = metrics_bind_addr else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_METRICS_BIND_ADDR,
+            });
+        };
+        let metrics_bind_addr = parse_metrics_bind_addr(metrics_bind_addr)?;
         let Some(catalog_page_size) = catalog_page_size else {
             return Err(ConfigError::MissingKey {
                 key: KEY_CATALOG_PAGE_SIZE,
@@ -243,6 +261,7 @@ impl NodeConfig {
             signing_key_path,
             max_frame_len,
             queue_capacity,
+            metrics_bind_addr,
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
@@ -281,6 +300,12 @@ pub enum ConfigError {
     /// The queue capacity was zero or not an integer.
     #[error("invalid queue capacity {value}")]
     InvalidQueueCapacity { value: String },
+    /// The metrics bind address was not a valid socket address.
+    #[error("invalid metrics bind address {value}")]
+    InvalidMetricsBindAddr { value: String },
+    /// The metrics bind address was not loopback, so v1 cannot serve it over HTTP.
+    #[error("metrics endpoint {value} requires TLS and only loopback HTTP is supported")]
+    MetricsRequiresTls { value: String },
     /// The catalog page size was zero or not an integer.
     #[error("invalid catalog page size {value}")]
     InvalidCatalogPageSize { value: String },
@@ -315,6 +340,25 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// Rejects a metrics bind address that is not loopback because v1 serves plaintext metrics only there.
+fn validate_metrics_bind_addr(addr: SocketAddr) -> Result<()> {
+    if !addr.ip().is_loopback() {
+        return Err(ConfigError::MetricsRequiresTls {
+            value: addr.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Parses a metrics bind address.
+fn parse_metrics_bind_addr(value: &str) -> Result<SocketAddr> {
+    value
+        .parse::<SocketAddr>()
+        .map_err(|_| ConfigError::InvalidMetricsBindAddr {
+            value: value.to_owned(),
+        })
 }
 
 /// Validates a peer address.
@@ -418,13 +462,14 @@ fn parse_max_source_name_len(value: &str) -> Result<NonZeroUsize> {
 #[cfg(test)]
 mod tests {
     use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+    use std::net::SocketAddr;
     use std::path::PathBuf;
 
     use super::{
         ConfigError, NodeConfig, NodeId, KEY_CATALOG_PAGE_SIZE, KEY_CATALOG_SNAPSHOT_TTL_MS,
         KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_LISTEN_ADDR, KEY_MAX_FRAME_LEN,
-        KEY_MAX_SOURCE_NAME_LEN, KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH,
-        MAX_NODE_ID_LEN,
+        KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR, KEY_NODE_ID, KEY_QUEUE_CAPACITY,
+        KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
 
     const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
@@ -440,6 +485,10 @@ mod tests {
 
     fn queue_capacity() -> NonZeroUsize {
         NonZeroUsize::new(16).expect("test capacity is non-zero")
+    }
+
+    fn metrics_bind_addr() -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], 9100))
     }
 
     fn catalog_page_size() -> NonZeroUsize {
@@ -496,6 +545,7 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            metrics_bind_addr(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -510,6 +560,7 @@ mod tests {
         assert_eq!(config.signing_key_path, signing_key_path());
         assert_eq!(config.max_frame_len.get(), 1_048_576);
         assert_eq!(config.queue_capacity.get(), 16);
+        assert_eq!(config.metrics_bind_addr, metrics_bind_addr());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
 
@@ -524,6 +575,7 @@ mod tests {
                 signing_key_path(),
                 max_frame_len(),
                 queue_capacity(),
+                metrics_bind_addr(),
                 catalog_page_size(),
                 catalog_snapshot_ttl_ms(),
                 max_source_name_len(),
@@ -546,6 +598,7 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            metrics_bind_addr(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -564,6 +617,7 @@ mod tests {
             signing_key_path(),
             max_frame_len(),
             queue_capacity(),
+            metrics_bind_addr(),
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
@@ -585,6 +639,7 @@ mod tests {
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
+            (KEY_METRICS_BIND_ADDR, "127.0.0.1:9100"),
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
@@ -683,6 +738,7 @@ mod tests {
             (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
             (KEY_MAX_FRAME_LEN, "1048576"),
             (KEY_QUEUE_CAPACITY, "16"),
+            (KEY_METRICS_BIND_ADDR, "127.0.0.1:9100"),
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),

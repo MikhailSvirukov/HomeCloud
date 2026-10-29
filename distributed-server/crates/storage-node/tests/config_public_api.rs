@@ -1,16 +1,19 @@
 //! Integration tests exercising only the public `storage_node` configuration API.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use storage_node::{ConfigError, NodeConfig, NodeId};
 
 const NODE_ID: &str = "node-1";
 const LISTEN_ADDR: &str = "0.0.0.0:9000";
+const METRICS_BIND_ADDR: &str = "127.0.0.1:9100";
 const DATA_DIR: &str = "/var/lib/storage-node";
 const ENCRYPTION_KEY_PATH: &str = "/keys/encryption.key";
 const SIGNING_KEY_PATH: &str = "/keys/signing.key";
 const KEY_NODE_ID: &str = "node_id";
 const KEY_LISTEN_ADDR: &str = "listen_addr";
+const KEY_METRICS_BIND_ADDR: &str = "metrics_bind_addr";
 const KEY_DATA_DIR: &str = "data_dir";
 const KEY_ENCRYPTION_KEY_PATH: &str = "encryption_key_path";
 const KEY_SIGNING_KEY_PATH: &str = "signing_key_path";
@@ -30,6 +33,7 @@ const MAX_SOURCE_NAME_LEN: &str = "64";
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     let config = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, " 0.0.0.0:9000 "),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -56,6 +60,10 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.catalog_page_size.get(), 2);
     assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
     assert_eq!(config.max_source_name_len.get(), 64);
+    assert_eq!(
+        config.metrics_bind_addr,
+        SocketAddr::from(([127, 0, 0, 1], 9100))
+    );
     assert_eq!(config.peers, ["10.0.0.2:9000", "10.0.0.3:9000"]);
 }
 
@@ -76,6 +84,7 @@ fn from_pairs_without_node_id_reports_missing_key() {
 fn from_pairs_without_encryption_key_path_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
@@ -96,6 +105,7 @@ fn from_pairs_without_encryption_key_path_reports_missing_key() {
 fn from_pairs_without_signing_key_path_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -116,6 +126,7 @@ fn from_pairs_without_signing_key_path_reports_missing_key() {
 fn from_pairs_without_max_frame_len_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -137,6 +148,7 @@ fn from_pairs_without_max_frame_len_reports_missing_key() {
 fn from_pairs_with_zero_max_frame_len_reports_invalid_max_frame_len() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -159,6 +171,7 @@ fn from_pairs_with_zero_max_frame_len_reports_invalid_max_frame_len() {
 fn from_pairs_with_unparsable_max_frame_len_reports_invalid_max_frame_len() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -181,6 +194,7 @@ fn from_pairs_with_unparsable_max_frame_len_reports_invalid_max_frame_len() {
 fn from_pairs_without_queue_capacity_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -203,6 +217,7 @@ fn from_pairs_without_queue_capacity_reports_missing_key() {
 fn from_pairs_with_zero_queue_capacity_reports_invalid_queue_capacity() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -226,6 +241,7 @@ fn from_pairs_with_zero_queue_capacity_reports_invalid_queue_capacity() {
 fn from_pairs_with_unparsable_queue_capacity_reports_invalid_queue_capacity() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -249,6 +265,7 @@ fn from_pairs_with_unparsable_queue_capacity_reports_invalid_queue_capacity() {
 fn from_pairs_without_catalog_page_size_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -271,6 +288,7 @@ fn from_pairs_without_catalog_page_size_reports_missing_key() {
 fn from_pairs_with_zero_catalog_page_size_reports_invalid_catalog_page_size() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -294,6 +312,7 @@ fn from_pairs_with_zero_catalog_page_size_reports_invalid_catalog_page_size() {
 fn from_pairs_with_unparsable_catalog_page_size_reports_invalid_catalog_page_size() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -317,6 +336,7 @@ fn from_pairs_with_unparsable_catalog_page_size_reports_invalid_catalog_page_siz
 fn from_pairs_without_catalog_snapshot_ttl_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -339,6 +359,7 @@ fn from_pairs_without_catalog_snapshot_ttl_reports_missing_key() {
 fn from_pairs_with_zero_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_ttl() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -362,6 +383,7 @@ fn from_pairs_with_zero_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_tt
 fn from_pairs_with_unparsable_catalog_snapshot_ttl_reports_invalid_catalog_snapshot_ttl() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -385,6 +407,7 @@ fn from_pairs_with_unparsable_catalog_snapshot_ttl_reports_invalid_catalog_snaps
 fn from_pairs_without_max_source_name_len_reports_missing_key() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -407,6 +430,7 @@ fn from_pairs_without_max_source_name_len_reports_missing_key() {
 fn from_pairs_with_zero_max_source_name_len_reports_invalid_max_source_name_len() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -430,6 +454,7 @@ fn from_pairs_with_zero_max_source_name_len_reports_invalid_max_source_name_len(
 fn from_pairs_with_unparsable_max_source_name_len_reports_invalid_max_source_name_len() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -453,6 +478,7 @@ fn from_pairs_with_unparsable_max_source_name_len_reports_invalid_max_source_nam
 fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, "10.0.0.1"),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -476,6 +502,7 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
 fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -500,6 +527,7 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
 fn from_pairs_with_repeated_peer_reports_duplicate() {
     let result = NodeConfig::from_pairs(&[
         (KEY_NODE_ID, NODE_ID),
+        (KEY_METRICS_BIND_ADDR, METRICS_BIND_ADDR),
         (KEY_LISTEN_ADDR, LISTEN_ADDR),
         (KEY_DATA_DIR, DATA_DIR),
         (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
@@ -535,4 +563,99 @@ fn node_id_round_trips_through_display_and_from_str() {
     assert_eq!(id.as_str(), "node-01_A");
     assert_eq!(id.to_string(), "node-01_A");
     assert_eq!("node-01_A".parse::<NodeId>(), Ok(id));
+}
+
+#[test]
+fn from_pairs_without_metrics_bind_addr_reports_missing_key() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MissingKey {
+            key: KEY_METRICS_BIND_ADDR,
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unparsable_metrics_bind_addr_reports_invalid_metrics_bind_addr() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_METRICS_BIND_ADDR, "not-an-address"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::InvalidMetricsBindAddr {
+            value: "not-an-address".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_unspecified_metrics_bind_addr_reports_metrics_requires_tls() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_METRICS_BIND_ADDR, "0.0.0.0:9100"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MetricsRequiresTls {
+            value: "0.0.0.0:9100".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls() {
+    let result = NodeConfig::from_pairs(&[
+        (KEY_NODE_ID, NODE_ID),
+        (KEY_LISTEN_ADDR, LISTEN_ADDR),
+        (KEY_DATA_DIR, DATA_DIR),
+        (KEY_ENCRYPTION_KEY_PATH, ENCRYPTION_KEY_PATH),
+        (KEY_SIGNING_KEY_PATH, SIGNING_KEY_PATH),
+        (KEY_MAX_FRAME_LEN, MAX_FRAME_LEN),
+        (KEY_QUEUE_CAPACITY, QUEUE_CAPACITY),
+        (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
+        (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
+        (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_METRICS_BIND_ADDR, "192.0.2.1:9100"),
+    ]);
+
+    assert_eq!(
+        result,
+        Err(ConfigError::MetricsRequiresTls {
+            value: "192.0.2.1:9100".to_owned(),
+        })
+    );
 }
