@@ -2,7 +2,7 @@
 
 ## 1. Scope and precedence
 
-This document is the published wire contract for version `1` of the HomeCloud application protocol. It covers the external frame header, the client logical header, the result envelope, the topology answer, and the inter-server envelope with its heartbeat and RPC message types. It restates the wire representation fixed by the SRS requirements in Table 1; it does not add protocol behavior.
+This document is the published wire contract for version `1` of the HomeCloud application protocol. It covers the external frame header, the client logical header, the result envelope, the topology answer, the catalog page answer, and the inter-server envelope with its heartbeat and RPC message types. It restates the wire representation fixed by the SRS requirements in Table 1; it does not add protocol behavior.
 
 The cited SRS requirements are normative. If a statement here differs from a cited requirement, the requirement prevails. `OPEN-003` is an open decision, not a requirement: §9 records what it leaves unfixed and this contract does not fill those gaps. The numeric value of a configured limit is not a wire constant; where a requirement delegates a limit to configuration, this contract names the configuration requirement and does not supply a number.
 
@@ -19,9 +19,9 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | 5 | Client logical header | `INT-NET-047 / 2`, `INT-NET-048 / 2`, `INT-NET-049 / 1`, `INT-NET-051 / 3`, `INT-NET-060 / 1`; `INT-NET-054 / 1`, `INT-NET-055 / 2`, `INT-NET-057 / 1` for the worked topology and catalog operations, `FR-CAT-015 / 1` and `INT-NET-080 / 1` for the catalog page request; `FR-DED-027 / 1` and `CFG-CL-029 / 1` for the login and password |
 | 6 | Result envelope | `INT-NET-061 / 1`, `INT-NET-062 / 1`, `INT-NET-063 / 1`, `INT-NET-064 / 1`, `INT-NET-069 / 1`, `INT-NET-070 / 5`, `INT-NET-080 / 1` |
 | 7 | Topology answer | `INT-NET-070 / 5`; `CFG-CL-031 / 1` for the label limit |
-| 7.1 | Catalog page answer | `FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `FR-CAT-009 / 1`, `FR-CAT-014 / 2`, `INT-NET-080 / 1`; `CFG-CL-032 / 1` for the source-name limit |
+| 7.1 | Catalog page answer | `FR-CAT-007 / 1`, `FR-CAT-009 / 1`, `FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `FR-CAT-014 / 2`, `INT-NET-080 / 1`; `CFG-CL-032 / 1` for the source-name limit |
 | 8 | Inter-server envelope and message types | `INT-NET-051 / 3`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-075 / 1`; `INT-NET-074 / 2` for RPC OpenRaft; `FR-TIME-005 / 3` for the offset source |
-| 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-060 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `CFG-CL-031 / 1`; `OPEN-003` (open decision, not a requirement) |
+| 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-011 / 1`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-052 / 4`, `INT-NET-058 / 1`, `INT-NET-060 / 1`, `INT-NET-061 / 1`, `INT-NET-069 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `INT-NET-080 / 1`, `FR-CAT-009 / 1`, `FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `FR-CAT-014 / 2`, `FR-CAT-015 / 1`, `FR-DED-010 / 2`, `FR-DED-035 / 1`, `CFG-CL-031 / 1`, `CFG-CL-032 / 1`, `NFR-MAINT-005 / 1`, `NFR-MAINT-006 / 1`; `OPEN-003` (open decision, not a requirement) |
 
 ## 2. Canonical encoding
 
@@ -43,6 +43,10 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | topology `sender_id` | 16 bytes | `INT-NET-070 / 5` |
 | `x25519_public_key` | 32 bytes | `INT-NET-070 / 5` |
 | `ed25519_public_key` | 32 bytes | `INT-NET-070 / 5` |
+| catalog `snapshot_token` | 16 bytes | `FR-CAT-013 / 2` |
+| catalog `next_cursor` | 16 bytes | `FR-CAT-013 / 2` |
+| catalog entry `upload_id` | 16 bytes | `FR-CAT-012 / 3` |
+| catalog entry `sha256` | 32 bytes | `FR-CAT-012 / 3` |
 
 These are the only byte-string lengths fixed by the requirements cited in this contract.
 
@@ -108,7 +112,7 @@ The v1 operation-code table makes `0` invalid and assigns `1` to account/install
 
 where `<login>` and `<password>` stand for their CBOR text strings. The fourth element is the operation-arguments array, and for this operation it is the empty CBOR array (`INT-NET-060 / 1`). The installation is identified by the external `sender_id`, and the credentials are in the common prefix of the client logical header (`INT-NET-060 / 1`). A topology request carrying a non-empty argument array is rejected (`INT-NET-060 / 1`).
 
-**Worked operation: catalog page request.** A catalog page is requested directly from a storage node with operation `3` (`INT-NET-057 / 1`), not through the dedicated server and not through the inter-server envelope (`INT-NET-080 / 1`). The logical header has the shape
+**Worked operation: catalog page request.** A catalog page is requested directly from a storage node with operation `3` (`INT-NET-057 / 1`), not through the dedicated server and not through the inter-server envelope (`INT-NET-080 / 1`). The logical header begins with the four leading positions
 
 ```text
 [3, <login>, <password>, [<snapshot_token>, <cursor>]]
@@ -116,7 +120,7 @@ where `<login>` and `<password>` stand for their CBOR text strings. The fourth e
 
 where both arguments are CBOR `null` for the first page and 16-byte CBOR byte strings taken unchanged from the previous response for a continuation page (`FR-CAT-015 / 1`). The external header of this request carries `upload_id = null` and `responder_label = null`; the `request_id` identifies the client request and is repeated in the response (`INT-NET-080 / 1`, `INT-NET-050 / 4`).
 
-**Worked operation: catalog page response.** The storage node answers with the result envelope of §6: `[result_code, result_args_array]` under the same external `request_id`, with `upload_id = null` and `responder_label` set to the manifest label of the node that served the page (`INT-NET-080 / 1`). On success the code is `0` and the argument array is the catalog page of §7; on failure the code is the mapped error and the argument array is empty (`INT-NET-069 / 1`).
+**Worked operation: catalog page response.** The storage node answers with the result envelope of §6: `[result_code, result_args_array]` under the same external `request_id`, with `upload_id = null` and `responder_label` set to the manifest label of the node that served the page (`INT-NET-080 / 1`). On success the code is `0` and the argument array is the catalog page of §7.1; on failure the code is the mapped error and the argument array is empty (`INT-NET-069 / 1`).
 
 Inter-server messages use the `[message_type, args]` shell of §8 and do not carry the client `login` and `password` fields (`INT-NET-051 / 3`).
 
@@ -266,14 +270,15 @@ The response returns the received `sequence_number` without modification (`INT-N
 
 ## 9. Elements left unfixed by the SRS
 
-`OPEN-003` remains open only for the argument composition of inter-server message types beyond the published codes `1`, `2` and `3`, in particular the verifier and key distribution messages of `FR-DED-010 / 2` and `FR-DED-035 / 1`. It is no longer open for the external or client logical headers: `INT-NET-050 / 4` fixes every external-header position, type, length and null rule, and `INT-NET-051 / 3`, `INT-NET-052 / 4`, `INT-NET-058 / 1`, `INT-NET-060 / 1`, `FR-CAT-015 / 1` and `INT-NET-080 / 1` fix the client logical header and the argument schemas of all four v1 operations. The inter-server shell `[message_type, args]` and the CBOR type of `message_type` are fixed by `INT-NET-072 / 2`; the heartbeat schemas by `INT-NET-073 / 5`; the RPC OpenRaft wrapper by `INT-NET-074 / 2`; the message-type code values by `INT-NET-075 / 1`; the OpenRaft serialization format by `NFR-MAINT-005 / 1` and `NFR-MAINT-006 / 1` (closed `OPEN-007`); and the catalog page exchange by `INT-NET-080 / 1` as a client exchange that carries no inter-server code.
+`OPEN-003` remains open for two things: the exact element count and maximum element sizes of the client logical header beyond the four leading positions restated in §5, including a maximum size for the operation-arguments array, and the codes and argument composition of inter-server message types beyond the published `1`, `2` and `3`, in particular the verifier and key distribution messages of `FR-DED-010 / 2` and `FR-DED-035 / 1`. It is closed for the external header, whose every position, type, length and null rule is fixed by `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-011 / 1`, `INT-NET-021 / 3` and `INT-NET-050 / 4`; for the four leading client logical positions and the argument schemas of all four v1 operations, fixed by `INT-NET-051 / 3`, `INT-NET-052 / 4`, `INT-NET-058 / 1`, `INT-NET-060 / 1`, `FR-CAT-015 / 1` and `INT-NET-080 / 1`; and for the catalog page exchange, fixed by `INT-NET-080 / 1` as a client exchange that carries no inter-server code. The inter-server shell `[message_type, args]` and the CBOR type of `message_type` are fixed by `INT-NET-072 / 2`; the heartbeat schemas by `INT-NET-073 / 5`; the RPC OpenRaft wrapper by `INT-NET-074 / 2`; the message-type code values by `INT-NET-075 / 1`; the OpenRaft serialization format by `NFR-MAINT-005 / 1` and `NFR-MAINT-006 / 1` (closed `OPEN-007`); and the catalog page exchange by `INT-NET-080 / 1` as a client exchange that carries no inter-server code.
 
 The following elements are left unfixed by the cited requirements, so this contract does not define them:
 
+- **Client logical header length and argument maxima.** `INT-NET-051 / 3` fixes the four leading positions restated in §5, and the cited requirements fix each operation's argument schema, but no cited requirement fixes the exact element count of the client or response logical header, a maximum size for the operation-arguments array, or the maximum size of its individual elements; this contract supplies none of them.
 - **Topology `host` maximum length.** `INT-NET-070 / 5` fixes the form of `host` as a canonical IPv4 or IPv6 literal, with DNS names and IPv6 zone identifiers not permitted in v1; that requirement does not fix a maximum length for `host`, and this contract supplies none.
 - **Zero `previous_clock_offset_ms`.** `INT-NET-073 / 5` fixes `int64` for a non-zero `previous_clock_offset_ms` and CBOR `null` before the first calculated estimate. It does not state how a computed offset of exactly zero is encoded; this contract does not choose an encoding for that case.
-- **Client operations not restated in full.** The argument schema is determined by the operation type (`INT-NET-051 / 3`). This contract restates the topology request (`INT-NET-060 / 1`) and the catalog page request and response (`FR-CAT-015 / 1`, `FR-CAT-013 / 2`, `INT-NET-080 / 1`); registration and media upload are fixed by `INT-NET-058 / 1` and `INT-NET-052 / 4` and are not restated here.
-- **Inter-server message types other than 1, 2 and 3.** Only the heartbeat request, the heartbeat response and RPC OpenRaft have a schema stated in this contract; the argument composition of any further inter-server message type is not fixed (`OPEN-003`). Catalog pages are client messages and do not use this envelope (`INT-NET-080 / 1`).
+- **Client operations not restated in full.** The argument schema is determined by the operation type (`INT-NET-051 / 3`). This contract restates the topology request (`INT-NET-060 / 1`) and the catalog page request and response (`FR-CAT-015 / 1`, `FR-CAT-013 / 2`, `INT-NET-080 / 1`); the argument arrays of registration and media upload are fixed by `INT-NET-058 / 1` and `INT-NET-052 / 4` and are not restated here.
+- **Inter-server message types other than 1, 2 and 3.** Only the heartbeat request, the heartbeat response and RPC OpenRaft have a schema stated in this contract; the codes and argument composition of any further inter-server message type are not fixed (`OPEN-003`). Catalog pages are client messages and do not use this envelope (`INT-NET-080 / 1`).
 - **RPC serialization.** `rpc_bytes` is opaque at this layer. Its serialization format is fixed outside this contract by `NFR-MAINT-005 / 1` and `NFR-MAINT-006 / 1` (OpenRaft `0.9.25` with the `serde` feature, CBOR per RFC 8949 through `ciborium`) and is not restated here; `INT-NET-074 / 2` fixes only the byte-string wrapper.
 - **Future protocol versions.** Only version `1` and the negotiation list `[1]` are defined for v1; future-version policy and schemas are outside v1 (`INT-NET-079 / 1`).
 
