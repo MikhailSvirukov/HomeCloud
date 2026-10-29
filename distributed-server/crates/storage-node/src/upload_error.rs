@@ -3,6 +3,8 @@
 //! SRS: `INT-NET-064 / 1`, supporting `INT-NET-065 / 1`,
 //! `FR-UP-012 / 1`, `FR-UP-013 / 1`, `FR-UP-023 / 1`.
 
+use std::io;
+
 use crate::blob_writer::BlobWriteError;
 use crate::frame_sequence::FrameSequenceError;
 use crate::integrity::IntegrityError;
@@ -59,6 +61,11 @@ impl From<BlobWriteError> for UploadErrorCode {
             BlobWriteError::AlreadyExists(_) => Self::UploadIdConflict,
             BlobWriteError::SizeMismatch { .. } | BlobWriteError::HashMismatch => {
                 Self::SizeMetadataHashMismatch
+            }
+            BlobWriteError::Create(error) | BlobWriteError::Write(error)
+                if error.kind() == io::ErrorKind::StorageFull =>
+            {
+                Self::StorageCapacityExhausted
             }
             BlobWriteError::Create(_)
             | BlobWriteError::CreateDirectory(_)

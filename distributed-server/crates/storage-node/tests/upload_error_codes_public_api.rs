@@ -132,9 +132,17 @@ fn maps_integrity_and_sequence_failures() {
 }
 
 #[test]
-fn capacity_code_is_published_even_though_no_current_error_maps_to_it() {
+fn maps_disk_full_failures_to_storage_capacity_exhausted() {
+    let write = BlobWriteError::Write(std::io::Error::new(std::io::ErrorKind::StorageFull, "full"));
     assert_eq!(
-        u32::from(UploadErrorCode::StorageCapacityExhausted),
-        0x0007_0002
+        UploadErrorCode::from(write),
+        UploadErrorCode::StorageCapacityExhausted
+    );
+
+    let create =
+        BlobWriteError::Create(std::io::Error::new(std::io::ErrorKind::StorageFull, "full"));
+    assert_eq!(
+        UploadErrorCode::from(create),
+        UploadErrorCode::StorageCapacityExhausted
     );
 }

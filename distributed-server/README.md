@@ -47,8 +47,8 @@ clients; it does not relay Raft or blob traffic.
   five upload arguments and the source-name and file-size limits),
   `src/upload_error.rs` (typed upload protocol error codes that map upload
   request, blob-write, integrity, and frame-sequence failures to the
-  `INT-NET-064` table entries, with storage-capacity detection left to a future
-  increment), `src/catalog_handler.rs` (maps first-page and continuation
+  `INT-NET-064` table entries, including storage-capacity exhaustion on disk-full
+  writes), `src/catalog_handler.rs` (maps first-page and continuation
   requests to catalog pages and encodes the result envelope),
   `src/listener.rs` (binds
   the node's listen address
@@ -121,8 +121,8 @@ protocol table entries, the upload request codec for operation `4` with its five
 argument positions, exact source-name preservation, and name/size limits, the typed
 upload outcomes (status codes), the typed upload protocol error codes that map
 upload request, blob-write, integrity, and frame-sequence failures to their
-`INT-NET-064` table entries while publishing `0x0007_0002` for storage-capacity
-exhaustion ahead of capacity detection, and the TCP
+`INT-NET-064` table entries (disk-full writes map to storage-capacity
+exhaustion), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
 compression/crypto work off the Tokio worker threads, and the node runtime that
