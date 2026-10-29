@@ -8,6 +8,7 @@ import dev.homecloud.android.media.MediaVersionCandidate
 import dev.homecloud.android.media.MediaVersionScanner
 import dev.homecloud.android.queue.FileUploadQueueStore
 import dev.homecloud.android.queue.InMemoryUploadQueue
+import dev.homecloud.android.queue.UploadQueue
 import dev.homecloud.android.queue.UploadQueueEntry
 import dev.homecloud.android.queue.UploadQueueState
 import dev.homecloud.android.queue.UploadQueueStore
@@ -74,15 +75,15 @@ class BackupCycleRunnerTest {
     }
 
     @Test
-    fun `runOnce loads an existing snapshot before planning and preserves its state and attempt count`() {
+    fun `runOnce requeues a failed snapshot entry to pending and persists the requeued state`() {
         val store = FileUploadQueueStore(storeFile())
-        val existing =
+        val failed =
             entry(
                 uploadId = "$UPLOAD_ID_PREFIX$CANDIDATE_ID",
                 state = UploadQueueState.FAILED,
                 attemptCount = STORED_ATTEMPT_COUNT,
             )
-        store.write(listOf(existing))
+        store.write(listOf(failed))
         val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
         val runner =
             runnerFor(
@@ -101,10 +102,59 @@ class BackupCycleRunnerTest {
             ),
             result,
         )
+        val requeued = queue.entries().single()
+        assertEquals(UploadQueueState.PENDING, requeued.state)
+        assertEquals(0, requeued.attemptCount)
+        assertEquals(listOf(requeued), store.read())
+    }
+
+    @Test
+    fun `runOnce requeues a failed entry before planning and keeps its upload id without a duplicate`() {
+        val store = FileUploadQueueStore(storeFile())
+        val failed =
+            entry(
+                uploadId = REQUEUED_UPLOAD_ID,
+                state = UploadQueueState.FAILED,
+                attemptCount = MAX_ATTEMPTS,
+            )
+        store.write(listOf(failed))
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val scanner =
+            MediaVersionScanner {
+                assertEquals(UploadQueueState.PENDING, queue.entries().single().state)
+                listOf(MediaTestData.candidate(id = CANDIDATE_ID, kind = MediaKind.IMAGE))
+            }
+
+        val result = runnerFor(store = store, queue = queue, scanner = scanner).runOnce()
+
+        assertEquals(NO_NEW_ENQUEUES, result.newlyEnqueued)
         val queued = queue.entries().single()
-        assertEquals(UploadQueueState.FAILED, queued.state)
-        assertEquals(STORED_ATTEMPT_COUNT, queued.attemptCount)
-        assertEquals(listOf(existing), store.read())
+        assertEquals(REQUEUED_UPLOAD_ID, queued.uploadId)
+        assertEquals(listOf(REQUEUED_UPLOAD_ID), store.read().map { entry -> entry.uploadId })
+    }
+
+    @Test
+    fun `runOnce leaves a completed snapshot entry untouched`() {
+        val store = FileUploadQueueStore(storeFile())
+        val completed =
+            entry(
+                uploadId = COMPLETED_UPLOAD_ID,
+                state = UploadQueueState.COMPLETED,
+                attemptCount = STORED_ATTEMPT_COUNT,
+            )
+        store.write(listOf(completed))
+        val queue = InMemoryUploadQueue(MAX_ATTEMPTS)
+        val scanner =
+            MediaVersionScanner {
+                assertEquals(UploadQueueState.COMPLETED, queue.entries().single().state)
+                listOf(MediaTestData.candidate(id = CANDIDATE_ID, kind = MediaKind.IMAGE))
+            }
+
+        val result = runnerFor(store = store, queue = queue, scanner = scanner).runOnce()
+
+        assertEquals(NO_NEW_ENQUEUES, result.newlyEnqueued)
+        assertEquals(listOf(completed), queue.entries())
+        assertEquals(listOf(completed), store.read())
     }
 
     @Test
@@ -169,6 +219,22 @@ class BackupCycleRunnerTest {
         val thrown = assertThrows(UploadQueueStoreException::class.java) { runner.runOnce() }
 
         assertSame(failure, thrown)
+    }
+
+    @Test
+    fun `runOnce logs and rethrows a requeue failure without persisting`() {
+        val failure = IllegalStateException(REQUEUE_FAILURE_MESSAGE)
+        val store = FakeUploadQueueStore()
+        val log = RecordingBackupCycleLog()
+        val queue = FailingRequeueUploadQueue(InMemoryUploadQueue(MAX_ATTEMPTS), failure)
+        val runner = runnerFor(store = store, queue = queue, log = log)
+
+        val thrown = assertThrows(IllegalStateException::class.java) { runner.runOnce() }
+
+        assertSame(failure, thrown)
+        assertEquals(SINGLE_FAILURE_EVENT, log.failureCount)
+        assertTrue(log.plannedResults.isEmpty())
+        assertEquals(0, store.writeCount)
     }
 
     @Test
@@ -368,7 +434,7 @@ class BackupCycleRunnerTest {
 
     private fun runnerFor(
         store: UploadQueueStore,
-        queue: InMemoryUploadQueue,
+        queue: UploadQueue,
         scanner: MediaVersionScanner = FakeMediaVersionScanner(imageAndVideoCandidates()),
         log: BackupCycleLog = NoOpBackupCycleLog,
         maxQueueSize: Int = NON_BINDING_CAPACITY,
@@ -420,6 +486,13 @@ class BackupCycleRunnerTest {
             writeCount += 1
             writeFailure?.let { failure -> throw failure }
         }
+    }
+
+    private class FailingRequeueUploadQueue(
+        private val delegate: UploadQueue,
+        private val failure: Exception,
+    ) : UploadQueue by delegate {
+        override fun requeueFailed(): Int = throw failure
     }
 
     private class RecordingLastCycleStore : LastCycleStore {
@@ -476,12 +549,15 @@ class BackupCycleRunnerTest {
         const val SINGLE_CANDIDATE_COUNT = 1
 
         const val UPLOAD_ID_PREFIX = "upload-"
+        const val REQUEUED_UPLOAD_ID = "upload-requeued"
+        const val COMPLETED_UPLOAD_ID = "upload-completed"
         const val STORED_ATTEMPT_COUNT = 3
         const val MAX_ATTEMPTS = 3
 
         const val STORE_FILE_NAME = "upload-queue.txt"
         const val READ_FAILURE_MESSAGE = "store read failed"
         const val WRITE_FAILURE_MESSAGE = "store write failed"
+        const val REQUEUE_FAILURE_MESSAGE = "queue requeue failed"
 
         const val LAST_CYCLE_FILE_NAME = "last-cycle"
         const val LAST_CYCLE_COMPLETED_AT_MILLIS = 1_700_000_000_000L
