@@ -43,6 +43,9 @@
 //! `<blob>.corrupt` sidecar marker, and the periodic integrity scanner
 //! ([`scan_committed_blobs`], [`run_integrity_scan_loop`]) that verifies all
 //! committed blobs on a configured schedule with a bounded concurrency limit.
+//! Direct durable blob writes ([`write_blob_direct`], [`StoredBlob`],
+//! [`BlobWriteError`]) stream a verified payload into its final location and
+//! fsync the file and its parent directory before reporting it durable.
 //! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! loopback monitoring listener. Structured UTF-8 JSON Lines logging
@@ -68,6 +71,7 @@
 //! - The hot path must not synchronize through a shared `Mutex`/`RwLock`, and
 //!   `tokio-uring` is not used.
 
+mod blob_writer;
 mod buffer_pool;
 mod catalog;
 mod catalog_error;
@@ -96,6 +100,7 @@ mod sealing;
 mod signing;
 mod storage_layout;
 
+pub use blob_writer::{write_blob_direct, BlobWriteError, StoredBlob};
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
     DEFAULT_CLASS_CAPACITIES,
