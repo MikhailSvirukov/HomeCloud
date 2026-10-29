@@ -2,8 +2,8 @@
 //!
 //! This crate implements configuration loading and validation, password-verifier
 //! derivation and checking, heartbeat tracking, account registration, and key
-//! identity loading, metrics, and framing; application networking and the wire
-//! protocol are still to come.
+//! identity loading, metrics, framing and the CBOR wire structures; application
+//! networking and request handling are still to come.
 
 mod availability;
 mod clock;
@@ -19,6 +19,7 @@ mod password;
 mod registration;
 mod report;
 mod topology;
+mod wire;
 
 pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
@@ -42,3 +43,8 @@ pub use registration::{
 };
 pub use report::{Startup, StartupError};
 pub use topology::{Topology, TopologyNode};
+pub use wire::{
+    ClientHeader, ClientOperation, Credentials, ExternalHeader, ResultEnvelope, WireError,
+    CLIENT_HEADER_ELEMENTS, EXTERNAL_HEADER_ELEMENTS, IDENTIFIER_BYTES, KEY_BYTES,
+    PROTOCOL_VERSION, RESULT_ENVELOPE_ELEMENTS,
+};

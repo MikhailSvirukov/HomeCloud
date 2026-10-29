@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 argon2 = { version = "0.5", features = ["std"] }
+ciborium = "0.2.2"
 mimalloc = { version = "0.1", default-features = false }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-pemfile = "2.2.0"

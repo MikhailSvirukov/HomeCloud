@@ -389,6 +389,14 @@ allocating the payload buffer (`INT-NET-004`), refusing an oversized frame
 without reading its body. A zero-length frame is valid at this layer; the
 message layer decides whether an empty payload is meaningful.
 
+`src/wire.rs` encodes and decodes the CBOR structures inside a frame: the
+external header with its seven positions and null rules (`INT-NET-050`), the
+client logical header for the four v1 operations (`INT-NET-051`, `INT-NET-057`,
+with the registration, topology, catalog page and upload argument schemas) and
+the result envelope (`INT-NET-061`). Encoding is the deterministic minimal
+representation, and decoding rejects a wrong element count, type, byte-string
+length, null rule, unknown operation code or trailing bytes.
+
 ## Key identity
 
 `src/identity.rs` loads the server's own key pair for startup. The identity is
