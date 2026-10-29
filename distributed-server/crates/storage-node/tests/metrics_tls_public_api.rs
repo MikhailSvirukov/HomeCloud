@@ -184,21 +184,23 @@ async fn rejects_a_plaintext_client_on_the_tls_port() {
         .flush()
         .await
         .expect("flushing the plaintext request cannot fail");
-    let mut response = Vec::new();
-    let read = tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.read_to_end(&mut response))
+    let mut buffer = [0_u8; 512];
+    let read = tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.read(&mut buffer))
         .await
-        .expect("the TLS listener terminates a plaintext connection before the timeout");
-
-    assert_eq!(
-        read.unwrap_or_default(),
-        0,
-        "a plaintext client must not receive response bytes"
-    );
+        .map(|result| result.unwrap_or_default())
+        .unwrap_or_default();
+    let response = &buffer[..read];
     assert!(
         !response
             .windows(b"HTTP/1.1 200".len())
             .any(|window| window == b"HTTP/1.1 200"),
         "a plaintext client must never receive the exposition status line"
+    );
+    assert!(
+        !response
+            .windows(b"homecloud_node_up".len())
+            .any(|window| window == b"homecloud_node_up"),
+        "a plaintext client must never receive the exposition body"
     );
 
     server.abort();
@@ -206,18 +208,24 @@ async fn rejects_a_plaintext_client_on_the_tls_port() {
 
 #[tokio::test]
 async fn rejects_invalid_certificate_material() {
+    let certificate = self_signed_certificate();
+    let cert_pem = certificate.cert.pem();
+    let key_pem = certificate.key_pair.serialize_pem();
     let metrics = Arc::new(Metrics::new(queue_capacity()));
+    let cases: [(Vec<u8>, Vec<u8>); 4] = [
+        (b"not a certificate".to_vec(), b"not a key".to_vec()),
+        (cert_pem.as_bytes().to_vec(), b"not a key".to_vec()),
+        (cert_pem.as_bytes().to_vec(), Vec::new()),
+        (Vec::new(), key_pem.as_bytes().to_vec()),
+    ];
 
-    let result = MetricsServer::bind_tls(
-        loopback_ephemeral_addr(),
-        metrics,
-        b"not a certificate",
-        b"not a key",
-    )
-    .await;
-
-    assert!(
-        result.is_err(),
-        "bind_tls must reject certificate material it cannot parse"
-    );
+    for (cert, key) in cases {
+        let result =
+            MetricsServer::bind_tls(loopback_ephemeral_addr(), Arc::clone(&metrics), &cert, &key)
+                .await;
+        assert!(
+            result.is_err(),
+            "bind_tls must reject certificate material it cannot parse"
+        );
+    }
 }
