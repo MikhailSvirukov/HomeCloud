@@ -69,7 +69,7 @@ pub fn verify_local_blob(
     let digest: [u8; CONTENT_HASH_LEN] = hasher.finalize().into();
     let computed = ContentHash::from_bytes(digest);
 
-    let marker = marker_path(&blob);
+    let marker = corrupt_marker_path(&blob);
     if computed == record.content_hash {
         match std::fs::remove_file(&marker) {
             Ok(()) => {}
@@ -83,7 +83,8 @@ pub fn verify_local_blob(
     Ok(BlobIntegrity::Corrupted)
 }
 
-fn marker_path(blob: &Path) -> PathBuf {
+/// Appends the corruption-marker suffix to `blob` to form the sidecar marker path.
+pub fn corrupt_marker_path(blob: &Path) -> PathBuf {
     let mut marker = blob.as_os_str().to_owned();
     marker.push(CORRUPT_MARKER_SUFFIX);
     PathBuf::from(marker)

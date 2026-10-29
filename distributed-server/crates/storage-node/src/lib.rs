@@ -62,6 +62,10 @@
 //! Direct durable blob writes ([`write_blob_direct`], [`StoredBlob`],
 //! [`BlobWriteError`]) stream a verified payload into its final location and
 //! fsync the file and its parent directory before reporting it durable.
+//! Restoring a marked-corrupt or missing local blob ([`restore_blob_direct`],
+//! [`RestoreError`]) refuses an unmarked local copy, replaces it through the
+//! same verified durable write, and keeps the corruption marker when that write
+//! fails.
 //! Upload failures map to the published protocol result codes in
 //! [`UploadErrorCode`], covering request, authentication, file, frame-sequence,
 //! upload-id, capacity, and internal error classes (`INT-NET-064 / 1`).
@@ -92,6 +96,7 @@
 //! - The hot path must not synchronize through a shared `Mutex`/`RwLock`, and
 //!   `tokio-uring` is not used.
 
+mod blob_restore;
 mod blob_writer;
 mod buffer_pool;
 mod catalog;
@@ -128,6 +133,7 @@ mod upload_error;
 mod upload_exchange;
 mod version_negotiation;
 
+pub use blob_restore::{restore_blob_direct, RestoreError};
 pub use blob_writer::{write_blob_direct, BlobWriteError, StoredBlob};
 pub use buffer_pool::{
     PayloadBuffer, PayloadBufferPool, PoolError, SizeClass, DEFAULT_BUFFERS_PER_CLASS,
@@ -156,7 +162,9 @@ pub use cpu_pool::{CpuPool, CpuPoolError};
 pub use frame_buffer::FrameBuffer;
 pub use frame_sequence::{FrameSequence, FrameSequenceError};
 pub use framing::{FrameLength, FramingError, FRAME_LENGTH_PREFIX_LEN, PROTOCOL_VERSION};
-pub use integrity::{verify_local_blob, BlobIntegrity, IntegrityError, CORRUPT_MARKER_SUFFIX};
+pub use integrity::{
+    corrupt_marker_path, verify_local_blob, BlobIntegrity, IntegrityError, CORRUPT_MARKER_SUFFIX,
+};
 pub use integrity_scan::{
     run_integrity_scan_loop, scan_committed_blobs, IntegrityScanConfig, IntegrityScanReport,
 };
