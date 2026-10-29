@@ -1,10 +1,11 @@
 //! Upload request client logical-header codec.
 //!
-//! SRS: `INT-NET-051 / 3`, `INT-NET-052 / 4`, `INT-NET-053 / 2`,
-//! `INT-NET-055 / 2`.
+//! SRS: `CFG-CL-029 / 1`, `INT-NET-051 / 3`, `INT-NET-052 / 4`,
+//! `INT-NET-053 / 2`, `INT-NET-054 / 1`, `INT-NET-055 / 2`.
 
 use ciborium::value::Value;
 
+use crate::client_limits::ClientLimits;
 use crate::metadata::{ContentHash, CONTENT_HASH_LEN};
 
 /// Result alias for upload request validation.
@@ -81,9 +82,12 @@ pub enum UploadExchangeError {
     /// The client operation is not upload.
     #[error("the client operation is not upload")]
     InvalidOperation,
-    /// The login is empty or contains a byte outside the permitted ASCII set.
+    /// The login is outside the configured byte range or contains a byte outside the permitted ASCII set.
     #[error("the client login is not a valid ASCII login")]
     InvalidLogin,
+    /// The password is outside the configured UTF-8 byte range.
+    #[error("the client password is outside the configured length range")]
+    InvalidPassword,
     /// The source name is empty or exceeds the configured byte limit.
     #[error("the source name is empty or exceeds the configured byte limit")]
     InvalidSourceName,
@@ -98,11 +102,12 @@ pub enum UploadExchangeError {
     Encode,
 }
 
-/// Decodes a four-position upload client logical header.
+/// Decodes a four-position upload client logical header within the configured credential limits.
 pub fn decode_upload_request(
     logical_header: &[u8],
     max_source_name_len: usize,
     max_file_bytes: u64,
+    limits: &ClientLimits,
 ) -> Result<UploadRequestHeader> {
     let Value::Array(elements) = decode_value(logical_header)? else {
         return Err(UploadExchangeError::NotAnArray);
@@ -121,13 +126,16 @@ pub fn decode_upload_request(
     let Value::Text(login) = login else {
         return Err(UploadExchangeError::InvalidLogin);
     };
-    if !valid_login(&login) {
+    if !limits.login_allowed(&login) {
         return Err(UploadExchangeError::InvalidLogin);
     }
 
     let Value::Text(password) = password else {
         return Err(UploadExchangeError::Decode);
     };
+    if !limits.password_allowed(&password) {
+        return Err(UploadExchangeError::InvalidPassword);
+    }
 
     let Value::Array(arguments) = arguments else {
         return Err(UploadExchangeError::Decode);
@@ -172,16 +180,20 @@ pub fn decode_upload_request(
     })
 }
 
-/// Encodes a four-position upload client logical header.
+/// Encodes a four-position upload client logical header within the configured credential limits.
 pub fn encode_upload_request(
     login: &str,
     password: &str,
     request: &UploadRequest,
     max_source_name_len: usize,
     max_file_bytes: u64,
+    limits: &ClientLimits,
 ) -> Result<Vec<u8>> {
-    if !valid_login(login) {
+    if !limits.login_allowed(login) {
         return Err(UploadExchangeError::InvalidLogin);
+    }
+    if !limits.password_allowed(password) {
+        return Err(UploadExchangeError::InvalidPassword);
     }
     if !valid_source_name(&request.source_name, max_source_name_len) {
         return Err(UploadExchangeError::InvalidSourceName);
@@ -253,13 +265,6 @@ fn fixed<const N: usize>(value: Value) -> Result<[u8; N]> {
         .as_slice()
         .try_into()
         .map_err(|_| UploadExchangeError::Decode)
-}
-
-fn valid_login(login: &str) -> bool {
-    !login.is_empty()
-        && login
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn valid_source_name(source_name: &str, max_source_name_len: usize) -> bool {

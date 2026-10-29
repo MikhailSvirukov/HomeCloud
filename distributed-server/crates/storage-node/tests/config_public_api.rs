@@ -4,7 +4,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use storage_node::{ConfigError, LogConfigError, MetricsTlsConfig, NodeConfig, NodeId};
+use storage_node::{
+    ClientLimitsError, ConfigError, LogConfigError, MetricsTlsConfig, NodeConfig, NodeId,
+};
 
 const NODE_ID: &str = "node-1";
 const LISTEN_ADDR: &str = "0.0.0.0:9000";
@@ -26,6 +28,11 @@ const KEY_PEERS: &str = "peers";
 const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+const KEY_LOGIN_MIN_LEN: &str = "login_min_len";
+const KEY_LOGIN_MAX_LEN: &str = "login_max_len";
+const KEY_PASSWORD_MIN_LEN: &str = "password_min_len";
+const KEY_PASSWORD_MAX_LEN: &str = "password_max_len";
+const KEY_RESPONDER_LABEL_MAX_LEN: &str = "responder_label_max_len";
 const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
 const KEY_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "integrity_scan_max_concurrent";
 const KEY_LOG_FILE_PATH: &str = "log_file_path";
@@ -40,6 +47,11 @@ const QUEUE_CAPACITY: &str = "16";
 const CATALOG_PAGE_SIZE: &str = "2";
 const CATALOG_SNAPSHOT_TTL_MS: &str = "60000";
 const MAX_SOURCE_NAME_LEN: &str = "64";
+const LOGIN_MIN_LEN: &str = "1";
+const LOGIN_MAX_LEN: &str = "64";
+const PASSWORD_MIN_LEN: &str = "1";
+const PASSWORD_MAX_LEN: &str = "128";
+const RESPONDER_LABEL_MAX_LEN: &str = "64";
 const INTEGRITY_SCAN_PERIOD_SECONDS: &str = "3600";
 const INTEGRITY_SCAN_MAX_CONCURRENT: &str = "2";
 const LOG_FILE_PATH: &str = "/var/log/storage-node/events.jsonl";
@@ -67,6 +79,11 @@ fn valid_pairs() -> Vec<(&'static str, &'static str)> {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -128,6 +145,11 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -158,6 +180,11 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.catalog_page_size.get(), 2);
     assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
     assert_eq!(config.max_source_name_len.get(), 64);
+    assert_eq!(config.client_limits.login_min_len.get(), 1);
+    assert_eq!(config.client_limits.login_max_len.get(), 64);
+    assert_eq!(config.client_limits.password_min_len.get(), 1);
+    assert_eq!(config.client_limits.password_max_len.get(), 128);
+    assert_eq!(config.client_limits.responder_label_max_len.get(), 64);
     assert_eq!(config.integrity_scan.period, Duration::from_secs(3_600));
     assert_eq!(config.integrity_scan.max_concurrent.get(), 2);
     assert_eq!(
@@ -652,6 +679,11 @@ fn from_pairs_with_invalid_listen_addr_reports_invalid_address() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -689,6 +721,11 @@ fn from_pairs_with_invalid_peer_addr_reports_invalid_peer_address() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -727,6 +764,11 @@ fn from_pairs_with_repeated_peer_reports_duplicate() {
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -838,6 +880,11 @@ fn from_pairs_with_unspecified_metrics_bind_addr_reports_metrics_requires_tls() 
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -875,6 +922,11 @@ fn from_pairs_with_non_loopback_metrics_bind_addr_reports_metrics_requires_tls()
         (KEY_CATALOG_PAGE_SIZE, CATALOG_PAGE_SIZE),
         (KEY_CATALOG_SNAPSHOT_TTL_MS, CATALOG_SNAPSHOT_TTL_MS),
         (KEY_MAX_SOURCE_NAME_LEN, MAX_SOURCE_NAME_LEN),
+        (KEY_LOGIN_MIN_LEN, LOGIN_MIN_LEN),
+        (KEY_LOGIN_MAX_LEN, LOGIN_MAX_LEN),
+        (KEY_PASSWORD_MIN_LEN, PASSWORD_MIN_LEN),
+        (KEY_PASSWORD_MAX_LEN, PASSWORD_MAX_LEN),
+        (KEY_RESPONDER_LABEL_MAX_LEN, RESPONDER_LABEL_MAX_LEN),
         (
             KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -1117,5 +1169,67 @@ fn from_pairs_with_non_numeric_integrity_scan_setting_reports_invalid_setting() 
             key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
             value: "not-a-number".to_owned(),
         })
+    );
+}
+
+#[test]
+fn from_pairs_without_client_limit_key_reports_missing_key() {
+    for key in [
+        KEY_LOGIN_MIN_LEN,
+        KEY_LOGIN_MAX_LEN,
+        KEY_PASSWORD_MIN_LEN,
+        KEY_PASSWORD_MAX_LEN,
+        KEY_RESPONDER_LABEL_MAX_LEN,
+    ] {
+        assert_eq!(
+            NodeConfig::from_pairs(&pairs_without(key)),
+            Err(ConfigError::MissingKey { key })
+        );
+    }
+}
+
+#[test]
+fn from_pairs_with_zero_client_limit_reports_invalid_client_limit() {
+    for key in [
+        KEY_LOGIN_MIN_LEN,
+        KEY_LOGIN_MAX_LEN,
+        KEY_PASSWORD_MIN_LEN,
+        KEY_PASSWORD_MAX_LEN,
+        KEY_RESPONDER_LABEL_MAX_LEN,
+    ] {
+        assert_eq!(
+            NodeConfig::from_pairs(&pairs_with(key, "0")),
+            Err(ConfigError::InvalidClientLimit {
+                key,
+                value: "0".to_owned(),
+            })
+        );
+    }
+}
+
+#[test]
+fn from_pairs_with_non_numeric_client_limit_reports_invalid_client_limit() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOGIN_MAX_LEN, "not-a-number")),
+        Err(ConfigError::InvalidClientLimit {
+            key: KEY_LOGIN_MAX_LEN,
+            value: "not-a-number".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_login_minimum_above_maximum_reports_login_range() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_LOGIN_MIN_LEN, "65")),
+        Err(ConfigError::ClientLimits(ClientLimitsError::LoginRange))
+    );
+}
+
+#[test]
+fn from_pairs_with_password_minimum_above_maximum_reports_password_range() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with(KEY_PASSWORD_MIN_LEN, "129")),
+        Err(ConfigError::ClientLimits(ClientLimitsError::PasswordRange))
     );
 }

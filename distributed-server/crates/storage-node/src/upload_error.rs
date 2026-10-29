@@ -44,7 +44,9 @@ impl From<UploadExchangeError> for UploadErrorCode {
     fn from(error: UploadExchangeError) -> Self {
         match error {
             UploadExchangeError::InvalidOperation => Self::UnknownOperation,
-            UploadExchangeError::InvalidLogin => Self::AuthenticationRejected,
+            UploadExchangeError::InvalidLogin | UploadExchangeError::InvalidPassword => {
+                Self::AuthenticationRejected
+            }
             UploadExchangeError::InvalidSourceName
             | UploadExchangeError::NotAnArray
             | UploadExchangeError::WrongLength

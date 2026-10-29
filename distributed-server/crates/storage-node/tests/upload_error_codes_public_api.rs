@@ -64,6 +64,10 @@ fn maps_upload_exchange_failures() {
         UploadErrorCode::AuthenticationRejected,
     );
     assert_maps_to(
+        UploadExchangeError::InvalidPassword,
+        UploadErrorCode::AuthenticationRejected,
+    );
+    assert_maps_to(
         UploadExchangeError::InvalidSourceName,
         UploadErrorCode::InvalidArguments,
     );

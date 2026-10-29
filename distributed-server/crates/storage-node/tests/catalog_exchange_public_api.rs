@@ -12,7 +12,11 @@
 //! non-zero code carrying an empty argument array. Covers `FR-CAT-013 / 2` and
 //! `FR-CAT-015 / 1`: a successful page carries `[snapshot_token, next_cursor,
 //! entries]`, and the request carries `[snapshot_token, cursor]` with both
-//! positions null on the first page.
+//! positions null on the first page. Covers `CFG-CL-029 / 1` and
+//! `CFG-CL-031 / 1`: the codecs enforce the configured login and password byte
+//! ranges and the responder-label byte limit.
+
+use std::num::NonZeroUsize;
 
 use ciborium::value::Value;
 
@@ -25,6 +29,7 @@ use storage_node::CatalogEntry;
 use storage_node::CatalogExchangeError;
 use storage_node::CatalogPage;
 use storage_node::CatalogRequest;
+use storage_node::ClientLimits;
 use storage_node::ContentHash;
 use storage_node::ExternalHeader;
 use storage_node::UploadId;
@@ -36,6 +41,18 @@ use storage_node::SENDER_ID_LEN;
 use storage_node::UPLOAD_ID_LEN;
 
 const MAX_SOURCE_NAME_LEN: usize = 64;
+
+fn limits() -> ClientLimits {
+    let non_zero = |value| NonZeroUsize::new(value).expect("test client limit is non-zero");
+    ClientLimits::new(
+        non_zero(1),
+        non_zero(64),
+        non_zero(1),
+        non_zero(128),
+        non_zero(64),
+    )
+    .expect("test client limits are consistent")
+}
 
 fn encode_cbor(value: &Value) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -113,7 +130,7 @@ fn encodes_and_decodes_an_ordinary_external_header() {
         bootstrap_signing_public_key: None,
     };
 
-    let encoded = encode_external_header(&header).expect("the external header encodes");
+    let encoded = encode_external_header(&header, &limits()).expect("the external header encodes");
 
     let mut expected = vec![0x87, 0x01, 0x50];
     expected.extend([0x11; SENDER_ID_LEN]);
@@ -122,7 +139,7 @@ fn encodes_and_decodes_an_ordinary_external_header() {
     expected.extend([0x00, 0xf6, 0xf6, 0xf6]);
     assert_eq!(encoded, expected);
 
-    let decoded = decode_external_header(&encoded).expect("the external header decodes");
+    let decoded = decode_external_header(&encoded, &limits()).expect("the external header decodes");
     assert_eq!(decoded.protocol_version, 1);
     assert_eq!(decoded.sender_id, Some([0x11; SENDER_ID_LEN]));
     assert_eq!(decoded.request_id, [0x22; REQUEST_ID_LEN]);
@@ -141,7 +158,8 @@ fn encodes_and_decodes_an_ordinary_external_header() {
         bootstrap_signing_public_key: None,
     };
 
-    let encoded = encode_external_header(&response_header).expect("the response header encodes");
+    let encoded =
+        encode_external_header(&response_header, &limits()).expect("the response header encodes");
     let mut expected = vec![0x87, 0x01, 0x50];
     expected.extend([0x11; SENDER_ID_LEN]);
     expected.push(0x50);
@@ -151,7 +169,7 @@ fn encodes_and_decodes_an_ordinary_external_header() {
     expected.push(0xf6);
     assert_eq!(encoded, expected);
 
-    let decoded = decode_external_header(&encoded).expect("the response header decodes");
+    let decoded = decode_external_header(&encoded, &limits()).expect("the response header decodes");
     assert_eq!(decoded.protocol_version, 1);
     assert_eq!(decoded.sender_id, Some([0x11; SENDER_ID_LEN]));
     assert_eq!(decoded.request_id, [0x22; REQUEST_ID_LEN]);
@@ -173,14 +191,14 @@ fn rejects_malformed_external_headers() {
         None,
     ));
     assert!(
-        decode_external_header(&encode_cbor(&unsupported_version)).is_err(),
+        decode_external_header(&encode_cbor(&unsupported_version), &limits()).is_err(),
         "protocol version 2 must be rejected"
     );
 
     let mut short_array = ordinary_header_elements();
     short_array.pop();
     assert!(
-        decode_external_header(&encode_cbor(&Value::Array(short_array))).is_err(),
+        decode_external_header(&encode_cbor(&Value::Array(short_array)), &limits()).is_err(),
         "a six-position external header must be rejected"
     );
 
@@ -194,7 +212,7 @@ fn rejects_malformed_external_headers() {
         None,
     ));
     assert!(
-        decode_external_header(&encode_cbor(&missing_sender)).is_err(),
+        decode_external_header(&encode_cbor(&missing_sender), &limits()).is_err(),
         "a missing sender id without a bootstrap key must be rejected"
     );
 
@@ -208,7 +226,7 @@ fn rejects_malformed_external_headers() {
         Some([0x33; BOOTSTRAP_KEY_LEN]),
     ));
     assert!(
-        decode_external_header(&encode_cbor(&sender_with_bootstrap_key)).is_err(),
+        decode_external_header(&encode_cbor(&sender_with_bootstrap_key), &limits()).is_err(),
         "an assigned sender id with a bootstrap key must be rejected"
     );
 
@@ -222,7 +240,7 @@ fn rejects_malformed_external_headers() {
         None,
     ));
     assert!(
-        decode_external_header(&encode_cbor(&wrong_request_id_length)).is_err(),
+        decode_external_header(&encode_cbor(&wrong_request_id_length), &limits()).is_err(),
         "a request id that is not 16 bytes must be rejected"
     );
 
@@ -236,14 +254,14 @@ fn rejects_malformed_external_headers() {
         None,
     ));
     assert!(
-        decode_external_header(&encode_cbor(&label_as_bytes)).is_err(),
+        decode_external_header(&encode_cbor(&label_as_bytes), &limits()).is_err(),
         "a responder label encoded as a byte string must be rejected"
     );
 
     let mut trailing_bytes = encode_cbor(&Value::Array(ordinary_header_elements()));
     trailing_bytes.push(0x00);
     assert!(
-        decode_external_header(&trailing_bytes).is_err(),
+        decode_external_header(&trailing_bytes, &limits()).is_err(),
         "trailing bytes after an external header must be rejected"
     );
 }
@@ -255,7 +273,7 @@ fn encodes_a_first_page_catalog_request_golden() {
         cursor: None,
     };
 
-    let encoded = encode_catalog_page_request("alice", " s ", &request)
+    let encoded = encode_catalog_page_request("alice", " s ", &request, &limits())
         .expect("the first-page catalog request encodes");
 
     let mut expected = vec![0x84, 0x03, 0x65];
@@ -268,7 +286,8 @@ fn encodes_a_first_page_catalog_request_golden() {
         "the first-page catalog request does not match the golden bytes"
     );
 
-    let decoded = decode_catalog_page_request(&encoded).expect("the catalog request decodes");
+    let decoded =
+        decode_catalog_page_request(&encoded, &limits()).expect("the catalog request decodes");
     assert_eq!(decoded.login(), "alice");
     assert!(
         decoded.password() == " s ",
@@ -287,9 +306,10 @@ fn decodes_a_continuation_catalog_request() {
         cursor: Some([0x44; CATALOG_TOKEN_LEN]),
     };
 
-    let encoded = encode_catalog_page_request("bob", "pw", &request)
+    let encoded = encode_catalog_page_request("bob", "pw", &request, &limits())
         .expect("the continuation catalog request encodes");
-    let decoded = decode_catalog_page_request(&encoded).expect("the catalog request decodes");
+    let decoded =
+        decode_catalog_page_request(&encoded, &limits()).expect("the catalog request decodes");
 
     assert_eq!(decoded.login(), "bob");
     assert!(
@@ -314,7 +334,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Array(vec![Value::Null, Value::Null]),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&unsupported_operation)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&unsupported_operation), &limits()).is_err(),
         "operation 2 must not be accepted as a catalog page request"
     );
 
@@ -325,7 +345,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Array(vec![Value::Null, Value::Null]),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&empty_login)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&empty_login), &limits()).is_err(),
         "an empty login must be rejected"
     );
 
@@ -336,7 +356,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Array(vec![Value::Null, Value::Null]),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&login_with_space)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&login_with_space), &limits()).is_err(),
         "a login outside the ASCII account set must be rejected"
     );
 
@@ -347,7 +367,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Array(vec![Value::Null, Value::Null]),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&password_as_bytes)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&password_as_bytes), &limits()).is_err(),
         "a password encoded as a byte string must be rejected"
     );
 
@@ -357,7 +377,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Text(" s ".to_owned()),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&wrong_header_length)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&wrong_header_length), &limits()).is_err(),
         "a three-position client logical header must be rejected"
     );
 
@@ -368,7 +388,7 @@ fn rejects_invalid_catalog_requests() {
         Value::Null,
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&not_an_argument_array)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&not_an_argument_array), &limits()).is_err(),
         "the catalog error for a non-array argument shape must propagate"
     );
 
@@ -382,7 +402,7 @@ fn rejects_invalid_catalog_requests() {
         ]),
     ]);
     assert!(
-        decode_catalog_page_request(&encode_cbor(&wrong_token_length)).is_err(),
+        decode_catalog_page_request(&encode_cbor(&wrong_token_length), &limits()).is_err(),
         "the catalog error for a short snapshot token must propagate"
     );
 
@@ -395,9 +415,110 @@ fn rejects_invalid_catalog_requests() {
     let mut trailing_bytes = encode_cbor(&valid);
     trailing_bytes.push(0x00);
     assert!(
-        decode_catalog_page_request(&trailing_bytes).is_err(),
+        decode_catalog_page_request(&trailing_bytes, &limits()).is_err(),
         "trailing bytes after a catalog request must be rejected"
     );
+}
+
+#[test]
+fn rejects_logins_outside_the_configured_byte_range() {
+    let request = CatalogRequest {
+        snapshot_token: None,
+        cursor: None,
+    };
+
+    assert!(matches!(
+        encode_catalog_page_request("", "pw", &request, &limits()),
+        Err(CatalogExchangeError::InvalidLogin)
+    ));
+
+    let long_login = "a".repeat(limits().login_max_len.get() + 1);
+    assert!(matches!(
+        encode_catalog_page_request(&long_login, "pw", &request, &limits()),
+        Err(CatalogExchangeError::InvalidLogin)
+    ));
+
+    let decoded_long_login = Value::Array(vec![
+        Value::Integer(3_u32.into()),
+        Value::Text(long_login),
+        Value::Text("pw".to_owned()),
+        Value::Array(vec![Value::Null, Value::Null]),
+    ]);
+    assert!(matches!(
+        decode_catalog_page_request(&encode_cbor(&decoded_long_login), &limits()),
+        Err(CatalogExchangeError::InvalidLogin)
+    ));
+}
+
+#[test]
+fn rejects_passwords_over_the_configured_byte_limit() {
+    let request = CatalogRequest {
+        snapshot_token: None,
+        cursor: None,
+    };
+
+    let long_password = "p".repeat(limits().password_max_len.get() + 1);
+    assert!(matches!(
+        encode_catalog_page_request("alice", &long_password, &request, &limits()),
+        Err(CatalogExchangeError::InvalidPassword)
+    ));
+
+    let decoded_long_password = Value::Array(vec![
+        Value::Integer(3_u32.into()),
+        Value::Text("alice".to_owned()),
+        Value::Text(long_password),
+        Value::Array(vec![Value::Null, Value::Null]),
+    ]);
+    assert!(matches!(
+        decode_catalog_page_request(&encode_cbor(&decoded_long_password), &limits()),
+        Err(CatalogExchangeError::InvalidPassword)
+    ));
+}
+
+#[test]
+fn bounds_responder_labels_to_the_configured_byte_limit() {
+    let label_at_limit = "a".repeat(limits().responder_label_max_len.get());
+    let header = ExternalHeader {
+        protocol_version: 1,
+        sender_id: Some([0x11; SENDER_ID_LEN]),
+        request_id: [0x22; REQUEST_ID_LEN],
+        frame_number: 0,
+        upload_id: None,
+        responder_label: Some(label_at_limit.clone()),
+        bootstrap_signing_public_key: None,
+    };
+
+    let encoded = encode_external_header(&header, &limits())
+        .expect("a responder label at the configured limit encodes");
+    let decoded = decode_external_header(&encoded, &limits())
+        .expect("a responder label at the configured limit decodes");
+    assert_eq!(
+        decoded.responder_label.as_deref(),
+        Some(label_at_limit.as_str())
+    );
+
+    let over_limit = ExternalHeader {
+        responder_label: Some("a".repeat(limits().responder_label_max_len.get() + 1)),
+        ..header
+    };
+    assert!(matches!(
+        encode_external_header(&over_limit, &limits()),
+        Err(CatalogExchangeError::InvalidResponderLabel)
+    ));
+
+    let encoded_over_limit = encode_cbor(&Value::Array(header_elements(
+        1,
+        Some([0x11; SENDER_ID_LEN]),
+        &[0x22; REQUEST_ID_LEN],
+        0,
+        None,
+        Value::Text("a".repeat(limits().responder_label_max_len.get() + 1)),
+        None,
+    )));
+    assert!(matches!(
+        decode_external_header(&encoded_over_limit, &limits()),
+        Err(CatalogExchangeError::InvalidResponderLabel)
+    ));
 }
 
 #[test]

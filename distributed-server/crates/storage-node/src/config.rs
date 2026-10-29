@@ -6,13 +6,15 @@
 //! capacity, the metrics bind address and optional TLS certificate/key paths,
 //! the structured log path and retention limits, the integrity scan period and
 //! concurrency limit, the catalog page size and snapshot lifetime, the
-//! source-name byte limit, and the addresses of its fixed peers. v1 clusters
-//! are fixed, so this model is validated when it is built.
+//! source-name byte limit, the client login/password length bounds and
+//! responder-label byte limit, and the addresses of its fixed peers. v1
+//! clusters are fixed, so this model is validated when it is built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use crate::client_limits::{ClientLimits, ClientLimitsError};
 use crate::integrity_scan::IntegrityScanConfig;
 use crate::logging::{LogConfig, LogConfigError};
 use crate::metrics::MetricsTlsConfig;
@@ -59,6 +61,16 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// Recognized `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// Recognized `from_pairs` key for the minimum login length in bytes.
+const KEY_LOGIN_MIN_LEN: &str = "login_min_len";
+/// Recognized `from_pairs` key for the maximum login length in bytes.
+const KEY_LOGIN_MAX_LEN: &str = "login_max_len";
+/// Recognized `from_pairs` key for the minimum password length in bytes.
+const KEY_PASSWORD_MIN_LEN: &str = "password_min_len";
+/// Recognized `from_pairs` key for the maximum password length in bytes.
+const KEY_PASSWORD_MAX_LEN: &str = "password_max_len";
+/// Recognized `from_pairs` key for the maximum responder-label length in bytes.
+const KEY_RESPONDER_LABEL_MAX_LEN: &str = "responder_label_max_len";
 /// Recognized `from_pairs` key for the integrity scan period in seconds.
 const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
 /// Recognized `from_pairs` key for the maximum concurrent integrity checks.
@@ -127,6 +139,7 @@ pub struct NodeConfig {
     pub catalog_page_size: NonZeroUsize,
     pub catalog_snapshot_ttl_ms: NonZeroU64,
     pub max_source_name_len: NonZeroUsize,
+    pub client_limits: ClientLimits,
     pub peers: Vec<String>,
 }
 
@@ -151,6 +164,7 @@ impl NodeConfig {
         catalog_page_size: NonZeroUsize,
         catalog_snapshot_ttl_ms: NonZeroU64,
         max_source_name_len: NonZeroUsize,
+        client_limits: ClientLimits,
         peers: Vec<String>,
     ) -> Result<Self> {
         let listen_addr = listen_addr.trim();
@@ -171,6 +185,7 @@ impl NodeConfig {
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
+            client_limits,
             peers: normalize_peers(peers)?,
         })
     }
@@ -184,7 +199,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address and TLS paths, structured logging settings, integrity scan settings, catalog settings, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address and TLS paths, structured logging settings, integrity scan settings, catalog settings, client limits, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -204,6 +219,11 @@ impl NodeConfig {
         let mut catalog_page_size = None;
         let mut catalog_snapshot_ttl_ms = None;
         let mut max_source_name_len = None;
+        let mut login_min_len = None;
+        let mut login_max_len = None;
+        let mut password_min_len = None;
+        let mut password_max_len = None;
+        let mut responder_label_max_len = None;
         let mut integrity_scan_period_seconds = None;
         let mut integrity_scan_max_concurrent = None;
         let mut peers = Vec::new();
@@ -243,6 +263,13 @@ impl NodeConfig {
                 }
                 KEY_MAX_SOURCE_NAME_LEN if !value.is_empty() => {
                     max_source_name_len = Some(*value);
+                }
+                KEY_LOGIN_MIN_LEN if !value.is_empty() => login_min_len = Some(*value),
+                KEY_LOGIN_MAX_LEN if !value.is_empty() => login_max_len = Some(*value),
+                KEY_PASSWORD_MIN_LEN if !value.is_empty() => password_min_len = Some(*value),
+                KEY_PASSWORD_MAX_LEN if !value.is_empty() => password_max_len = Some(*value),
+                KEY_RESPONDER_LABEL_MAX_LEN if !value.is_empty() => {
+                    responder_label_max_len = Some(*value);
                 }
                 KEY_INTEGRITY_SCAN_PERIOD_SECONDS if !value.is_empty() => {
                     integrity_scan_period_seconds = Some(*value);
@@ -355,6 +382,44 @@ impl NodeConfig {
             });
         };
         let max_source_name_len = parse_max_source_name_len(max_source_name_len)?;
+        let Some(login_min_len) = login_min_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOGIN_MIN_LEN,
+            });
+        };
+        let login_min_len = parse_client_limit(KEY_LOGIN_MIN_LEN, login_min_len)?;
+        let Some(login_max_len) = login_max_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_LOGIN_MAX_LEN,
+            });
+        };
+        let login_max_len = parse_client_limit(KEY_LOGIN_MAX_LEN, login_max_len)?;
+        let Some(password_min_len) = password_min_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_PASSWORD_MIN_LEN,
+            });
+        };
+        let password_min_len = parse_client_limit(KEY_PASSWORD_MIN_LEN, password_min_len)?;
+        let Some(password_max_len) = password_max_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_PASSWORD_MAX_LEN,
+            });
+        };
+        let password_max_len = parse_client_limit(KEY_PASSWORD_MAX_LEN, password_max_len)?;
+        let Some(responder_label_max_len) = responder_label_max_len else {
+            return Err(ConfigError::MissingKey {
+                key: KEY_RESPONDER_LABEL_MAX_LEN,
+            });
+        };
+        let responder_label_max_len =
+            parse_client_limit(KEY_RESPONDER_LABEL_MAX_LEN, responder_label_max_len)?;
+        let client_limits = ClientLimits::new(
+            login_min_len,
+            login_max_len,
+            password_min_len,
+            password_max_len,
+            responder_label_max_len,
+        )?;
         let Some(integrity_scan_period_seconds) = integrity_scan_period_seconds else {
             return Err(ConfigError::MissingKey {
                 key: KEY_INTEGRITY_SCAN_PERIOD_SECONDS,
@@ -391,6 +456,7 @@ impl NodeConfig {
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
+            client_limits,
             peers,
         )
     }
@@ -450,6 +516,12 @@ pub enum ConfigError {
     /// The maximum source-name length was zero or not an integer.
     #[error("invalid maximum source name length {value}")]
     InvalidMaxSourceNameLen { value: String },
+    /// A client credential or responder-label limit was zero or not an integer.
+    #[error("invalid client limit {key}={value}")]
+    InvalidClientLimit { key: &'static str, value: String },
+    /// The client limits were internally inconsistent.
+    #[error(transparent)]
+    ClientLimits(#[from] ClientLimitsError),
     /// An integrity scan setting was zero or not an integer.
     #[error("invalid integrity scan setting {key}={value}")]
     InvalidIntegrityScanSetting { key: &'static str, value: String },
@@ -613,6 +685,18 @@ fn parse_max_source_name_len(value: &str) -> Result<NonZeroUsize> {
         })
 }
 
+/// Parses a client limit that must be a non-zero `usize`.
+fn parse_client_limit(key: &'static str, value: &str) -> Result<NonZeroUsize> {
+    value
+        .parse::<usize>()
+        .ok()
+        .and_then(NonZeroUsize::new)
+        .ok_or_else(|| ConfigError::InvalidClientLimit {
+            key,
+            value: value.to_owned(),
+        })
+}
+
 /// Parses an integrity scan setting that must be a non-zero integer.
 fn parse_integrity_scan_setting<T>(key: &'static str, value: &str) -> Result<T>
 where
@@ -635,11 +719,14 @@ mod tests {
     use super::{
         ConfigError, NodeConfig, NodeId, KEY_CATALOG_PAGE_SIZE, KEY_CATALOG_SNAPSHOT_TTL_MS,
         KEY_DATA_DIR, KEY_ENCRYPTION_KEY_PATH, KEY_INTEGRITY_SCAN_MAX_CONCURRENT,
-        KEY_INTEGRITY_SCAN_PERIOD_SECONDS, KEY_LISTEN_ADDR, KEY_LOG_FILE_PATH,
-        KEY_LOG_MAX_FILE_AGE_SECONDS, KEY_LOG_MAX_FILE_BYTES, KEY_LOG_MAX_TOTAL_BYTES,
-        KEY_LOG_QUEUE_CAPACITY, KEY_MAX_FRAME_LEN, KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR,
-        KEY_NODE_ID, KEY_QUEUE_CAPACITY, KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
+        KEY_INTEGRITY_SCAN_PERIOD_SECONDS, KEY_LISTEN_ADDR, KEY_LOGIN_MAX_LEN, KEY_LOGIN_MIN_LEN,
+        KEY_LOG_FILE_PATH, KEY_LOG_MAX_FILE_AGE_SECONDS, KEY_LOG_MAX_FILE_BYTES,
+        KEY_LOG_MAX_TOTAL_BYTES, KEY_LOG_QUEUE_CAPACITY, KEY_MAX_FRAME_LEN,
+        KEY_MAX_SOURCE_NAME_LEN, KEY_METRICS_BIND_ADDR, KEY_NODE_ID, KEY_PASSWORD_MAX_LEN,
+        KEY_PASSWORD_MIN_LEN, KEY_QUEUE_CAPACITY, KEY_RESPONDER_LABEL_MAX_LEN,
+        KEY_SIGNING_KEY_PATH, MAX_NODE_ID_LEN,
     };
+    use crate::client_limits::ClientLimits;
     use crate::integrity_scan::IntegrityScanConfig;
     use crate::logging::LogConfig;
 
@@ -683,6 +770,17 @@ mod tests {
 
     fn max_source_name_len() -> NonZeroUsize {
         NonZeroUsize::new(255).expect("test name limit is non-zero")
+    }
+
+    fn client_limits() -> ClientLimits {
+        ClientLimits::new(
+            NonZeroUsize::new(1).expect("test login minimum is non-zero"),
+            NonZeroUsize::new(64).expect("test login maximum is non-zero"),
+            NonZeroUsize::new(1).expect("test password minimum is non-zero"),
+            NonZeroUsize::new(128).expect("test password maximum is non-zero"),
+            NonZeroUsize::new(64).expect("test responder-label maximum is non-zero"),
+        )
+        .expect("test client limits are valid")
     }
 
     fn integrity_scan_config() -> IntegrityScanConfig {
@@ -741,6 +839,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            client_limits(),
             vec![" 10.0.0.2:9000 ".to_owned()],
         )
         .expect("config is valid");
@@ -755,6 +854,7 @@ mod tests {
         assert_eq!(config.metrics_bind_addr, metrics_bind_addr());
         assert!(config.metrics_tls.is_none());
         assert_eq!(config.integrity_scan, integrity_scan_config());
+        assert_eq!(config.client_limits, client_limits());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
     }
 
@@ -776,6 +876,7 @@ mod tests {
                 catalog_page_size(),
                 catalog_snapshot_ttl_ms(),
                 max_source_name_len(),
+                client_limits(),
                 Vec::new(),
             );
             let expected = ConfigError::InvalidListenAddr {
@@ -802,6 +903,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            client_limits(),
             vec!["   ".to_owned()],
         );
         assert_eq!(result, Err(ConfigError::EmptyPeerAddr));
@@ -824,6 +926,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            client_limits(),
             vec!["10.0.0.2".to_owned()],
         );
         let expected = ConfigError::InvalidPeerAddr {
@@ -851,6 +954,11 @@ mod tests {
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
+            (KEY_LOGIN_MIN_LEN, "1"),
+            (KEY_LOGIN_MAX_LEN, "64"),
+            (KEY_PASSWORD_MIN_LEN, "1"),
+            (KEY_PASSWORD_MAX_LEN, "128"),
+            (KEY_RESPONDER_LABEL_MAX_LEN, "64"),
             (KEY_INTEGRITY_SCAN_PERIOD_SECONDS, "3600"),
             (KEY_INTEGRITY_SCAN_MAX_CONCURRENT, "2"),
             ("peers", ""),
@@ -957,6 +1065,11 @@ mod tests {
             (KEY_CATALOG_PAGE_SIZE, "50"),
             (KEY_CATALOG_SNAPSHOT_TTL_MS, "30000"),
             (KEY_MAX_SOURCE_NAME_LEN, "255"),
+            (KEY_LOGIN_MIN_LEN, "1"),
+            (KEY_LOGIN_MAX_LEN, "64"),
+            (KEY_PASSWORD_MIN_LEN, "1"),
+            (KEY_PASSWORD_MAX_LEN, "128"),
+            (KEY_RESPONDER_LABEL_MAX_LEN, "64"),
             (KEY_INTEGRITY_SCAN_PERIOD_SECONDS, "3600"),
             (KEY_INTEGRITY_SCAN_MAX_CONCURRENT, "2"),
         ])
