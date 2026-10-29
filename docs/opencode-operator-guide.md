@@ -94,6 +94,12 @@ The current shared model is `deepseek/deepseek-flash`. To change it, edit the to
 
 ## Daily review files
 
+Agents write their own run reports to the separate `agent-reports/<workstream>/` directory beside the launch Compose file. In the current launch layout this is `/home/mikhail/workdir/backup/agent-reports/`, with subdirectories `android`, `distributed-server`, `dedicated-server`, and `test-environment`. Each container mounts only its own subdirectory read/write at `/workspace/.agent-reports/`. Reports use UTC timestamp/UUID filenames and are written in Russian. Read the latest report for stop evidence, difficulties, unclear instructions, decisions, and the next step. A report left as `running` can indicate an interrupted invocation. Reports are ignored by Git. Before first launch, create all four subdirectories with write permission for container UID/GID 1000; the existing host launch directories have been prepared.
+
+Run budgets come from the current container environment, not from numbers quoted in review notes. Each continued session starts a fresh invocation budget. To diagnose early exits, check the effective limits, elapsed seconds, claimed-issue count, and stop reason in the final report and `.agent-state/project-state.md`.
+
+Keep the launch directory consistent: Compose loads its environment and resolves bind mounts relative to the selected project configuration. In the current host layout, `/home/mikhail/workdir/backup/.env` belongs to the launch setup in `/home/mikhail/workdir/backup`; the `HomeCloud` source checkout is a separate directory. Starting the checkout's Compose configuration requires configuring its environment and bind-mount paths separately. Updating files in `HomeCloud` does not update another checkout or a persistent user-level OpenCode configuration volume automatically.
+
 Keep a permanent archive under `agent-feedback/reviews/`, with one numbered file per review: `YYYY-MM-DD-NN.md`. This directory is host-side, ignored by Git, and mounted read-only at `/workspace/.agent-feedback` in each service. At startup, orchestrators and reviewers read all files for the newest date in ascending filename order, plus `latest-review.md` and `standing-guidance.md`.
 
 For each new day, from `/home/mikhail/workdir/backup`:
@@ -154,6 +160,14 @@ docker compose -f compose.yaml -f compose.test-engine.yaml down
 
 The per-service OpenCode volumes and the `test-docker-data` named volume persist. To delete the Docker test cache too, use `down -v` only when you intend to remove those volumes. Do not mount `/var/run/docker.sock` from the host into any agent container.
 
+## Diagnosing `io_uring` availability
+
+Check the Compose file actually used for launching the agent. The host launch file `/home/mikhail/workdir/backup/compose.yaml` and the source checkout's `HomeCloud/compose.yaml` are separate files. The distributed-server service uses a service-specific `seccomp=unconfined` setting to permit io_uring syscalls; this disables that container's syscall filter and retains `no-new-privileges`, the non-root user, and dropped capabilities. Apply it only to the service needing io_uring. The default Docker seccomp profile blocks io_uring syscalls: https://docs.docker.com/engine/security/seccomp/.
+
+After changing the launch file, stop the old run at a safe checkpoint and create a fresh container with `docker compose run --rm distributed-server` from the launch directory. An existing container keeps its original security settings. This runtime setting does not require rebuilding the image. If `EPERM` persists, inspect the actual container security settings and the Docker host's `kernel.io_uring_disabled` value; values 1 and 2 can independently restrict ring creation. A successful agent startup alone does not verify that the storage backend can create a ring.
+
+Agent development may proceed while this runtime issue is repaired. Required tests execute in PR CI on a runner supporting the real backend; do not weaken the product requirement or skip those checks to compensate for the agent container environment.
+
 ## What each container can access on the host
 
 Each service has its own full clone of the same monorepo, mounted read/write at `/workspace`. All four clones use the same Git author/committer identity. Each clone contains the shared global instructions and contracts; agents are instructed to work only in their assigned top-level area:
@@ -169,6 +183,7 @@ The containers do not get general access to `/home/mikhail` or the rest of the h
 | --- | --- | --- | --- |
 | `/workspace` | Its one clone directory | Read/write | Full public monorepo clone; policy scope is one workstream area plus shared instructions/contracts |
 | `/workspace/.agent-feedback` | `/home/mikhail/workdir/backup/agent-feedback` | Read-only | Daily review archive, latest pointer, standing guidance |
+| `/workspace/.agent-reports` | `/home/mikhail/workdir/backup/agent-reports/<workstream>` | Read/write | Only this workstream's per-invocation reports to the operator |
 | `/workspace/.agent-state` | `/home/mikhail/workdir/backup/agent-state/<workstream>` | Read/write | Per-workstream resume state |
 | `/home/opencode/.local/share/opencode` | Per-service named volume | Read/write | OpenCode sessions, logs, and provider/MCP state |
 | `/home/opencode/.config/opencode` | Per-service named volume | Read/write | User-level OpenCode config |

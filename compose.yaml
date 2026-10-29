@@ -31,12 +31,16 @@ x-agent: &agent
       orchestrator workflow for this run. Do not wait for interactive input. Complete
       no more than ${AGENT_MAX_TASKS:-20} sequential issue/PR work items, subject to
       the ${AGENT_MAX_RUN_SECONDS:-3600}-second safe
-      checkpoint limit in your instructions, then summarize the result and exit.
+      checkpoint limit in your instructions. Create a unique run report in
+      /workspace/.agent-reports/ at startup, update it at checkpoints, and finalize it
+      before exiting using docs/agent-run-report-template.md. Report the file path
+      in your final summary.
   volumes:
     - opencode-data-android:/home/opencode/.local/share/opencode
     - opencode-config-android:/home/opencode/.config/opencode
     - ${ANDROID_CHECKOUT:-../homecloud-clones/android}:/workspace
     - ./agent-state/android:/workspace/.agent-state
+    - ./agent-reports/android:/workspace/.agent-reports
     - ./agent-feedback:/workspace/.agent-feedback:ro
     - opencode-state-android:/home/opencode/.local/state/opencode
     - cargo-cache-android:/home/opencode/.cargo/registry
@@ -83,6 +87,7 @@ services:
       - opencode-config-distributed:/home/opencode/.config/opencode
       - ${DISTRIBUTED_SERVER_CHECKOUT:-../homecloud-clones/distributed-server}:/workspace
       - ./agent-state/distributed-server:/workspace/.agent-state
+      - ./agent-reports/distributed-server:/workspace/.agent-reports
       - ./agent-feedback:/workspace/.agent-feedback:ro
       - opencode-state-distributed:/home/opencode/.local/state/opencode
       - cargo-cache-distributed:/home/opencode/.cargo/registry
@@ -91,6 +96,7 @@ services:
       - android-cache-distributed:/home/opencode/.android
       - general-cache-distributed:/home/opencode/.cache
     security_opt:
+      - no-new-privileges:true
       - seccomp=unconfined
 
   dedicated-server:
@@ -112,6 +118,7 @@ services:
       - opencode-config-dedicated:/home/opencode/.config/opencode
       - ${DEDICATED_SERVER_CHECKOUT:-../homecloud-clones/dedicated-server}:/workspace
       - ./agent-state/dedicated-server:/workspace/.agent-state
+      - ./agent-reports/dedicated-server:/workspace/.agent-reports
       - ./agent-feedback:/workspace/.agent-feedback:ro
       - opencode-state-dedicated:/home/opencode/.local/state/opencode
       - cargo-cache-dedicated:/home/opencode/.cargo/registry
@@ -156,6 +163,7 @@ services:
       - opencode-config-test:/home/opencode/.config/opencode
       - ${TEST_ENVIRONMENT_CHECKOUT:-../homecloud-clones/test-environment}:/workspace
       - ./agent-state/test-environment:/workspace/.agent-state
+      - ./agent-reports/test-environment:/workspace/.agent-reports
       - ./agent-feedback:/workspace/.agent-feedback:ro
       - opencode-state-test:/home/opencode/.local/state/opencode
       - cargo-cache-test:/home/opencode/.cargo/registry

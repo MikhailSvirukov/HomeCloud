@@ -3,3 +3,5 @@
 agent-state/
 agent-feedback/
 .agent-feedback/
+agent-reports/
+.agent-reports/
