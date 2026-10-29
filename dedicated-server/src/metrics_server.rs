@@ -99,10 +99,16 @@ pub fn start(
                         else {
                             continue;
                         };
-                        let _ = serve(StreamOwned::new(connection, stream), body.as_ref());
+                        let mut tls_stream = StreamOwned::new(connection, stream);
+                        let _ = serve(&mut tls_stream, body.as_ref());
+                        // A collector treats an EOF without close_notify as an
+                        // error, so end the TLS session explicitly.
+                        tls_stream.conn.send_close_notify();
+                        let _ = tls_stream.flush();
                     }
                     None => {
-                        let _ = serve(stream, body.as_ref());
+                        let mut stream = stream;
+                        let _ = serve(&mut stream, body.as_ref());
                     }
                 }
             }
@@ -152,7 +158,7 @@ fn load_private_key(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
 ///
 /// Works for a plain TCP stream and for a TLS stream alike.
 fn serve<S: Read + Write>(
-    mut stream: S,
+    stream: &mut S,
     body: &(dyn Fn() -> String + Send + Sync),
 ) -> io::Result<()> {
     let mut request = [0_u8; MAX_REQUEST_BYTES];
@@ -187,7 +193,7 @@ fn serve<S: Read + Write>(
     write_response(stream, response)
 }
 
-fn write_response<W: Write>(mut stream: W, response: Response) -> io::Result<()> {
+fn write_response<W: Write>(stream: &mut W, response: Response) -> io::Result<()> {
     let bytes = response.as_bytes();
     stream.write_all(&bytes)?;
     stream.flush()
