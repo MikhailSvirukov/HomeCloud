@@ -139,12 +139,26 @@ at startup:
 - `METRICS_BIND_ADDR` — loopback `SocketAddr` for the Prometheus-compatible metrics
   endpoint; required, with no default (maps to the `metrics_bind_addr` key). The endpoint
   is served over plain HTTP and rejects any non-loopback bind address.
+- `LOG_FILE_PATH` — local path of the structured JSON Lines log (maps to the
+  `log_file_path` key).
+- `LOG_QUEUE_CAPACITY` — bounded structured-log queue capacity in entries; must be
+  non-zero (maps to the `log_queue_capacity` key).
+- `LOG_MAX_FILE_BYTES` — maximum size of one log file in bytes; must be non-zero (maps
+  to the `log_max_file_bytes` key).
+- `LOG_MAX_TOTAL_BYTES` — maximum combined size of the current and rotated log files in
+  bytes; must be non-zero and at least `LOG_MAX_FILE_BYTES` (maps to the
+  `log_max_total_bytes` key).
+- `LOG_MAX_FILE_AGE_SECONDS` — maximum age of one log file before rotation, in seconds;
+  must be non-zero (maps to the `log_max_file_age_seconds` key).
 - `PEERS` — comma-separated peer addresses (maps to the `peers` key).
+
+All five `LOG_*` settings are required and non-zero.
 
 `NodeConfig::from_pairs` accepts the same `node_id`, `listen_addr`, `data_dir`,
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
 `catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
-`metrics_bind_addr`, and `peers` keys;
+`metrics_bind_addr`, `log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
+`log_max_total_bytes`, `log_max_file_age_seconds`, and `peers` keys;
 an absent or empty value for any required key is reported as missing, and unknown keys are
 ignored.
 Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
@@ -164,6 +178,27 @@ scrape counters. Labels are limited to bounded static values such as the build v
 they never contain logins, `request_id`, `upload_id`, file names, or other per-request
 values. Requests to other paths return `404`, and methods other than `GET` return `405`
 with `Allow: GET`. The metrics interface is separate from the application TCP protocol.
+
+## Logging
+
+The node writes UTF-8 JSON Lines to `LOG_FILE_PATH`, one JSON object per line. Every
+record carries `timestamp_ms` in UTC, `component`, `level`, and `event_type`, plus the
+optional operation, peer, request, upload, outcome, error, duration, and state-change
+fields that apply to that event. Request acceptance and completion records share a
+`request_id`, and the completion record carries the processing duration.
+
+Events pass through a bounded queue to a non-blocking writer, so the request path never
+performs a synchronous file write. When the queue is full or the writer fails, the event
+is dropped and the corresponding dropped-event or write-error counter is incremented.
+The current file is `LOG_FILE_PATH`; rotated files are named `<LOG_FILE_PATH>.<suffix>`.
+The writer rotates a file when the next record would exceed `LOG_MAX_FILE_BYTES` or the
+file reaches `LOG_MAX_FILE_AGE_SECONDS`, then removes aged and oldest rotated files so
+the combined size stays within `LOG_MAX_TOTAL_BYTES`.
+
+Log records exclude passwords, verifiers, cryptographic keys, file contents and names,
+payloads, logins, and other user metadata. Allowed diagnostic identifiers are
+`request_id`, `upload_id`, peer identifiers, operation type, result code, and error
+category.
 
 ## Build and test
 

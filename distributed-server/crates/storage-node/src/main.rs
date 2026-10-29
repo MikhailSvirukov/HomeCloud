@@ -10,8 +10,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use storage_node::{
-    serve, Listener, Metrics, MetricsServer, NodeConfig, PrivateKey, StorageLayout,
-    PROTOCOL_VERSION,
+    serve, start_logging, Listener, LogEvent, LogLevel, Logger, Metrics, MetricsServer, NodeConfig,
+    PrivateKey, StateChange, StorageLayout, PROTOCOL_VERSION,
 };
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
@@ -41,6 +41,16 @@ const ENV_CATALOG_SNAPSHOT_TTL_MS: &str = "CATALOG_SNAPSHOT_TTL_MS";
 const ENV_MAX_SOURCE_NAME_LEN: &str = "MAX_SOURCE_NAME_LEN";
 /// Environment variable carrying the comma-separated peer list.
 const ENV_PEERS: &str = "PEERS";
+/// Environment variable carrying the structured log file path.
+const ENV_LOG_FILE_PATH: &str = "LOG_FILE_PATH";
+/// Environment variable carrying the structured log queue capacity.
+const ENV_LOG_QUEUE_CAPACITY: &str = "LOG_QUEUE_CAPACITY";
+/// Environment variable carrying the maximum structured log file size.
+const ENV_LOG_MAX_FILE_BYTES: &str = "LOG_MAX_FILE_BYTES";
+/// Environment variable carrying the maximum total structured log size.
+const ENV_LOG_MAX_TOTAL_BYTES: &str = "LOG_MAX_TOTAL_BYTES";
+/// Environment variable carrying the structured log file age in seconds.
+const ENV_LOG_MAX_FILE_AGE_SECONDS: &str = "LOG_MAX_FILE_AGE_SECONDS";
 
 /// `from_pairs` key for the node identity label.
 const KEY_NODE_ID: &str = "node_id";
@@ -66,6 +76,16 @@ const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
 /// `from_pairs` key for the peer list.
 const KEY_PEERS: &str = "peers";
+/// `from_pairs` key for the structured log file path.
+const KEY_LOG_FILE_PATH: &str = "log_file_path";
+/// `from_pairs` key for the structured log queue capacity.
+const KEY_LOG_QUEUE_CAPACITY: &str = "log_queue_capacity";
+/// `from_pairs` key for the maximum structured log file size.
+const KEY_LOG_MAX_FILE_BYTES: &str = "log_max_file_bytes";
+/// `from_pairs` key for the maximum total structured log size.
+const KEY_LOG_MAX_TOTAL_BYTES: &str = "log_max_total_bytes";
+/// `from_pairs` key for the structured log file age in seconds.
+const KEY_LOG_MAX_FILE_AGE_SECONDS: &str = "log_max_file_age_seconds";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -100,6 +120,11 @@ async fn run() -> ExitCode {
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
     let peers = env_value(ENV_PEERS);
+    let log_file_path = env_value(ENV_LOG_FILE_PATH);
+    let log_queue_capacity = env_value(ENV_LOG_QUEUE_CAPACITY);
+    let log_max_file_bytes = env_value(ENV_LOG_MAX_FILE_BYTES);
+    let log_max_total_bytes = env_value(ENV_LOG_MAX_TOTAL_BYTES);
+    let log_max_file_age_seconds = env_value(ENV_LOG_MAX_FILE_AGE_SECONDS);
 
     let pairs = [
         (KEY_NODE_ID, node_id.as_str()),
@@ -110,6 +135,14 @@ async fn run() -> ExitCode {
         (KEY_MAX_FRAME_LEN, max_frame_len.as_str()),
         (KEY_QUEUE_CAPACITY, queue_capacity.as_str()),
         (KEY_METRICS_BIND_ADDR, metrics_bind_addr.as_str()),
+        (KEY_LOG_FILE_PATH, log_file_path.as_str()),
+        (KEY_LOG_QUEUE_CAPACITY, log_queue_capacity.as_str()),
+        (KEY_LOG_MAX_FILE_BYTES, log_max_file_bytes.as_str()),
+        (KEY_LOG_MAX_TOTAL_BYTES, log_max_total_bytes.as_str()),
+        (
+            KEY_LOG_MAX_FILE_AGE_SECONDS,
+            log_max_file_age_seconds.as_str(),
+        ),
         (KEY_CATALOG_PAGE_SIZE, catalog_page_size.as_str()),
         (
             KEY_CATALOG_SNAPSHOT_TTL_MS,
@@ -126,18 +159,55 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let logging = match start_logging(config.log.clone()) {
+        Ok(logging) => logging,
+        Err(error) => {
+            tracing::error!(error = %error, "failed to start structured logging");
+            return ExitCode::FAILURE;
+        }
+    };
+    let logger = logging.logger().clone();
+    logger.log(LogEvent::state_change(LogLevel::Info, StateChange::Started));
+
+    let success = run_node(&config, &logger).await;
+    let stopped_level = if success {
+        LogLevel::Info
+    } else {
+        LogLevel::Error
+    };
+    logger.log(LogEvent::state_change(stopped_level, StateChange::Stopped));
+    drop(logger);
+    logging.shutdown().await;
+
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Loads keys, prepares the layout, binds the listeners, and serves until stopped.
+async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
     let _encryption_key = match PrivateKey::load(&config.encryption_key_path) {
         Ok(key) => key,
         Err(error) => {
             tracing::error!(error = %error, "failed to load the encryption key");
-            return ExitCode::FAILURE;
+            logger.log(LogEvent::state_change(
+                LogLevel::Error,
+                StateChange::DependencyUnavailable,
+            ));
+            return false;
         }
     };
     let _signing_key = match PrivateKey::load(&config.signing_key_path) {
         Ok(key) => key,
         Err(error) => {
             tracing::error!(error = %error, "failed to load the signing key");
-            return ExitCode::FAILURE;
+            logger.log(LogEvent::state_change(
+                LogLevel::Error,
+                StateChange::DependencyUnavailable,
+            ));
+            return false;
         }
     };
 
@@ -157,25 +227,45 @@ async fn run() -> ExitCode {
     let layout = StorageLayout::new(config.data_dir.clone());
     if let Err(error) = layout.ensure_dirs() {
         tracing::error!(error = %error, "failed to prepare the data layout");
-        return ExitCode::FAILURE;
+        logger.log(LogEvent::state_change(
+            LogLevel::Error,
+            StateChange::DependencyUnavailable,
+        ));
+        return false;
     }
     tracing::debug!(root = %layout.root.display(), "data layout ready");
+    logger.log(LogEvent::state_change(
+        LogLevel::Info,
+        StateChange::LayoutReady,
+    ));
 
     let listener = match Listener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
         Err(error) => {
             tracing::error!(error = %error, "failed to bind listener");
-            return ExitCode::FAILURE;
+            logger.log(LogEvent::state_change(
+                LogLevel::Error,
+                StateChange::DependencyUnavailable,
+            ));
+            return false;
         }
     };
     let address = match listener.local_addr() {
         Ok(address) => address,
         Err(error) => {
             tracing::error!(error = %error, "listener address unavailable");
-            return ExitCode::FAILURE;
+            logger.log(LogEvent::state_change(
+                LogLevel::Error,
+                StateChange::DependencyUnavailable,
+            ));
+            return false;
         }
     };
     tracing::info!(%address, "listening");
+    logger.log(LogEvent::state_change(
+        LogLevel::Info,
+        StateChange::ListenerBound,
+    ));
 
     let metrics = Arc::new(Metrics::new(config.queue_capacity));
     let metrics_server =
@@ -183,11 +273,19 @@ async fn run() -> ExitCode {
             Ok(server) => server,
             Err(error) => {
                 tracing::error!(error = %error, "failed to bind metrics listener");
-                return ExitCode::FAILURE;
+                logger.log(LogEvent::state_change(
+                    LogLevel::Error,
+                    StateChange::DependencyUnavailable,
+                ));
+                return false;
             }
         };
     let metrics_addr = metrics_server.local_addr().ok();
     tracing::info!(metrics_addr = ?metrics_addr, "metrics listening");
+    logger.log(LogEvent::state_change(
+        LogLevel::Info,
+        StateChange::MetricsBound,
+    ));
     let metrics_task = tokio::spawn(metrics_server.serve());
 
     let outcome = serve(
@@ -202,11 +300,11 @@ async fn run() -> ExitCode {
     match outcome {
         Ok(()) => {
             tracing::info!("storage node stopped");
-            ExitCode::SUCCESS
+            true
         }
         Err(error) => {
             tracing::error!(error = %error, "node runtime failed");
-            ExitCode::FAILURE
+            false
         }
     }
 }
