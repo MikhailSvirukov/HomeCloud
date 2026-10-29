@@ -53,7 +53,9 @@ clients; it does not relay Raft or blob traffic.
   `src/integrity.rs` (local blob integrity check that streams the stored blob,
   compares its SHA-256 with the committed hash, and keeps a `<blob>.corrupt`
   marker), `src/integrity_scan.rs` (periodic scan over committed blobs with a
-  bounded number of concurrent checks), `src/raft/`
+  bounded number of concurrent checks), `src/blob_writer.rs` (writes a received
+  blob directly into its final path, verifying the declared byte size and
+  SHA-256 before syncing the file and its parent directory), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
   persistence), `src/message.rs` (inter-server `[message_type,
@@ -74,6 +76,7 @@ clients; it does not relay Raft or blob traffic.
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
+  `blob_writer_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
   `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
@@ -120,9 +123,11 @@ updates, and a returning node catching up committed entries. A local committed
 blob is checked by streaming it, comparing its SHA-256 with the committed hash,
 and creating a `<blob>.corrupt` marker when the hashes differ; a later check
 that matches the committed hash removes the marker. `integrity_public_api.rs`
-covers the healthy, mismatching, restored, and missing paths. The connection
-actors and `io_uring` are not implemented yet.
-Acceptance criteria live in the
+covers the healthy, mismatching, restored, and missing paths. A received blob
+is written directly into its final path with declared-size and SHA-256
+verification, file and parent-directory fsync, refusal to overwrite, and
+partial-file cleanup. The connection actors and `io_uring` are not
+implemented yet. Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
 ## Configuration
@@ -217,6 +222,18 @@ Log records exclude passwords, verifiers, cryptographic keys, file contents and 
 payloads, logins, and other user metadata. Allowed diagnostic identifiers are
 `request_id`, `upload_id`, peer identifiers, operation type, result code, and error
 category.
+
+## Blob writing
+
+`write_blob_direct` writes a received blob straight into its final path, creating the
+parent directories first. An existing blob is never replaced: the write fails with
+`AlreadyExists` and the original bytes stay in place. The streamed bytes are compared
+with the declared size and SHA-256, and either mismatch removes the partially written
+file so rejected data is not left on disk. On success the file and its parent directory
+are synced, so the content and the metadata needed to discover it survive a crash. The
+returned `StoredBlob` carries the final path, byte size, and content hash. The write
+does not by itself publish the version; the catalog includes it only after the Raft
+metadata commit.
 
 ## Integrity scan
 
