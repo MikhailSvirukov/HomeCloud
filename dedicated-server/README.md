@@ -253,9 +253,9 @@ for the whole process and flushes buffered records when dropped.
   file and filesystem overhead.
 - `metrics` sets `bind`, the address and TCP port of the Prometheus metrics
   endpoint (for example `127.0.0.1:9101`). It is required. The address must be
-  a loopback address until TLS support lands; a non-loopback bind is rejected
-  while loading the configuration, so the endpoint is never exposed without
-  TLS.
+  a loopback address with a non-zero port until TLS support lands; a
+  non-loopback bind or port `0` is rejected while loading the configuration, so
+  the endpoint is never exposed without TLS and always has a known port.
 - `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
   (non-empty, unique), `address` (unique socket address),
   `encryption_public_key`, `signing_public_key`. Node identifiers and public
@@ -322,8 +322,9 @@ the application TCP protocol.
   charset=utf-8` and the Prometheus text exposition. Any other path returns
   `404`; a non-`GET` request for `/metrics` returns `405`. A request is read
   with one bounded read under a five-second timeout, connections are served
-  one at a time and every response sends `Connection: close`, so a slow client
-  cannot pin a worker beyond that timeout.
+  one at a time and every response sends `Connection: close`. The read and the
+  write each use the five-second socket timeout, so a slow client cannot pin a
+  worker for more than the request read plus the response write.
 - A non-loopback bind is rejected while loading the configuration, because
   `NFR-OBS-007` requires TLS for a non-local endpoint and this version does not
   serve TLS yet. The endpoint therefore never runs unencrypted outside the

@@ -64,7 +64,6 @@ impl Operation {
     }
 }
 
-/// Upper bounds of the request-duration histogram, in seconds.
 /// Label name of the configured storage node.
 const LABEL_NODE: &str = "node";
 
@@ -83,6 +82,7 @@ const OPERATION_REGISTRATION: &str = "registration";
 /// Label value of the topology operation.
 const OPERATION_TOPOLOGY: &str = "topology";
 
+/// Upper bounds of the request-duration histogram, in seconds.
 const DURATION_BUCKETS_SECONDS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];

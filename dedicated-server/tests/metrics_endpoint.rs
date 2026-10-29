@@ -69,9 +69,15 @@ struct ChildGuard {
 
 impl ChildGuard {
     fn spawn(config: &Path) -> Self {
-        let child = Command::new(BINARY)
+        let mut command = Command::new(BINARY);
+        command
             .env(CONFIG_PATH_ENV, config)
-            .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
+            .env(RUST_LOG_ENV, RUST_LOG_LEVEL);
+        Self::spawn_command(&mut command)
+    }
+
+    fn spawn_command(command: &mut Command) -> Self {
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -82,6 +88,33 @@ impl ChildGuard {
 
     fn child(&mut self) -> &mut Child {
         self.child.as_mut().expect("the child must be alive")
+    }
+
+    /// Run the process to completion, killing it if it does not exit in time.
+    fn wait(mut self) -> Output {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let exited = self
+                .child()
+                .try_wait()
+                .expect("the child status must be readable")
+                .is_some();
+            if exited {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child().kill();
+                let _ = self.child().wait();
+                panic!("the server did not exit within {TIMEOUT:?}");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        self.child
+            .take()
+            .expect("the child must be alive")
+            .wait_with_output()
+            .expect("the server output must be collected")
     }
 
     /// Send `SIGTERM`, wait at most [`TIMEOUT`] for the process and collect it.
@@ -324,14 +357,7 @@ fn an_occupied_metrics_port_is_a_metrics_error() {
     let log = dir.file("dedicated-server.log");
     let config = write_config(&dir, &log, &format!("127.0.0.1:{port}"));
 
-    let output = Command::new(BINARY)
-        .env(CONFIG_PATH_ENV, &config)
-        .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("dedicated-server binary must run");
+    let output = ChildGuard::spawn(&config).wait();
 
     assert_eq!(output.status.code(), Some(1), "the start must fail");
     let events = log_events(&log);
@@ -347,14 +373,7 @@ fn a_non_loopback_metrics_bind_is_rejected_by_the_configuration() {
     let log = dir.file("dedicated-server.log");
     let config = write_config(&dir, &log, "10.255.255.1:9101");
 
-    let output = Command::new(BINARY)
-        .env(CONFIG_PATH_ENV, &config)
-        .env(RUST_LOG_ENV, RUST_LOG_LEVEL)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("dedicated-server binary must run");
+    let output = ChildGuard::spawn(&config).wait();
 
     assert_eq!(output.status.code(), Some(1), "the start must fail");
     let stderr = String::from_utf8_lossy(&output.stderr);

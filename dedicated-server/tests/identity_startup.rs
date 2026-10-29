@@ -5,7 +5,8 @@
 //! `ServerIdentity::load` in isolation, so this file drives the process instead.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -108,6 +109,70 @@ fn run_with_config(config: &Path) -> Output {
         .expect("dedicated-server binary must run")
 }
 
+/// A running server process that is killed and reaped if the test fails.
+struct ChildGuard {
+    child: Option<Child>,
+}
+
+impl ChildGuard {
+    fn spawn(command: &mut Command) -> Self {
+        let child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("dedicated-server binary must start");
+        Self { child: Some(child) }
+    }
+
+    fn child(&mut self) -> &mut Child {
+        self.child.as_mut().expect("the child must be alive")
+    }
+
+    /// Send `SIGTERM`, wait at most fifteen seconds and collect the process.
+    fn stop(mut self) -> Output {
+        let pid = self.child().id().to_string();
+        let signal = Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("kill must run");
+        assert!(signal.success(), "SIGTERM must be delivered");
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let exited = self
+                .child()
+                .try_wait()
+                .expect("the child status must be readable")
+                .is_some();
+            if exited {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = self.child().kill();
+                let _ = self.child().wait();
+                panic!("the server did not stop within fifteen seconds");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        self.child
+            .take()
+            .expect("the child must be alive")
+            .wait_with_output()
+            .expect("the server output must be collected")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// Run the binary until it logs its startup event, then stop it with `SIGTERM`.
 fn run_until_started(config: &Path, log: &Path, with_log_filter: bool) -> Output {
     let mut command = Command::new(BINARY);
@@ -117,41 +182,29 @@ fn run_until_started(config: &Path, log: &Path, with_log_filter: bool) -> Output
     } else {
         command.env_remove(RUST_LOG_ENV);
     }
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("dedicated-server binary must start");
+    let mut guard = ChildGuard::spawn(&mut command);
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let started = std::fs::read_to_string(log)
             .is_ok_and(|contents| contents.contains("\"event\":\"startup\""));
         if started {
             break;
         }
+        let exited = guard
+            .child()
+            .try_wait()
+            .expect("the child status must be readable")
+            .is_some();
+        assert!(!exited, "the server exited before its startup event");
         assert!(
-            std::time::Instant::now() < deadline,
+            Instant::now() < deadline,
             "the server never logged its startup event"
         );
-        assert!(
-            child
-                .try_wait()
-                .expect("the child status must be readable")
-                .is_none(),
-            "the server exited before its startup event"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(50));
     }
 
-    let signal = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
-        .status()
-        .expect("kill must run");
-    assert!(signal.success(), "SIGTERM must be delivered");
-
-    child.wait_with_output().expect("the server must exit")
+    guard.stop()
 }
 
 fn stdout_of(output: &Output) -> String {
