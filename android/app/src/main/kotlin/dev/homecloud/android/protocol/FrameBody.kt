@@ -1,5 +1,6 @@
 package dev.homecloud.android.protocol
 
+import dev.homecloud.android.crypto.Ed25519
 import dev.homecloud.android.crypto.Hpke
 
 /**
@@ -12,6 +13,18 @@ internal data class DecodedFrameBody(
     val header: ExternalFrameHeader,
     val signature: ByteArray,
     val payload: ByteArray,
+)
+
+/**
+ * The verified plaintext bootstrap frame: header plus the dedicated server's two public keys.
+ *
+ * The signature proves only possession of the Ed25519 key carried in the payload, so the client
+ * pins both keys without independent authentication (`INT-NET-021`, `INT-NET-025`, `INT-NET-081`).
+ */
+internal data class BootstrapFrame(
+    val header: ExternalFrameHeader,
+    val x25519PublicKey: ByteArray,
+    val ed25519PublicKey: ByteArray,
 )
 
 /**
@@ -69,31 +82,38 @@ internal object FrameBodyCodec {
         maxFrameBytes: Int,
         verify: (signedBytes: ByteArray, signature: ByteArray) -> Boolean,
     ): DecodedFrameBody {
-        requirePositiveLimit(maxFrameBytes)
-        if (frame.size < LENGTH_PREFIX_BYTES) {
-            throw ProtocolEncodingException("frame is shorter than the length prefix")
-        }
-        val declaredLength = readLength(frame)
-        if (declaredLength != (frame.size - LENGTH_PREFIX_BYTES).toLong()) {
-            throw ProtocolEncodingException("frame length does not match the declared length")
-        }
-        if (declaredLength > maxFrameBytes.toLong()) {
-            throw ProtocolEncodingException("frame exceeds the maximum frame size")
-        }
-        val decodedHeader = CborDecoder.decodePrefix(frame, LENGTH_PREFIX_BYTES)
-        val headerEnd = LENGTH_PREFIX_BYTES + decodedHeader.consumedBytes
-        if (frame.size - headerEnd < SIGNATURE_BYTES) {
-            throw ProtocolEncodingException("frame is too short to contain the signature")
-        }
-        val signatureEnd = headerEnd + SIGNATURE_BYTES
-        val headerBytes = frame.copyOfRange(LENGTH_PREFIX_BYTES, headerEnd)
-        val header = ExternalFrameHeaderCodec.decode(headerBytes)
-        val signature = frame.copyOfRange(headerEnd, signatureEnd)
-        val payload = frame.copyOfRange(signatureEnd, frame.size)
-        if (!verify(signedBytes(headerBytes, payload), signature)) {
+        val body = split(frame, maxFrameBytes)
+        if (!verify(signedBytes(body.headerBytes, body.payload), body.signature)) {
             throw ProtocolEncodingException("frame signature verification failed")
         }
-        return DecodedFrameBody(header = header, signature = signature, payload = payload)
+        return DecodedFrameBody(header = body.header, signature = body.signature, payload = body.payload)
+    }
+
+    /**
+     * Decodes the dedicated server's first-contact bootstrap frame, reads the two public keys from
+     * its plaintext payload and verifies the signature with the Ed25519 key carried in that payload
+     * (`INT-NET-021`, `INT-NET-024`, `INT-NET-025`, `INT-NET-081`).
+     *
+     * The size limit and split follow [decode], and the payload remains the only plaintext
+     * application payload of the protocol.
+     */
+    fun decodeBootstrap(
+        frame: ByteArray,
+        maxFrameBytes: Int,
+    ): BootstrapFrame {
+        val body = split(frame, maxFrameBytes)
+        if (body.header.senderId == null || body.header.bootstrapSigningPublicKey != null) {
+            throw ProtocolEncodingException("bootstrap frame carries the wrong header shape")
+        }
+        val keys = bootstrapKeys(body.payload)
+        if (!Ed25519.verify(keys.second, signedBytes(body.headerBytes, body.payload), body.signature)) {
+            throw ProtocolEncodingException("frame signature verification failed")
+        }
+        return BootstrapFrame(
+            header = body.header,
+            x25519PublicKey = keys.first,
+            ed25519PublicKey = keys.second,
+        )
     }
 
     /**
@@ -183,7 +203,44 @@ internal object FrameBodyCodec {
             elements[1].bootstrapKey(ED25519_PUBLIC_KEY_FIELD),
         )
     }
+
+    private fun split(
+        frame: ByteArray,
+        maxFrameBytes: Int,
+    ): SplitFrameBody {
+        requirePositiveLimit(maxFrameBytes)
+        if (frame.size < LENGTH_PREFIX_BYTES) {
+            throw ProtocolEncodingException("frame is shorter than the length prefix")
+        }
+        val declaredLength = readLength(frame)
+        if (declaredLength != (frame.size - LENGTH_PREFIX_BYTES).toLong()) {
+            throw ProtocolEncodingException("frame length does not match the declared length")
+        }
+        if (declaredLength > maxFrameBytes.toLong()) {
+            throw ProtocolEncodingException("frame exceeds the maximum frame size")
+        }
+        val decodedHeader = CborDecoder.decodePrefix(frame, LENGTH_PREFIX_BYTES)
+        val headerEnd = LENGTH_PREFIX_BYTES + decodedHeader.consumedBytes
+        if (frame.size - headerEnd < SIGNATURE_BYTES) {
+            throw ProtocolEncodingException("frame is too short to contain the signature")
+        }
+        val signatureEnd = headerEnd + SIGNATURE_BYTES
+        val headerBytes = frame.copyOfRange(LENGTH_PREFIX_BYTES, headerEnd)
+        return SplitFrameBody(
+            headerBytes = headerBytes,
+            header = ExternalFrameHeaderCodec.decode(headerBytes),
+            signature = frame.copyOfRange(headerEnd, signatureEnd),
+            payload = frame.copyOfRange(signatureEnd, frame.size),
+        )
+    }
 }
+
+private class SplitFrameBody(
+    val headerBytes: ByteArray,
+    val header: ExternalFrameHeader,
+    val signature: ByteArray,
+    val payload: ByteArray,
+)
 
 private fun bodyLength(
     headerBytes: ByteArray,

@@ -16,9 +16,6 @@ internal sealed interface RegistrationOutcome {
     data object StorageFailed : RegistrationOutcome
 
     data object NoIdentity : RegistrationOutcome
-
-    /** The identity has no pinned dedicated-server keys yet, so registration cannot be encrypted. */
-    data object MissingServerKeys : RegistrationOutcome
 }
 
 /**
@@ -37,10 +34,10 @@ internal sealed interface RegistrationOutcome {
  * the existing key pairs (`FR-AND-029 / 1`). A transport failure or a failed identity save keeps the
  * pending record so the next call retries the same request.
  *
- * Reading, writing and transport are blocking and callers run them off the main thread. Registration
- * needs the dedicated-server keys pinned at first contact (`INT-NET-025 / 1`, `INT-NET-034 / 1`),
- * because the request payload is encrypted to that X25519 key; without them the coordinator reports
- * [RegistrationOutcome.MissingServerKeys] and sends nothing. The password
+ * Reading, writing and transport are blocking and callers run them off the main thread. The
+ * transport performs the first-contact handshake and pins the dedicated-server keys before it sends
+ * the registration request (`INT-NET-025 / 1`, `INT-NET-034 / 1`); the coordinator reloads the
+ * identity after the response so the assigned id is stored together with those pinned keys. The password
  * and key material are never logged or placed into an exception message (`FR-AND-023 / 2`).
  */
 internal class RegistrationCoordinator(
@@ -61,11 +58,6 @@ internal class RegistrationCoordinator(
             }
             return RegistrationOutcome.Registered(assignedSenderId)
         }
-        if (identity.dedicatedServerKeys == null) {
-            // The dedicated server's keys are pinned on first contact before registration (INT-NET-025/034).
-            return RegistrationOutcome.MissingServerKeys
-        }
-
         val record = pendingRecord(identity, login, password)
         if (!persist(record)) {
             return RegistrationOutcome.StorageFailed
@@ -76,7 +68,10 @@ internal class RegistrationCoordinator(
         if (installationId.size != INSTALLATION_ID_BYTES) {
             return RegistrationOutcome.Pending
         }
-        if (!saveSenderId(identity, installationId)) {
+        // The transport pins the dedicated-server keys during the handshake; reload before adding the id
+        // so the pinned keys are not overwritten by the earlier copy.
+        val current = identityStore.load() ?: return RegistrationOutcome.Pending
+        if (!saveSenderId(current, installationId)) {
             return RegistrationOutcome.Pending
         }
 
