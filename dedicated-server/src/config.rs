@@ -1426,6 +1426,72 @@ mod tests {
     }
 
     #[test]
+    fn rejects_each_profile_range_violation() {
+        let cases: [(&str, &str, &'static str); 11] = [
+            (
+                "max_source_name_bytes = 4096",
+                "max_source_name_bytes = 65536",
+                "max_source_name_bytes",
+            ),
+            (
+                "max_file_size_bytes = 10485760",
+                "max_file_size_bytes = 9223372036854775808",
+                "max_file_size_bytes",
+            ),
+            (
+                "max_login_bytes = 64",
+                "max_login_bytes = 256",
+                "max_login_bytes",
+            ),
+            (
+                "min_password_bytes = 8",
+                "min_password_bytes = 1025",
+                "min_password_bytes",
+            ),
+            (
+                "interval_ms = 1000",
+                "interval_ms = 99",
+                "heartbeat.interval_ms",
+            ),
+            (
+                "miss_threshold = 3",
+                "miss_threshold = 1001",
+                "heartbeat.miss_threshold",
+            ),
+            ("iterations = 1", "iterations = 101", "password.iterations"),
+            (
+                "parallelism = 1",
+                "parallelism = 17",
+                "password.parallelism",
+            ),
+            (
+                "max_file_size_bytes = 104857600",
+                "max_file_size_bytes = 4095",
+                "logging.max_file_size_bytes",
+            ),
+            (
+                "max_file_age_ms = 86400000",
+                "max_file_age_ms = 999",
+                "logging.max_file_age_ms",
+            ),
+            (
+                "retry_interval_ms = 1000",
+                "retry_interval_ms = 60001",
+                "registration.retry_interval_ms",
+            ),
+        ];
+        for (from, to, field) in cases {
+            let document = VALID_SERVER.replace(from, to);
+            assert!(
+                matches!(
+                    ServerConfig::from_toml_str(&document),
+                    Err(ConfigError::OutOfRange { field: actual, .. }) if actual == field
+                ),
+                "expected an out-of-range rejection for {field}"
+            );
+        }
+    }
+    #[test]
     fn rejects_a_password_minimum_above_the_maximum() {
         let document = VALID_SERVER
             .replace("min_password_bytes = 8", "min_password_bytes = 1024")

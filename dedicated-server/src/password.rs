@@ -271,19 +271,18 @@ mod tests {
     }
 
     #[test]
-    fn derive_generates_the_configured_salt_length() {
-        let configured = 24;
-        let verifier = PasswordVerifier::derive(PASSWORD, params_with_salt(configured))
-            .expect("derivation must succeed");
+    fn derive_accepts_the_largest_phc_salt() {
+        let verifier = PasswordVerifier::derive(PASSWORD, params_with_salt(48))
+            .expect("a 48-byte salt must derive a verifier");
+        assert!(verifier.verify(PASSWORD).expect("verification must run"));
+
         let hash = PasswordHash::new(verifier.as_str()).expect("derived record must parse");
         let salt = hash.salt.expect("derived record must carry a salt");
         let mut decoded = [0_u8; 64];
-
         let decoded = salt
             .decode_b64(&mut decoded)
             .expect("derived salt must decode");
-
-        assert_eq!(decoded.len(), configured);
+        assert_eq!(decoded.len(), 48);
     }
 
     #[test]
