@@ -134,11 +134,11 @@ pub fn open_frame(
     recipient_secret: &[u8; X25519_KEY_BYTES],
     sender_public: &[u8; ED25519_KEY_BYTES],
 ) -> Result<Vec<u8>, FrameSealError> {
-    let minimum = LENGTH_PREFIX_BYTES + header_length + SIGNATURE_BYTES + MINIMUM_PAYLOAD_BYTES;
-    if frame.len() < minimum {
+    let fixed = LENGTH_PREFIX_BYTES + SIGNATURE_BYTES + MINIMUM_PAYLOAD_BYTES;
+    if frame.len() < fixed {
         return Err(FrameSealError::FrameTooShort {
             actual: frame.len(),
-            minimum,
+            minimum: fixed,
         });
     }
     let announced = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
@@ -149,7 +149,11 @@ pub fn open_frame(
             actual: body.len(),
         });
     }
-    if header_length > body.len() {
+    if header_length
+        > body
+            .len()
+            .saturating_sub(SIGNATURE_BYTES + MINIMUM_PAYLOAD_BYTES)
+    {
         return Err(FrameSealError::HeaderDoesNotFit {
             header: header_length,
             body: body.len(),
@@ -241,8 +245,10 @@ mod tests {
         let (_, public) = recipient();
         let first = seal_frame(HEADER, PAYLOAD, &public, &SEED).expect("sealing must work");
         let second = seal_frame(HEADER, PAYLOAD, &public, &SEED).expect("sealing must work");
+        let start = LENGTH_PREFIX_BYTES + HEADER.len() + SIGNATURE_BYTES;
+        let end = start + ENCAPSULATED_KEY_BYTES;
 
-        assert_ne!(first, second);
+        assert_ne!(&first[start..end], &second[start..end]);
     }
 
     #[test]
@@ -305,6 +311,32 @@ mod tests {
         assert!(matches!(
             open(&frame, &foreign),
             Err(FrameSealError::Payload)
+        ));
+    }
+
+    #[test]
+    fn a_wrong_declared_header_length_does_not_verify() {
+        let (secret, public) = recipient();
+        let frame = seal_frame(HEADER, PAYLOAD, &public, &SEED).expect("sealing must work");
+
+        assert!(matches!(
+            open_frame(&frame, HEADER.len() - 1, &secret, &sender_public()),
+            Err(FrameSealError::Signature)
+        ));
+        assert!(matches!(
+            open_frame(&frame, HEADER.len() + 1, &secret, &sender_public()),
+            Err(FrameSealError::Signature)
+        ));
+    }
+
+    #[test]
+    fn a_header_length_larger_than_the_body_is_rejected() {
+        let (secret, public) = recipient();
+        let frame = seal_frame(HEADER, PAYLOAD, &public, &SEED).expect("sealing must work");
+
+        assert!(matches!(
+            open_frame(&frame, usize::MAX, &secret, &sender_public()),
+            Err(FrameSealError::HeaderDoesNotFit { .. })
         ));
     }
 

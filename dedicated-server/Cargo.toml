@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 argon2 = { version = "0.5", features = ["std"] }
 ciborium = "0.2.2"
-hpke = { version = "0.15", features = ["x25519", "aes", "alloc"] }
+hpke = { version = "0.15", default-features = false, features = ["getrandom", "x25519", "aes", "alloc"] }
 mimalloc = { version = "0.1", default-features = false }
 ring = "0.17"
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
