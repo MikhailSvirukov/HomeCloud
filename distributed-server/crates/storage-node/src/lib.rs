@@ -210,8 +210,8 @@ pub use node::serve;
 pub use payload::{ChunkError, ChunkStream, PayloadChain, DEFAULT_MAX_CHUNKS_IN_FLIGHT};
 pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use raft::{
-    CommittedVersion, RaftError, RaftNode, RaftRequest, RaftResponse, RaftTiming, RaftTransport,
-    RaftTransportError,
+    CommittedVersion, RaftError, RaftNode, RaftRequest, RaftResponse, RaftStatus, RaftTiming,
+    RaftTransport, RaftTransportError,
 };
 pub use response::{ResponseError, UploadStatus};
 pub use runtime::{RaftRuntime, RuntimeError};

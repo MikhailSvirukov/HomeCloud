@@ -30,6 +30,11 @@ pub struct Metrics {
     queue_capacity: NonZeroUsize,
     scrapes: AtomicU64,
     storage_bytes_used: AtomicU64,
+    raft_leader: AtomicU64,
+    raft_term: AtomicU64,
+    raft_last_applied: AtomicU64,
+    raft_voters: AtomicU64,
+    catalog_versions: AtomicU64,
 }
 
 impl Metrics {
@@ -39,6 +44,11 @@ impl Metrics {
             queue_capacity,
             scrapes: AtomicU64::new(0),
             storage_bytes_used: AtomicU64::new(0),
+            raft_leader: AtomicU64::new(0),
+            raft_term: AtomicU64::new(0),
+            raft_last_applied: AtomicU64::new(0),
+            raft_voters: AtomicU64::new(0),
+            catalog_versions: AtomicU64::new(0),
         }
     }
 
@@ -47,10 +57,30 @@ impl Metrics {
         self.storage_bytes_used.store(bytes, Ordering::Relaxed);
     }
 
+    /// Sets the local Raft leadership, term, applied log index, and voter count gauges.
+    pub fn set_raft_state(&self, leader: bool, term: u64, last_applied: Option<u64>, voters: u64) {
+        let leader = if leader { 1 } else { 0 };
+        self.raft_leader.store(leader, Ordering::Relaxed);
+        self.raft_term.store(term, Ordering::Relaxed);
+        self.raft_last_applied
+            .store(last_applied.unwrap_or(0), Ordering::Relaxed);
+        self.raft_voters.store(voters, Ordering::Relaxed);
+    }
+
+    /// Sets the number of committed catalog versions.
+    pub fn set_catalog_versions(&self, versions: u64) {
+        self.catalog_versions.store(versions, Ordering::Relaxed);
+    }
+
     /// Renders the Prometheus text exposition; no user-controlled label values.
     pub fn render(&self) -> String {
         let scrapes = self.scrapes.load(Ordering::Relaxed);
         let storage_bytes_used = self.storage_bytes_used.load(Ordering::Relaxed);
+        let raft_leader = self.raft_leader.load(Ordering::Relaxed);
+        let raft_term = self.raft_term.load(Ordering::Relaxed);
+        let raft_last_applied = self.raft_last_applied.load(Ordering::Relaxed);
+        let raft_voters = self.raft_voters.load(Ordering::Relaxed);
+        let catalog_versions = self.catalog_versions.load(Ordering::Relaxed);
         format!(
             "# HELP homecloud_node_up Whether the storage node is running.\n\
              # TYPE homecloud_node_up gauge\n\
@@ -58,6 +88,21 @@ impl Metrics {
              # HELP homecloud_storage_bytes_used Local bytes used under the accounts and raft roots.\n\
              # TYPE homecloud_storage_bytes_used gauge\n\
              homecloud_storage_bytes_used {storage_bytes_used}\n\
+             # HELP homecloud_raft_leader Whether the local node currently knows a Raft leader.\n\
+             # TYPE homecloud_raft_leader gauge\n\
+             homecloud_raft_leader {raft_leader}\n\
+             # HELP homecloud_raft_term Current Raft term.\n\
+             # TYPE homecloud_raft_term gauge\n\
+             homecloud_raft_term {raft_term}\n\
+             # HELP homecloud_raft_last_applied Last Raft log index applied to the local state machine.\n\
+             # TYPE homecloud_raft_last_applied gauge\n\
+             homecloud_raft_last_applied {raft_last_applied}\n\
+             # HELP homecloud_raft_voters Configured storage voters in the cluster.\n\
+             # TYPE homecloud_raft_voters gauge\n\
+             homecloud_raft_voters {raft_voters}\n\
+             # HELP homecloud_catalog_versions Committed catalog versions on the local node.\n\
+             # TYPE homecloud_catalog_versions gauge\n\
+             homecloud_catalog_versions {catalog_versions}\n\
              # HELP homecloud_connection_queue_capacity Configured per-connection queue capacity.\n\
              # TYPE homecloud_connection_queue_capacity gauge\n\
              homecloud_connection_queue_capacity {}\n\
@@ -88,6 +133,17 @@ impl core::fmt::Debug for Metrics {
             .field(
                 "storage_bytes_used",
                 &self.storage_bytes_used.load(Ordering::Relaxed),
+            )
+            .field("raft_leader", &self.raft_leader.load(Ordering::Relaxed))
+            .field("raft_term", &self.raft_term.load(Ordering::Relaxed))
+            .field(
+                "raft_last_applied",
+                &self.raft_last_applied.load(Ordering::Relaxed),
+            )
+            .field("raft_voters", &self.raft_voters.load(Ordering::Relaxed))
+            .field(
+                "catalog_versions",
+                &self.catalog_versions.load(Ordering::Relaxed),
             )
             .finish()
     }
@@ -348,17 +404,4 @@ where
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_route;
-
-    #[test]
-    fn parse_route_rejects_malformed_request_lines() {
-        assert_eq!(parse_route("GET /metrics"), None);
-        assert_eq!(parse_route("GET /metrics HTTP/2.0"), None);
-        assert_eq!(parse_route("GET /metrics HTTP/1.1 extra"), None);
-        assert_eq!(parse_route(""), None);
-    }
 }

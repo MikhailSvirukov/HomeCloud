@@ -500,9 +500,16 @@ set.
 version=0.0.4; charset=utf-8`) with the node liveness, build-info, queue-capacity, and
 scrape counters, plus the `homecloud_storage_bytes_used` gauge. The gauge is the current
 total size of the regular files under the accounts and Raft roots, refreshed periodically.
-Labels are limited to bounded static values such as the build version;
-they never contain logins, `request_id`, `upload_id`, file names, or other per-request
-values. Requests to other paths return `404`, and methods other than `GET` return `405`
+Raft and catalog state are exposed as five additional gauges:
+`homecloud_raft_leader` (whether this node is the leader), `homecloud_raft_term` (the
+current Raft term), `homecloud_raft_last_applied` (the last applied log index),
+`homecloud_raft_voters` (the configured voter count), and
+`homecloud_catalog_versions` (the number of applied catalog versions). The Raft gauges are
+refreshed from the local Raft node and the catalog gauge from the local applied catalog,
+so they describe this node's view rather than a cluster-wide aggregate. None of these
+gauges carries user labels. Other labels are limited to bounded static values such as the
+build version; they never contain logins, `request_id`, `upload_id`, file names, or other
+per-request values. Requests to other paths return `404`, and methods other than `GET` return `405`
 with `Allow: GET`. The metrics interface is separate from the application TCP protocol.
 
 ## Logging

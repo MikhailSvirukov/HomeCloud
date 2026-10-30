@@ -159,6 +159,11 @@ impl RaftRuntime {
         Arc::clone(&self.node)
     }
 
+    /// Number of storage voters in the manifest-derived cluster.
+    pub fn voter_count(&self) -> u64 {
+        u64::try_from(self.members.len()).unwrap_or(u64::MAX)
+    }
+
     /// Returns the validated local manifest entry.
     pub fn local(&self) -> &ManifestEntry {
         &self.local
