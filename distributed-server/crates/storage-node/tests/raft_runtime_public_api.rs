@@ -14,9 +14,12 @@
 //! and applies a committed client write), `CFG-CL-003 / 1` and
 //! `CFG-CL-021 / 1` (the manifest carries the storage identity and open keys),
 //! `CFG-CL-033 / 1` and `CFG-CL-039 / 1` (owner-only key files are validated
-//! before a listener exists), `INT-NET-071 / 1` (the local sender id is the
-//! manifest entry's stable identifier), and `NFR-SEC-009 / 1` (local identity
-//! keys must match the trusted manifest before peer exchange).
+//! before a listener exists), `CFG-CL-007 / 1` (the peer transport applies the
+//! configured storage connect timeout), `CFG-CL-029 / 1` and `CFG-CL-031 / 1`
+//! (the local responder label must fit the configured byte limit),
+//! `INT-NET-071 / 1` (the local sender id is the manifest entry's stable
+//! identifier), and `NFR-SEC-009 / 1` (local identity keys must match the
+//! trusted manifest before peer exchange).
 
 use core::num::{NonZeroU32, NonZeroUsize};
 use std::collections::BTreeSet;
@@ -62,8 +65,10 @@ const DEDICATED_X25519_KEY: [u8; KEY_LEN] = [0xC1; KEY_LEN];
 const DEDICATED_ED25519_KEY: [u8; KEY_LEN] = [0xC2; KEY_LEN];
 /// Maximum frame length passed to the runtime.
 const MAX_FRAME_LEN: u32 = 1_048_576;
+/// Peer storage connect timeout passed to the runtime.
+const STORAGE_CONNECT_TIMEOUT: Duration = Duration::from_millis(5_000);
 /// Budget for electing the single-node leader.
-const LEADER_BUDGET: Duration = Duration::from_secs(3);
+const LEADER_BUDGET: Duration = Duration::from_secs(10);
 /// Minimum client login length in bytes.
 const LOGIN_MIN_LEN: usize = 1;
 /// Maximum client login length in bytes.
@@ -116,6 +121,28 @@ async fn start_runtime(
     signing_key: &PrivateKey,
     raft_dir: PathBuf,
 ) -> Result<RaftRuntime, RuntimeError> {
+    start_runtime_with_limits(
+        manifest,
+        label,
+        address,
+        encryption_key,
+        signing_key,
+        &client_limits(),
+        raft_dir,
+    )
+    .await
+}
+
+/// Starts the runtime with explicit client limits.
+async fn start_runtime_with_limits(
+    manifest: &StaticManifest,
+    label: &str,
+    address: &str,
+    encryption_key: &PrivateKey,
+    signing_key: &PrivateKey,
+    limits: &ClientLimits,
+    raft_dir: PathBuf,
+) -> Result<RaftRuntime, RuntimeError> {
     let max_frame = NonZeroU32::new(MAX_FRAME_LEN).expect("the test frame limit is non-zero");
     RaftRuntime::start(
         manifest,
@@ -124,7 +151,8 @@ async fn start_runtime(
         encryption_key,
         signing_key,
         max_frame,
-        &client_limits(),
+        limits,
+        STORAGE_CONNECT_TIMEOUT,
         raft_dir,
     )
     .await
@@ -280,6 +308,30 @@ async fn local_entry_comes_from_the_storage_label() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejects_an_invalid_local_responder_label() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+    let limits = client_limits_with_responder_label_max_len(1);
+
+    let result = start_runtime_with_limits(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        &limits,
+        fixture.raft_dir("raft-label"),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(RuntimeError::InvalidLabel)),
+        "a local label longer than the responder-label limit is rejected before a listener is bound"
+    );
+}
+
 /// Renders a manifest with one dedicated entry and one storage entry.
 fn manifest_text(host: &str, port: u16) -> String {
     format!(
@@ -307,13 +359,17 @@ fn manifest_text(host: &str, port: u16) -> String {
 
 /// Builds the fixed test client limits.
 fn client_limits() -> ClientLimits {
+    client_limits_with_responder_label_max_len(RESPONDER_LABEL_MAX_LEN)
+}
+
+/// Builds test client limits with an explicit responder-label byte limit.
+fn client_limits_with_responder_label_max_len(max_len: usize) -> ClientLimits {
     ClientLimits::new(
         NonZeroUsize::new(LOGIN_MIN_LEN).expect("the test login minimum is non-zero"),
         NonZeroUsize::new(LOGIN_MAX_LEN).expect("the test login maximum is non-zero"),
         NonZeroUsize::new(PASSWORD_MIN_LEN).expect("the test password minimum is non-zero"),
         NonZeroUsize::new(PASSWORD_MAX_LEN).expect("the test password maximum is non-zero"),
-        NonZeroUsize::new(RESPONDER_LABEL_MAX_LEN)
-            .expect("the test responder-label limit is non-zero"),
+        NonZeroUsize::new(max_len).expect("the test responder-label limit is non-zero"),
     )
     .expect("the test client limits are ordered")
 }

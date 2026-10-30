@@ -193,9 +193,14 @@ at startup:
   dedicated server, the storage nodes, their addresses, and their open keys. When
   set, startup loads and validates it and starts the manifest-derived Raft runtime;
   when absent, the node serves without that runtime.
-- `RAFT_BOOTSTRAP` — explicit one-time bootstrap switch. `true` or `1` enables it,
-  `false`, `0`, or an empty value disables it, and any other value stops startup. It
-  only takes effect when `MANIFEST_PATH` is set.
+- `STORAGE_CONNECT_TIMEOUT_MS` — timeout for opening one peer TCP connection, in
+  milliseconds; optional, defaults to `5000`, and must be in `100..=300000` (maps to
+  the `storage_connect_timeout_ms` key). An explicitly configured value outside the
+  range is rejected rather than clamped to the nearest bound.
+- `RAFT_BOOTSTRAP` — explicit one-time bootstrap switch that requires
+  `MANIFEST_PATH`. `true` or `1` enables it, `false`, `0`, or an empty value
+  disables it, and any other value stops startup. A bootstrap request without a
+  manifest is rejected.
 - `MAX_FRAME_LEN` — maximum frame size in bytes; must be non-zero (maps to the
   `max_frame_len` key).
 - `QUEUE_CAPACITY` — per-connection inter-actor queue capacity; must be non-zero (maps
@@ -253,13 +258,14 @@ limit.
 `encryption_key_path`, `signing_key_path`, `max_frame_len`, `queue_capacity`,
 `catalog_page_size`, `catalog_snapshot_ttl_ms`, `max_source_name_len`,
 `login_min_len`, `login_max_len`, `password_min_len`, `password_max_len`,
-`responder_label_max_len`,
+`responder_label_max_len`, `storage_connect_timeout_ms`,
 `integrity_scan_period_seconds`, `integrity_scan_max_concurrent`,
 `metrics_bind_addr`, `metrics_tls_cert_path`, `metrics_tls_key_path`,
 `log_file_path`, `log_queue_capacity`, `log_max_file_bytes`,
 `log_max_total_bytes`, `log_max_file_age_seconds`, and `peers` keys;
 an absent or empty value for any required key is reported as missing, and unknown keys are
-ignored.
+ignored. `storage_connect_timeout_ms` is optional: when absent it uses `5000`, and an
+explicit value must be in `100..=300000`.
 Frames use a 4-byte big-endian length prefix. The prefix itself is always 4 bytes; the
 value it encodes is checked against the configured maximum before the frame is buffered,
 and a larger value is rejected.
@@ -320,15 +326,18 @@ manifest. It resolves `local_label` only among the `[[storage]]` entries, so the
 dedicated-server label is rejected as a manifest `LocalNotFound` error. It requires
 the configured listen port to equal that entry's advertised port and any concrete
 listen IP to equal its advertised IP. It then checks that the private encryption and
-signing key files match the entry's X25519 and Ed25519 open keys. These identity and
-key checks run before the runtime opens any listener, so a mismatched manifest or
-key stops startup without a bound port.
+signing key files match the entry's X25519 and Ed25519 open keys. It also rejects a
+local manifest label longer than `RESPONDER_LABEL_MAX_LEN` as
+`RuntimeError::InvalidLabel`. These identity, key, and label checks run before the
+runtime opens any listener, so a mismatched manifest or key stops startup without a
+bound port.
 
 The transport endpoint table and the fixed voter set come from the same manifest:
 each storage entry contributes its node id, sender id, advertised address, and open
 keys, while the dedicated server is neither a voter nor an RPC relay. The local
 sender id used in peer messages is the manifest entry's identifier and does not
-change across restarts or label changes elsewhere in the deployment.
+change across restarts or label changes elsewhere in the deployment. Each peer RPC
+opens one TCP connection bounded by `STORAGE_CONNECT_TIMEOUT_MS`.
 
 Bootstrap is explicit. `RaftRuntime::initialize` sends the initial membership
 command with exactly the manifest storage voters and records the durable bootstrap

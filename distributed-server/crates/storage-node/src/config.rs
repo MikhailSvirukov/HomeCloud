@@ -6,9 +6,10 @@
 //! capacity, the metrics bind address and optional TLS certificate/key paths,
 //! the structured log path and retention limits, the integrity scan period and
 //! concurrency limit, the catalog page size and snapshot lifetime, the
-//! source-name byte limit, the client login/password length bounds and
-//! responder-label byte limit, and the addresses of its fixed peers. v1
-//! clusters are fixed, so this model is validated when it is built.
+//! source-name byte limit, the storage peer connection timeout, the client
+//! login/password length bounds and responder-label byte limit, and the
+//! addresses of its fixed peers. v1 clusters are fixed, so this model is
+//! validated when it is built.
 
 use core::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::net::SocketAddr;
@@ -24,6 +25,15 @@ type Result<T> = core::result::Result<T, ConfigError>;
 
 /// Maximum accepted length of a node label in bytes.
 pub const MAX_NODE_ID_LEN: usize = 63;
+
+/// Default timeout for establishing a storage peer connection in milliseconds.
+const DEFAULT_STORAGE_CONNECT_TIMEOUT_MS: u64 = 5000;
+
+/// Minimum accepted storage peer connection timeout in milliseconds.
+const MIN_STORAGE_CONNECT_TIMEOUT_MS: u64 = 100;
+
+/// Maximum accepted storage peer connection timeout in milliseconds.
+const MAX_STORAGE_CONNECT_TIMEOUT_MS: u64 = 300_000;
 
 /// Recognized `from_pairs` key for the node label.
 const KEY_NODE_ID: &str = "node_id";
@@ -61,6 +71,8 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// Recognized `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// Recognized `from_pairs` key for the storage peer connection timeout in milliseconds.
+const KEY_STORAGE_CONNECT_TIMEOUT_MS: &str = "storage_connect_timeout_ms";
 /// Recognized `from_pairs` key for the minimum login length in bytes.
 const KEY_LOGIN_MIN_LEN: &str = "login_min_len";
 /// Recognized `from_pairs` key for the maximum login length in bytes.
@@ -139,6 +151,7 @@ pub struct NodeConfig {
     pub catalog_page_size: NonZeroUsize,
     pub catalog_snapshot_ttl_ms: NonZeroU64,
     pub max_source_name_len: NonZeroUsize,
+    pub storage_connect_timeout_ms: NonZeroU64,
     pub client_limits: ClientLimits,
     pub peers: Vec<String>,
 }
@@ -164,6 +177,7 @@ impl NodeConfig {
         catalog_page_size: NonZeroUsize,
         catalog_snapshot_ttl_ms: NonZeroU64,
         max_source_name_len: NonZeroUsize,
+        storage_connect_timeout_ms: NonZeroU64,
         client_limits: ClientLimits,
         peers: Vec<String>,
     ) -> Result<Self> {
@@ -185,6 +199,7 @@ impl NodeConfig {
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
+            storage_connect_timeout_ms,
             client_limits,
             peers: normalize_peers(peers)?,
         })
@@ -199,7 +214,7 @@ impl NodeConfig {
         )
     }
 
-    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address and TLS paths, structured logging settings, integrity scan settings, catalog settings, client limits, and `peers` pairs.
+    /// Builds a configuration from `node_id`, `listen_addr`, `data_dir`, key path, frame limit, queue capacity, metrics bind address and TLS paths, structured logging settings, integrity scan settings, catalog settings, the storage peer connection timeout, client limits, and `peers` pairs.
     pub fn from_pairs(pairs: &[(&str, &str)]) -> Result<Self> {
         let mut node_id = None;
         let mut listen_addr = None;
@@ -219,6 +234,7 @@ impl NodeConfig {
         let mut catalog_page_size = None;
         let mut catalog_snapshot_ttl_ms = None;
         let mut max_source_name_len = None;
+        let mut storage_connect_timeout_ms = None;
         let mut login_min_len = None;
         let mut login_max_len = None;
         let mut password_min_len = None;
@@ -263,6 +279,9 @@ impl NodeConfig {
                 }
                 KEY_MAX_SOURCE_NAME_LEN if !value.is_empty() => {
                     max_source_name_len = Some(*value);
+                }
+                KEY_STORAGE_CONNECT_TIMEOUT_MS if !value.is_empty() => {
+                    storage_connect_timeout_ms = Some(*value);
                 }
                 KEY_LOGIN_MIN_LEN if !value.is_empty() => login_min_len = Some(*value),
                 KEY_LOGIN_MAX_LEN if !value.is_empty() => login_max_len = Some(*value),
@@ -382,6 +401,14 @@ impl NodeConfig {
             });
         };
         let max_source_name_len = parse_max_source_name_len(max_source_name_len)?;
+        let storage_connect_timeout_ms = match storage_connect_timeout_ms {
+            Some(value) => parse_storage_connect_timeout(value)?,
+            None => NonZeroU64::new(DEFAULT_STORAGE_CONNECT_TIMEOUT_MS).ok_or_else(|| {
+                ConfigError::InvalidStorageConnectTimeout {
+                    value: DEFAULT_STORAGE_CONNECT_TIMEOUT_MS.to_string(),
+                }
+            })?,
+        };
         let Some(login_min_len) = login_min_len else {
             return Err(ConfigError::MissingKey {
                 key: KEY_LOGIN_MIN_LEN,
@@ -456,6 +483,7 @@ impl NodeConfig {
             catalog_page_size,
             catalog_snapshot_ttl_ms,
             max_source_name_len,
+            storage_connect_timeout_ms,
             client_limits,
             peers,
         )
@@ -516,6 +544,12 @@ pub enum ConfigError {
     /// The maximum source-name length was zero or not an integer.
     #[error("invalid maximum source name length {value}")]
     InvalidMaxSourceNameLen { value: String },
+    /// The storage peer connection timeout was zero or not an integer.
+    #[error("invalid storage connect timeout {value}")]
+    InvalidStorageConnectTimeout { value: String },
+    /// The storage peer connection timeout was outside the accepted range.
+    #[error("storage connect timeout {value} is out of range")]
+    StorageConnectTimeoutOutOfRange { value: u64 },
     /// A client credential or responder-label limit was zero or not an integer.
     #[error("invalid client limit {key}={value}")]
     InvalidClientLimit { key: &'static str, value: String },
@@ -685,6 +719,23 @@ fn parse_max_source_name_len(value: &str) -> Result<NonZeroUsize> {
         })
 }
 
+/// Parses a storage peer connection timeout that must be in the accepted range.
+fn parse_storage_connect_timeout(value: &str) -> Result<NonZeroU64> {
+    let timeout = value
+        .parse::<u64>()
+        .ok()
+        .and_then(NonZeroU64::new)
+        .ok_or_else(|| ConfigError::InvalidStorageConnectTimeout {
+            value: value.to_owned(),
+        })?;
+    if !(MIN_STORAGE_CONNECT_TIMEOUT_MS..=MAX_STORAGE_CONNECT_TIMEOUT_MS).contains(&timeout.get()) {
+        return Err(ConfigError::StorageConnectTimeoutOutOfRange {
+            value: timeout.get(),
+        });
+    }
+    Ok(timeout)
+}
+
 /// Parses a client limit that must be a non-zero `usize`.
 fn parse_client_limit(key: &'static str, value: &str) -> Result<NonZeroUsize> {
     value
@@ -772,6 +823,10 @@ mod tests {
         NonZeroUsize::new(255).expect("test name limit is non-zero")
     }
 
+    fn storage_connect_timeout_ms() -> NonZeroU64 {
+        NonZeroU64::new(5000).expect("test connect timeout is non-zero")
+    }
+
     fn client_limits() -> ClientLimits {
         ClientLimits::new(
             NonZeroUsize::new(1).expect("test login minimum is non-zero"),
@@ -839,6 +894,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            storage_connect_timeout_ms(),
             client_limits(),
             vec![" 10.0.0.2:9000 ".to_owned()],
         )
@@ -853,6 +909,10 @@ mod tests {
         assert_eq!(config.queue_capacity.get(), 16);
         assert_eq!(config.metrics_bind_addr, metrics_bind_addr());
         assert!(config.metrics_tls.is_none());
+        assert_eq!(
+            config.storage_connect_timeout_ms,
+            storage_connect_timeout_ms()
+        );
         assert_eq!(config.integrity_scan, integrity_scan_config());
         assert_eq!(config.client_limits, client_limits());
         assert_eq!(config.peers, ["10.0.0.2:9000"]);
@@ -876,6 +936,7 @@ mod tests {
                 catalog_page_size(),
                 catalog_snapshot_ttl_ms(),
                 max_source_name_len(),
+                storage_connect_timeout_ms(),
                 client_limits(),
                 Vec::new(),
             );
@@ -903,6 +964,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            storage_connect_timeout_ms(),
             client_limits(),
             vec!["   ".to_owned()],
         );
@@ -926,6 +988,7 @@ mod tests {
             catalog_page_size(),
             catalog_snapshot_ttl_ms(),
             max_source_name_len(),
+            storage_connect_timeout_ms(),
             client_limits(),
             vec!["10.0.0.2".to_owned()],
         );
