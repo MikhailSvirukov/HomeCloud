@@ -228,6 +228,10 @@ impl AccountRegistry {
     }
 
     /// Register a login or an additional installation of an existing login.
+    ///
+    /// A password outside the configured length range is rejected before the
+    /// request identifier is recorded, so repeating that request answers with
+    /// the same length error instead of a request-id conflict.
     pub fn register(&mut self, request: RegistrationRequest) -> Result<RegistrationOutcome> {
         let password_length = request.password.len();
         if password_length < self.limits.min_password_bytes {
@@ -495,6 +499,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_uses_a_configured_maximum_that_is_not_the_default() {
+        let limits = CredentialLimits {
+            max_login_bytes: 8,
+            ..limits()
+        };
+
+        assert!(matches!(
+            Login::parse("abcdefghi", &limits),
+            Err(LoginError::TooLong { actual: 9, max: 8 })
+        ));
+        let accepted =
+            Login::parse("abcdefgh", &limits).expect("a login at the configured maximum is valid");
+        assert_eq!(accepted.as_str(), "abcdefgh");
+    }
+
+    #[test]
     fn parse_rejects_login_one_over_max_length() {
         let value = "a".repeat(MAX_LOGIN_BYTES + 1);
 
@@ -565,6 +585,58 @@ mod tests {
             Err(RegistrationError::PasswordTooLong { actual, max })
                 if actual == PASSWORD.len() && max == PASSWORD.len() - 1
         ));
+    }
+
+    #[test]
+    fn register_accepts_a_password_at_the_configured_minimum() {
+        let limits = CredentialLimits {
+            min_password_bytes: PASSWORD.len(),
+            ..limits()
+        };
+        let mut registry = AccountRegistry::new(fast_params(), limits);
+
+        let outcome = registry
+            .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x11)))
+            .expect("a password at the minimum must be accepted");
+
+        assert!(matches!(
+            outcome,
+            RegistrationOutcome::AccountCreated { .. }
+        ));
+    }
+
+    #[test]
+    fn a_password_length_is_measured_in_utf8_bytes() {
+        // Six characters, twelve UTF-8 bytes.
+        let password = "пароль";
+        let limits = CredentialLimits {
+            max_password_bytes: 8,
+            ..limits()
+        };
+        let mut registry = AccountRegistry::new(fast_params(), limits);
+
+        assert!(matches!(
+            registry.register(request(FIRST_REQUEST, LOGIN, password, keys(0x11))),
+            Err(RegistrationError::PasswordTooLong { actual: 12, max: 8 })
+        ));
+    }
+
+    #[test]
+    fn a_rejected_password_length_is_not_recorded() {
+        let limits = CredentialLimits {
+            max_password_bytes: PASSWORD.len() - 1,
+            ..limits()
+        };
+        let mut registry = AccountRegistry::new(fast_params(), limits);
+
+        assert!(matches!(
+            registry.register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x11))),
+            Err(RegistrationError::PasswordTooLong { .. })
+        ));
+        assert!(
+            registry.requests.is_empty(),
+            "a length rejection must not record the request identifier"
+        );
     }
 
     #[test]
