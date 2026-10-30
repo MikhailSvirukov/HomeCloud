@@ -166,7 +166,7 @@ pub enum RaftTransportError {
     /// The peer has no reachable connection.
     #[error("peer {target} is unreachable")]
     Unreachable { target: NodeId },
-    /// The RPC was sent but the peer did not answer.
+    /// The RPC could not be sent or the peer did not answer.
     #[error("the RPC to peer {target} failed")]
     Send { target: NodeId },
 }

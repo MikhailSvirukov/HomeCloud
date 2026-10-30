@@ -32,7 +32,7 @@ pub struct Peer {
     /// Raft node identifier.
     pub node_id: NodeId,
     /// Sender identifier advertised in the external header.
-    pub sender_id: [u8; 16],
+    pub sender_id: [u8; SENDER_ID_LEN],
     /// TCP address of the peer.
     pub address: SocketAddr,
     /// X25519 public key used to seal frames to the peer.
@@ -45,7 +45,7 @@ impl Peer {
     /// Builds a trusted peer from its identifier, address, and public key bytes.
     pub fn new(
         node_id: NodeId,
-        sender_id: [u8; 16],
+        sender_id: [u8; SENDER_ID_LEN],
         address: SocketAddr,
         x25519_public_key: &[u8],
         ed25519_public_key: [u8; 32],
@@ -118,7 +118,7 @@ pub enum PeerDirectoryError {
 /// Direct encrypted TCP transport for inter-server Raft RPCs.
 #[derive(Clone)]
 pub struct ServerTransport {
-    sender_id: [u8; 16],
+    sender_id: [u8; SENDER_ID_LEN],
     signing_key: Arc<MessageSigningKey>,
     recipient_key: Arc<RecipientPrivateKey>,
     peers: Arc<PeerDirectory>,
@@ -130,7 +130,7 @@ pub struct ServerTransport {
 impl ServerTransport {
     /// Builds a transport with a local sender id, key pair, trusted peers, and connection limits.
     pub fn new(
-        sender_id: [u8; 16],
+        sender_id: [u8; SENDER_ID_LEN],
         signing_key: MessageSigningKey,
         recipient_key: RecipientPrivateKey,
         peers: Arc<PeerDirectory>,
@@ -244,6 +244,8 @@ impl fmt::Debug for ServerTransport {
 fn random_request_id(target: NodeId) -> TransportResult<[u8; REQUEST_ID_LEN]> {
     let mut request_id = [0u8; REQUEST_ID_LEN];
     getrandom::fill(&mut request_id).map_err(|_| send_error(target))?;
+    request_id[6] = (request_id[6] & 0x0f) | 0x40;
+    request_id[8] = (request_id[8] & 0x3f) | 0x80;
     Ok(request_id)
 }
 
@@ -261,4 +263,16 @@ fn reply_matches(
 
 fn send_error(target: NodeId) -> RaftTransportError {
     RaftTransportError::Send { target }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::random_request_id;
+
+    #[test]
+    fn request_id_has_uuid_v4_version_and_variant_bits() {
+        let request_id = random_request_id(1).expect("the test RNG fills a request id");
+        assert_eq!(request_id[6] & 0xf0, 0x40);
+        assert_eq!(request_id[8] & 0xc0, 0x80);
+    }
 }
