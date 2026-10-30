@@ -461,8 +461,8 @@ canonical hosts (`INT-NET-070`). A strict decoder covers the same topology
 schema from the receiving side.
 
 `src/result_code.rs` names the published v1 result codes with the exact values
-of the contract table (`INT-NET-063`), classifies any value by its reserved
-16-bit range (`INT-NET-062`), and keeps unused values inside a reserved range
+of the contract table (`INT-NET-064`), classifies any value by its reserved
+16-bit range (`INT-NET-063`), and keeps unused values inside a reserved range
 unnamed; `ResultEnvelope::error` builds the empty-argument failure envelope for
 a named code, while the codec still decodes any `uint32` a peer may send.
 
