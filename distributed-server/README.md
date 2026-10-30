@@ -441,6 +441,16 @@ the message shape, the login, the upload id, the metadata name and size limits, 
 the result-code/argument combination. They do not compress, encrypt, or sequence
 the data frames, and they do not inspect the compressed bytes.
 
+Recovery data frames use message type `15` and carry `[payload_length]`: the
+canonical CBOR header is followed immediately by exactly `payload_length`
+compressed bytes. A data frame must declare a non-zero length and carry exactly
+that many bytes, so the codec rejects an empty payload, a zero length, a
+truncated or overlong payload, a header without payload bytes, a non-canonical
+length integer, and trailing bytes. The payload bytes continue the same
+Zstandard stream described by `transfer_compressed_size`; the codec only
+validates the declared length and does not compress, encrypt, or sequence the
+bytes.
+
 ## Frame validation and version negotiation
 
 Frame numbers of one client sequence start at `0`; each following frame increases

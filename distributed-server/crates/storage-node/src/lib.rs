@@ -161,8 +161,9 @@ mod upload_exchange;
 mod version_negotiation;
 
 pub use blob_get::{
-    decode_blob_get, decode_blob_get_result, encode_blob_get, encode_blob_get_result, BlobGet,
-    BlobGetError, BlobGetResult,
+    decode_blob_get, decode_blob_get_data_frame, decode_blob_get_result, encode_blob_get,
+    encode_blob_get_data_frame, encode_blob_get_result, BlobGet, BlobGetData, BlobGetError,
+    BlobGetResult,
 };
 pub use blob_put::{
     decode_blob_put_begin, decode_blob_put_data_frame, decode_blob_put_result,

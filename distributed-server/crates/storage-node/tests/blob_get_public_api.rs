@@ -4,22 +4,28 @@
 //! login text and the external upload id as a 16-byte byte string. Covers
 //! `INT-NET-099 / 1`: the result is `[14, [result_code, result_args]]`, with
 //! `[metadata, transfer_compressed_size]` on success and an empty argument
-//! array on every non-zero code. Covers `INT-NET-116 / 1`: the request keeps the
+//! array on every non-zero code. Covers `INT-NET-100 / 1`: a data frame is
+//! `[15, [payload_length]]` followed by exactly that many compressed bytes.
+//! Covers `INT-NET-116 / 1`: the request keeps the
 //! external upload id that the data frames of one get must match, and the
 //! success result carries the compressed transfer size. Covers `INT-NET-119 / 1`:
 //! a non-zero result code never carries result arguments. Covers
 //! `INT-NET-128 / 1`: the success metadata carries `original_size` and the
 //! transfer size is bounded by `B(original_size)`.
 
+use std::io::Cursor;
 use std::num::NonZeroUsize;
 
 use ciborium::value::Value;
 
 use storage_node::decode_blob_get;
+use storage_node::decode_blob_get_data_frame;
 use storage_node::decode_blob_get_result;
 use storage_node::encode_blob_get;
+use storage_node::encode_blob_get_data_frame;
 use storage_node::encode_blob_get_result;
 use storage_node::BlobGet;
+use storage_node::BlobGetData;
 use storage_node::BlobGetResult;
 use storage_node::BlobMetadata;
 use storage_node::ClientLimits;
@@ -38,6 +44,14 @@ const MAX_FILE_BYTES: u64 = 1000;
 const BLOB_GET_TYPE: u32 = 13;
 /// Message type of the blob-get result envelope.
 const BLOB_GET_RESULT_TYPE: u32 = 14;
+/// Message type of a blob-get data frame.
+const BLOB_GET_DATA_TYPE: u32 = 15;
+/// Number of positions in a blob-get data argument array.
+const DATA_ARGUMENT_COUNT: usize = 1;
+/// Byte offset of the payload-length integer inside the canonical data header.
+const DATA_LENGTH_OFFSET: usize = 3;
+/// Compressed payload used by the accepted data frame.
+const COMPRESSED_PAYLOAD: &[u8] = b"compressed";
 /// Unassigned message type used by the rejection tests.
 const UNKNOWN_MESSAGE_TYPE: u32 = 99;
 /// Successful result code.
@@ -122,6 +136,11 @@ fn decode_value(bytes: &[u8]) -> Value {
     value
 }
 
+fn decode_prefix(bytes: &[u8]) -> Value {
+    let mut cursor = Cursor::new(bytes);
+    ciborium::de::from_reader(&mut cursor).expect("the bytes start with one CBOR value")
+}
+
 fn expect_array(value: &Value) -> &[Value] {
     let Value::Array(elements) = value else {
         panic!("the value must be a CBOR array");
@@ -134,6 +153,13 @@ fn encode_envelope(message_type: u32, arguments: Value) -> Vec<u8> {
         Value::Integer(message_type.into()),
         arguments,
     ]))
+}
+
+fn data_header(payload_length: u32) -> Vec<u8> {
+    encode_envelope(
+        BLOB_GET_DATA_TYPE,
+        Value::Array(vec![Value::Integer(payload_length.into())]),
+    )
 }
 
 fn metadata_value(
@@ -588,6 +614,59 @@ fn rejects_invalid_blob_get_result() {
             .expect("the test success result encodes");
     trailing.push(0);
     assert!(decode_blob_get_result(&trailing, MAX_SOURCE_NAME_LEN, MAX_FILE_BYTES).is_err());
+}
+
+#[test]
+fn round_trips_blob_get_data_frame() {
+    let encoded = encode_blob_get_data_frame(COMPRESSED_PAYLOAD)
+        .expect("a non-empty data payload is accepted");
+    let (header, payload) =
+        decode_blob_get_data_frame(&encoded).expect("the encoded data frame decodes");
+
+    let expected_length =
+        u32::try_from(COMPRESSED_PAYLOAD.len()).expect("the test payload fits a u32");
+    assert_eq!(
+        header,
+        BlobGetData {
+            payload_length: expected_length,
+        }
+    );
+    assert_eq!(payload, COMPRESSED_PAYLOAD);
+
+    let envelope = decode_prefix(&encoded);
+    let envelope = expect_array(&envelope);
+    assert_eq!(envelope.len(), 2);
+    assert_eq!(envelope[0], Value::Integer(BLOB_GET_DATA_TYPE.into()));
+
+    let arguments = expect_array(&envelope[1]);
+    assert_eq!(arguments.len(), DATA_ARGUMENT_COUNT);
+    assert_eq!(arguments[0], Value::Integer(expected_length.into()));
+}
+
+#[test]
+fn rejects_invalid_blob_get_data_frame() {
+    assert!(encode_blob_get_data_frame(&[]).is_err());
+
+    let zero_header = data_header(0);
+    assert!(decode_blob_get_data_frame(&zero_header).is_err());
+
+    let encoded =
+        encode_blob_get_data_frame(COMPRESSED_PAYLOAD).expect("the test data frame encodes");
+
+    let truncated = &encoded[..encoded.len() - 1];
+    assert!(decode_blob_get_data_frame(truncated).is_err());
+
+    let mut extra = encoded.clone();
+    extra.push(0);
+    assert!(decode_blob_get_data_frame(&extra).is_err());
+
+    let header_only =
+        data_header(u32::try_from(COMPRESSED_PAYLOAD.len()).expect("the test payload fits a u32"));
+    assert!(decode_blob_get_data_frame(&header_only).is_err());
+
+    let mut noncanonical = encoded;
+    noncanonical.insert(DATA_LENGTH_OFFSET, 0x18);
+    assert!(decode_blob_get_data_frame(&noncanonical).is_err());
 }
 
 #[test]
