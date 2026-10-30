@@ -108,7 +108,7 @@ internal object FrameBodyCodec {
         if (bodyLength > Int.MAX_VALUE) {
             throw ProtocolEncodingException("frame exceeds the supported size")
         }
-        val signed = ByteArray(LENGTH_PREFIX_BYTES + bodyLength.toInt())
+        val signed = ByteArray(LENGTH_PREFIX_BYTES + headerBytes.size + payload.size)
         writeLength(bodyLength.toInt(), signed)
         headerBytes.copyInto(signed, LENGTH_PREFIX_BYTES)
         payload.copyInto(signed, LENGTH_PREFIX_BYTES + headerBytes.size)
