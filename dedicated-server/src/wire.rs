@@ -2975,10 +2975,13 @@ mod tests {
         };
         let rendered = format!("{message:?}");
         assert!(!rendered.contains("phc"), "{rendered}");
-        assert!(!rendered.contains("0x22"), "{rendered}");
+        assert!(!rendered.contains("34, 34"), "{rendered}");
+        assert!(!rendered.contains("68, 68"), "{rendered}");
+        assert!(!rendered.contains("85, 85"), "{rendered}");
 
         let propose = format!("{:?}", propose());
         assert!(!propose.contains("phc"), "{propose}");
-        assert!(!propose.contains("[68, 68"), "{propose}");
+        assert!(!propose.contains("68, 68"), "{propose}");
+        assert!(!propose.contains("85, 85"), "{propose}");
     }
 }
