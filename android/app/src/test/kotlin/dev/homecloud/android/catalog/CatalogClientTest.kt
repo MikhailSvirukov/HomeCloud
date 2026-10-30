@@ -318,6 +318,30 @@ class CatalogClientTest {
         assertTrue(channel.closed)
     }
 
+    @Test
+    fun `page entries that are not an array are rejected`() {
+        assertPageRejected(
+            ResultEnvelope(
+                ResultCodes.SUCCESS,
+                listOf(CborValue.Bytes(SNAPSHOT_TOKEN), CborValue.Null, CborValue.Text("not-an-array")),
+            ),
+        )
+    }
+
+    @Test
+    fun `entry that is not an array is rejected`() {
+        assertPageRejected(
+            ResultEnvelope(
+                ResultCodes.SUCCESS,
+                listOf(
+                    CborValue.Bytes(SNAPSHOT_TOKEN),
+                    CborValue.Null,
+                    CborValue.Array(listOf(CborValue.Text("not-an-array"))),
+                ),
+            ),
+        )
+    }
+
     private fun assertPageRejected(envelope: ResultEnvelope) {
         val channel = respondingChannel { request -> responseFrame(request, envelope) }
 
