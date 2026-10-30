@@ -28,9 +28,12 @@
 //! AES-256-GCM, the signed application frame body ([`encode_signed_frame`],
 //! [`decode_signed_frame`], [`SignedApplicationFrame`], [`SignedFrameError`])
 //! that prefixes the external header, a 64-byte Ed25519 signature over the
-//! prefix, header, and payload, and the opaque payload, the first-contact
-//! bootstrap payload ([`encode_bootstrap_payload`], [`decode_bootstrap_payload`],
-//! [`BootstrapPayload`]), and the local
+//! prefix, header, and payload, and the opaque payload, the encrypted signed
+//! inter-server message composition ([`encode_server_message`],
+//! [`decode_server_message`], [`ServerMessage`], [`ServerExchangeError`]) that
+//! seals the payload before signing and verifies the signature before opening
+//! it, the first-contact bootstrap payload ([`encode_bootstrap_payload`],
+//! [`decode_bootstrap_payload`], [`BootstrapPayload`]), and the local
 //! OpenRaft runtime ([`RaftNode`]) that restores persisted Raft state from disk,
 //! commits the full upload version metadata, including the SHA-256, the
 //! client-supplied capture/creation time, and the server acceptance time
@@ -132,6 +135,7 @@ mod payload_stream;
 mod raft;
 mod response;
 mod sealing;
+mod server_exchange;
 mod signed_frame;
 mod signing;
 mod storage_layout;
@@ -197,6 +201,9 @@ pub use response::{ResponseError, UploadStatus};
 pub use sealing::{
     open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, ENCAPSULATED_KEY_LEN,
     X25519_KEY_LEN,
+};
+pub use server_exchange::{
+    decode_server_message, encode_server_message, ServerExchangeError, ServerMessage,
 };
 pub use signed_frame::{
     decode_bootstrap_payload, decode_signed_frame, encode_bootstrap_payload, encode_signed_frame,
