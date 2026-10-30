@@ -88,7 +88,7 @@ impl Metrics {
              # HELP homecloud_storage_bytes_used Local bytes used under the accounts and raft roots.\n\
              # TYPE homecloud_storage_bytes_used gauge\n\
              homecloud_storage_bytes_used {storage_bytes_used}\n\
-             # HELP homecloud_raft_leader Whether the local node currently knows a Raft leader.\n\
+             # HELP homecloud_raft_leader Whether this node is the current Raft leader.\n\
              # TYPE homecloud_raft_leader gauge\n\
              homecloud_raft_leader {raft_leader}\n\
              # HELP homecloud_raft_term Current Raft term.\n\
@@ -404,4 +404,17 @@ where
     );
     stream.write_all(response.as_bytes()).await?;
     stream.shutdown().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_route;
+
+    #[test]
+    fn parse_route_rejects_malformed_request_lines() {
+        assert_eq!(parse_route("GET /metrics"), None);
+        assert_eq!(parse_route("GET /metrics HTTP/2.0"), None);
+        assert_eq!(parse_route("GET /metrics HTTP/1.1 extra"), None);
+        assert_eq!(parse_route(""), None);
+    }
 }

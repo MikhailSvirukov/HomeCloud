@@ -264,6 +264,18 @@ fn renders_raft_and_catalog_state_gauges() {
     assert_unlabelled_gauge(&body, CATALOG_VERSIONS_METRIC, CATALOG_VERSIONS);
 }
 
+#[test]
+fn renders_absent_raft_state_as_zero() {
+    let metrics = Metrics::new(queue_capacity());
+    metrics.set_raft_state(false, 0, None, 0);
+
+    let body = metrics.render();
+    assert_unlabelled_gauge(&body, RAFT_LEADER_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_TERM_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_LAST_APPLIED_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_VOTERS_METRIC, 0);
+}
+
 #[tokio::test]
 async fn uses_only_bounded_static_labels() {
     let server = TestServer::start().await;

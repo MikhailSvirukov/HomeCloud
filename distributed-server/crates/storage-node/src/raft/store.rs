@@ -138,6 +138,11 @@ impl MemStore {
     pub(super) async fn committed_versions(&self) -> BTreeMap<UploadId, CommittedVersion> {
         self.inner.read().await.catalog.clone()
     }
+
+    /// Returns the number of applied catalog versions without copying them.
+    pub(super) async fn committed_version_count(&self) -> usize {
+        self.inner.read().await.catalog.len()
+    }
 }
 
 /// Syncs the directory that contains `path` so a rename survives a crash.

@@ -420,9 +420,13 @@ async fn run_node(
         }
         None => None,
     };
-    let raft_metrics = runtime
-        .as_ref()
-        .map(|runtime| (runtime.node(), runtime.voter_count()));
+    let raft_metrics = runtime.as_ref().map(|runtime| {
+        (
+            runtime.node(),
+            runtime.local().node_id(),
+            runtime.voter_count(),
+        )
+    });
 
     let listener = match Listener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
@@ -477,8 +481,13 @@ async fn run_node(
     let metrics_task = tokio::spawn(metrics_server.serve());
     let storage_usage_task =
         tokio::spawn(refresh_storage_usage(layout.clone(), Arc::clone(&metrics)));
-    let raft_metrics_task = raft_metrics.map(|(node, voters)| {
-        tokio::spawn(refresh_raft_metrics(node, voters, Arc::clone(&metrics)))
+    let raft_metrics_task = raft_metrics.map(|(node, node_id, voters)| {
+        tokio::spawn(refresh_raft_metrics(
+            node,
+            node_id,
+            voters,
+            Arc::clone(&metrics),
+        ))
     });
 
     let outcome = match runtime {
@@ -528,19 +537,24 @@ async fn refresh_storage_usage(layout: StorageLayout, metrics: Arc<Metrics>) {
 }
 
 /// Refreshes the Raft and catalog gauges every `RAFT_METRICS_REFRESH_PERIOD`.
-async fn refresh_raft_metrics(node: Arc<RaftNode>, voters: u64, metrics: Arc<Metrics>) {
+async fn refresh_raft_metrics(
+    node: Arc<RaftNode>,
+    node_id: u64,
+    voters: u64,
+    metrics: Arc<Metrics>,
+) {
     let mut interval = tokio::time::interval(RAFT_METRICS_REFRESH_PERIOD);
     loop {
         interval.tick().await;
         let status = node.status();
         metrics.set_raft_state(
-            status.current_leader.is_some(),
+            status.current_leader == Some(node_id),
             status.current_term,
             status.last_applied,
             voters,
         );
-        let versions = node.committed_versions().await;
-        metrics.set_catalog_versions(u64::try_from(versions.len()).unwrap_or(u64::MAX));
+        let versions = node.committed_version_count().await;
+        metrics.set_catalog_versions(u64::try_from(versions).unwrap_or(u64::MAX));
     }
 }
 

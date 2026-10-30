@@ -295,6 +295,11 @@ impl RaftNode {
         self.store.committed_versions().await
     }
 
+    /// Returns the number of applied catalog versions without copying them.
+    pub async fn committed_version_count(&self) -> usize {
+        self.store.committed_version_count().await
+    }
+
     /// Handles one encoded Raft RPC by passing it to the local OpenRaft instance and returns the encoded reply.
     pub async fn handle_rpc(&self, bytes: &[u8]) -> Result<Vec<u8>, RaftError> {
         let bytes = crate::message::decode_raft_rpc(bytes)?;
