@@ -16,9 +16,12 @@
 //! async byte stream, the payload streaming path ([`send_payload`],
 //! [`write_chain`]) that frames pooled chunks onto a [`FrameWriter`], and the
 //! TCP listener ([`Listener`]) that yields frame reader/writer halves per
-//! accepted connection, and the node runtime ([`serve`]) that accepts
-//! connections until shutdown and serves each frame pump on its own task, and
-//! the bounded CPU pool ([`CpuPool`]) that runs CPU-bound work off the Tokio
+//! accepted connection, the node runtime ([`serve`]) that accepts connections
+//! until shutdown and serves each frame pump on its own task, the
+//! manifest-validated runtime wiring ([`RaftRuntime`], [`RuntimeError`]) that
+//! starts the local OpenRaft instance and serves encrypted peer RPC sessions
+//! before the listener is opened, and the bounded CPU pool ([`CpuPool`]) that
+//! runs CPU-bound work off the Tokio
 //! worker threads, the on-disk storage layout ([`StorageLayout`]) with
 //! separate accounts and Raft roots and hex-encoded account/blob paths, the
 //! static TOML manifest ([`StaticManifest`], [`ManifestError`]) that validates
@@ -143,6 +146,7 @@ mod payload;
 mod payload_stream;
 mod raft;
 mod response;
+mod runtime;
 mod sealing;
 mod server_exchange;
 mod server_session;
@@ -210,6 +214,7 @@ pub use raft::{
     RaftTransportError,
 };
 pub use response::{ResponseError, UploadStatus};
+pub use runtime::{RaftRuntime, RuntimeError};
 pub use sealing::{
     open, seal, RecipientPrivateKey, RecipientPublicKey, SealingError, ENCAPSULATED_KEY_LEN,
     X25519_KEY_LEN,

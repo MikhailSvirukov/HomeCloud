@@ -3,16 +3,21 @@
 //! Reads and validates the node configuration from environment variables,
 //! loads the configured private key files, prepares the accounts and raft
 //! directories under the configured data root, emits a structured startup log,
-//! binds the listen address, and serves frame connections until it receives a
-//! Ctrl-C shutdown signal. The `io_uring` disk thread is a later increment.
+//! and serves until it receives a Ctrl-C shutdown signal. When a static
+//! manifest is configured, the local identity and keys are validated against
+//! it and the local OpenRaft runtime is started before the listener is opened,
+//! optionally bootstrapping the fixed voter set; otherwise the listener keeps
+//! serving frame connections directly. The `io_uring` disk thread is a later
+//! increment.
 
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
 use storage_node::{
     serve, start_logging, Listener, LogEvent, LogLevel, Logger, Metrics, MetricsServer, NodeConfig,
-    PrivateKey, StateChange, StorageLayout, PROTOCOL_VERSION,
+    PrivateKey, RaftRuntime, StateChange, StaticManifest, StorageLayout, PROTOCOL_VERSION,
 };
 
 /// Default log filter used when `RUST_LOG` is unset or unparsable.
@@ -30,6 +35,10 @@ const ENV_DATA_DIR: &str = "DATA_DIR";
 const ENV_ENCRYPTION_KEY_PATH: &str = "ENCRYPTION_KEY_PATH";
 /// Environment variable carrying the signing key file path.
 const ENV_SIGNING_KEY_PATH: &str = "SIGNING_KEY_PATH";
+/// Environment variable carrying the static manifest file path.
+const ENV_MANIFEST_PATH: &str = "MANIFEST_PATH";
+/// Environment variable selecting the explicit initial Raft bootstrap.
+const ENV_RAFT_BOOTSTRAP: &str = "RAFT_BOOTSTRAP";
 /// Environment variable carrying the maximum frame length.
 const ENV_MAX_FRAME_LEN: &str = "MAX_FRAME_LEN";
 /// Environment variable carrying the per-connection queue capacity.
@@ -152,6 +161,8 @@ async fn run() -> ExitCode {
     let data_dir = env_value(ENV_DATA_DIR);
     let encryption_key_path = env_value(ENV_ENCRYPTION_KEY_PATH);
     let signing_key_path = env_value(ENV_SIGNING_KEY_PATH);
+    let manifest_path_value = env_value(ENV_MANIFEST_PATH);
+    let raft_bootstrap_value = env_value(ENV_RAFT_BOOTSTRAP);
     let max_frame_len = env_value(ENV_MAX_FRAME_LEN);
     let queue_capacity = env_value(ENV_QUEUE_CAPACITY);
     let metrics_bind_addr = env_value(ENV_METRICS_BIND_ADDR);
@@ -173,6 +184,16 @@ async fn run() -> ExitCode {
     let log_max_file_bytes = env_value(ENV_LOG_MAX_FILE_BYTES);
     let log_max_total_bytes = env_value(ENV_LOG_MAX_TOTAL_BYTES);
     let log_max_file_age_seconds = env_value(ENV_LOG_MAX_FILE_AGE_SECONDS);
+
+    let Some(raft_bootstrap) = parse_bootstrap(&raft_bootstrap_value) else {
+        tracing::error!(value = %raft_bootstrap_value, "invalid RAFT_BOOTSTRAP value");
+        return ExitCode::FAILURE;
+    };
+    let manifest_path = if manifest_path_value.is_empty() {
+        None
+    } else {
+        Some(Path::new(manifest_path_value.as_str()))
+    };
 
     let pairs = [
         (KEY_NODE_ID, node_id.as_str()),
@@ -235,7 +256,7 @@ async fn run() -> ExitCode {
     let logger = logging.logger().clone();
     logger.log(LogEvent::state_change(LogLevel::Info, StateChange::Started));
 
-    let success = run_node(&config, &logger).await;
+    let success = run_node(&config, manifest_path, raft_bootstrap, &logger).await;
     let stopped_level = if success {
         LogLevel::Info
     } else {
@@ -252,9 +273,15 @@ async fn run() -> ExitCode {
     }
 }
 
-/// Loads keys, prepares the layout, binds the listeners, and serves until stopped.
-async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
-    let _encryption_key = match PrivateKey::load(&config.encryption_key_path) {
+/// Loads keys, prepares the layout, optionally starts the manifest-validated
+/// Raft runtime, binds the listeners, and serves until stopped.
+async fn run_node(
+    config: &NodeConfig,
+    manifest_path: Option<&Path>,
+    raft_bootstrap: bool,
+    logger: &Logger,
+) -> bool {
+    let encryption_key = match PrivateKey::load(&config.encryption_key_path) {
         Ok(key) => key,
         Err(error) => {
             tracing::error!(error = %error, "failed to load the encryption key");
@@ -265,7 +292,7 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
             return false;
         }
     };
-    let _signing_key = match PrivateKey::load(&config.signing_key_path) {
+    let signing_key = match PrivateKey::load(&config.signing_key_path) {
         Ok(key) => key,
         Err(error) => {
             tracing::error!(error = %error, "failed to load the signing key");
@@ -311,6 +338,70 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
         LogLevel::Info,
         StateChange::LayoutReady,
     ));
+
+    let runtime = match manifest_path {
+        Some(path) => {
+            let manifest = match StaticManifest::load(path) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        manifest_path = %path.display(),
+                        "failed to load the static manifest"
+                    );
+                    logger.log(LogEvent::state_change(
+                        LogLevel::Error,
+                        StateChange::DependencyUnavailable,
+                    ));
+                    return false;
+                }
+            };
+            let runtime = match RaftRuntime::start(
+                &manifest,
+                config.node_id.as_str(),
+                &config.listen_addr,
+                &encryption_key,
+                &signing_key,
+                config.max_frame_len,
+                &config.client_limits,
+                layout.raft_dir(),
+            )
+            .await
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        manifest_path = %path.display(),
+                        "failed to start the Raft runtime"
+                    );
+                    logger.log(LogEvent::state_change(
+                        LogLevel::Error,
+                        StateChange::DependencyUnavailable,
+                    ));
+                    return false;
+                }
+            };
+            if raft_bootstrap {
+                match runtime.initialize().await {
+                    Ok(()) => {
+                        tracing::info!(manifest_path = %path.display(), "Raft cluster bootstrapped");
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "failed to initialize the Raft cluster");
+                        logger.log(LogEvent::state_change(
+                            LogLevel::Error,
+                            StateChange::DependencyUnavailable,
+                        ));
+                        return false;
+                    }
+                }
+            }
+            tracing::info!(manifest_path = %path.display(), "Raft runtime started");
+            Some(runtime)
+        }
+        None => None,
+    };
 
     let listener = match Listener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
@@ -366,14 +457,19 @@ async fn run_node(config: &NodeConfig, logger: &Logger) -> bool {
     let storage_usage_task =
         tokio::spawn(refresh_storage_usage(layout.clone(), Arc::clone(&metrics)));
 
-    let outcome = serve(
-        listener,
-        shutdown_signal(),
-        config.max_frame_len,
-        config.queue_capacity,
-        Some(logger.clone()),
-    )
-    .await;
+    let outcome = match runtime {
+        Some(runtime) => runtime.serve(listener, shutdown_signal()).await,
+        None => {
+            serve(
+                listener,
+                shutdown_signal(),
+                config.max_frame_len,
+                config.queue_capacity,
+                Some(logger.clone()),
+            )
+            .await
+        }
+    };
     metrics_task.abort();
     storage_usage_task.abort();
 
@@ -440,6 +536,15 @@ async fn read_metrics_tls_file(kind: &str, path: &std::path::Path) -> std::io::R
 async fn shutdown_signal() {
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!(error = %error, "failed to listen for the shutdown signal");
+    }
+}
+
+/// Parses the explicit bootstrap flag; an unrecognized value yields `None`.
+fn parse_bootstrap(value: &str) -> Option<bool> {
+    match value {
+        "" | "false" | "0" => Some(false),
+        "true" | "1" => Some(true),
+        _ => None,
     }
 }
 

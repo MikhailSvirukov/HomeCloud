@@ -45,6 +45,12 @@ impl Listener {
         Ok(address)
     }
 
+    /// Accepts one raw TCP stream and its peer address for a protocol session.
+    pub async fn accept_stream(&self) -> Result<(TcpStream, SocketAddr)> {
+        let (stream, peer) = self.listener.accept().await?;
+        Ok((stream, peer))
+    }
+
     /// Accepts one connection, returning its frame reader/writer halves and the
     /// peer address; frames are bounded by `max_frame_len`.
     pub async fn accept(
