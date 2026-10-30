@@ -144,6 +144,16 @@ internal object CborEncoder {
 }
 
 /**
+ * One decoded CBOR value together with the number of bytes it occupied from the decoding offset.
+ *
+ * Bytes after the first value are not included in the count.
+ */
+internal data class DecodedCbor(
+    val value: CborValue,
+    val consumedBytes: Int,
+)
+
+/**
  * Reads the deterministic CBOR subset (`INT-NET-005`, `INT-NET-047`, `INT-NET-049`).
  *
  * Only definite lengths and head forms with the shortest argument encoding are accepted. Input is
@@ -154,7 +164,7 @@ internal object CborEncoder {
  */
 internal object CborDecoder {
     fun decode(bytes: ByteArray): CborValue {
-        val decoder = Decoder(bytes)
+        val decoder = Decoder(bytes, INITIAL_OFFSET)
         val value = decoder.readValue(INITIAL_NESTING_DEPTH)
         if (decoder.hasRemaining()) {
             throw ProtocolEncodingException("trailing bytes after the CBOR value")
@@ -162,12 +172,35 @@ internal object CborDecoder {
         return value
     }
 
+    /**
+     * Decodes exactly one deterministic CBOR value from the given offset and reports how many bytes
+     * it consumed, so a value followed by other fields can be read without rejecting the remaining
+     * bytes (`INT-NET-081`).
+     *
+     * The encoding rules and truncation checks are the same as for a complete input; an offset
+     * outside the input is rejected.
+     */
+    fun decodePrefix(
+        bytes: ByteArray,
+        offset: Int = INITIAL_OFFSET,
+    ): DecodedCbor {
+        if (offset !in 0..bytes.size) {
+            throw ProtocolEncodingException("CBOR input offset is out of range")
+        }
+        val decoder = Decoder(bytes, offset)
+        val value = decoder.readValue(INITIAL_NESTING_DEPTH)
+        return DecodedCbor(value = value, consumedBytes = decoder.consumedBytes(offset))
+    }
+
     private class Decoder(
         private val bytes: ByteArray,
+        start: Int,
     ) {
-        private var position = 0
+        private var position = start
 
         fun hasRemaining(): Boolean = position < bytes.size
+
+        fun consumedBytes(start: Int): Int = position - start
 
         fun readValue(depth: Int): CborValue {
             val head = readHead()
@@ -354,6 +387,7 @@ private const val BITS_PER_BYTE = 8
 private const val BYTE_MASK = 0xFFL
 private const val BYTE_MASK_INT = 0xFF
 private const val MAX_LENGTH = 2_147_483_647L
+private const val INITIAL_OFFSET = 0
 private const val INITIAL_NESTING_DEPTH = 0
 private const val MAX_NESTING_DEPTH = 64
 private const val SIMPLE_NULL = 0xF6
