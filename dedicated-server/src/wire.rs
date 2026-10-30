@@ -1328,12 +1328,12 @@ impl InterServerMessage {
                 let installation_id = uuid(&arguments[3], message_type, 3)?;
                 let x25519_key = message_key(&arguments[4], message_type, 4)?;
                 let ed25519_key = message_key(&arguments[5], message_type, 5)?;
-                let expected_verifier = message_text_or_null(&arguments[6], message_type, 6)?;
-                let new_verifier = message_text_or_null(&arguments[7], message_type, 7)?;
+                let expected_verifier = message_text_or_null_ref(&arguments[6], message_type, 6)?;
+                let new_verifier = message_text_or_null_ref(&arguments[7], message_type, 7)?;
                 if expected_verifier.is_some() == new_verifier.is_some() {
                     return Err(WireError::VerifierPair);
                 }
-                if let Some(verifier) = expected_verifier.as_deref().or(new_verifier.as_deref()) {
+                if let Some(verifier) = expected_verifier.or(new_verifier) {
                     validate_verifier(verifier, max_verifier_bytes)?;
                 }
                 Ok(Self::RegistrationPropose {
@@ -1343,8 +1343,8 @@ impl InterServerMessage {
                     installation_id,
                     x25519_key,
                     ed25519_key,
-                    expected_verifier,
-                    new_verifier,
+                    expected_verifier: expected_verifier.map(str::to_owned),
+                    new_verifier: new_verifier.map(str::to_owned),
                 })
             }
             MessageType::RegistrationResult => {
@@ -1438,9 +1438,11 @@ fn decode_snapshot(
     let account = match &fields[1] {
         Value::Null => None,
         Value::Array(account) if account.len() == 1 => {
-            let verifier = message_text(&account[0], message_type, 1)?.to_owned();
-            validate_verifier(&verifier, max_verifier_bytes)?;
-            Some(AccountRecord { verifier })
+            let verifier = message_text(&account[0], message_type, 1)?;
+            validate_verifier(verifier, max_verifier_bytes)?;
+            Some(AccountRecord {
+                verifier: verifier.to_owned(),
+            })
         }
         _ => {
             return Err(WireError::WrongMessageArgumentType {
@@ -1597,6 +1599,21 @@ fn message_text_or_null(
     match value {
         Value::Null => Ok(None),
         Value::Text(text) => Ok(Some(text.clone())),
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index,
+        }),
+    }
+}
+
+fn message_text_or_null_ref(
+    value: &Value,
+    message_type: MessageType,
+    index: usize,
+) -> Result<Option<&str>> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Text(text) => Ok(Some(text.as_str())),
         _ => Err(WireError::WrongMessageArgumentType {
             message_type,
             index,
@@ -2768,5 +2785,200 @@ mod tests {
             message.encode(MAX_VERIFIER_BYTES),
             Err(WireError::MissingResultArguments)
         ));
+    }
+
+    #[test]
+    fn the_existing_account_propose_encodes_the_expected_verifier() {
+        let message = InterServerMessage::RegistrationPropose {
+            login: "alice".to_owned(),
+            registration_request_id: [0x11; IDENTIFIER_BYTES],
+            content_tag: [0x22; KEY_BYTES],
+            installation_id: [0x33; IDENTIFIER_BYTES],
+            x25519_key: [0x44; KEY_BYTES],
+            ed25519_key: [0x55; KEY_BYTES],
+            expected_verifier: Some("phc".to_owned()),
+            new_verifier: None,
+        };
+        let bytes = message
+            .encode(MAX_VERIFIER_BYTES)
+            .expect("encoding must work");
+        let tail = &bytes[bytes.len() - 4..];
+        assert_eq!(tail, [0x63, b'p', b'h', b'c']);
+        assert_eq!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_verifier_at_the_limit_is_accepted() {
+        let mut message = propose();
+        if let InterServerMessage::RegistrationPropose { new_verifier, .. } = &mut message {
+            *new_verifier = Some("abc".to_owned());
+        }
+        let bytes = message.encode(3).expect("encoding must work");
+        assert_eq!(
+            InterServerMessage::decode(&bytes, 3).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_result_code_is_rejected_in_registry_results() {
+        for code in [5_u64, 7] {
+            let bytes = encode_value(&Value::Array(vec![
+                Value::Integer(code.into()),
+                Value::Array(vec![
+                    Value::Integer(0x1_0000_0000_u64.into()),
+                    Value::Array(Vec::new()),
+                ]),
+            ]))
+            .expect("encoding must work");
+            assert!(matches!(
+                InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+                Err(WireError::MessageArgumentOutOfRange { .. })
+            ));
+        }
+    }
+
+    fn propose_value(expected: Value, new: Value) -> Vec<u8> {
+        encode_value(&Value::Array(vec![
+            Value::Integer(6.into()),
+            Value::Array(vec![
+                Value::Text("alice".to_owned()),
+                Value::Bytes(vec![0x11; IDENTIFIER_BYTES]),
+                Value::Bytes(vec![0x22; KEY_BYTES]),
+                Value::Bytes(vec![0x33; IDENTIFIER_BYTES]),
+                Value::Bytes(vec![0x44; KEY_BYTES]),
+                Value::Bytes(vec![0x55; KEY_BYTES]),
+                expected,
+                new,
+            ]),
+        ]))
+        .expect("encoding must work")
+    }
+
+    #[test]
+    fn a_decoded_propose_with_both_or_neither_verifier_is_rejected() {
+        let both = propose_value(Value::Text("phc".to_owned()), Value::Text("phc".to_owned()));
+        assert!(matches!(
+            InterServerMessage::decode(&both, MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierPair)
+        ));
+
+        let neither = propose_value(Value::Null, Value::Null);
+        assert!(matches!(
+            InterServerMessage::decode(&neither, MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierPair)
+        ));
+    }
+
+    #[test]
+    fn a_decoded_over_limit_or_non_ascii_verifier_is_rejected() {
+        let long = propose_value(Value::Text("abcd".to_owned()), Value::Null);
+        assert!(matches!(
+            InterServerMessage::decode(&long, 3),
+            Err(WireError::VerifierTooLong { actual: 4, max: 3 })
+        ));
+
+        let non_ascii = propose_value(Value::Text("п".to_owned()), Value::Null);
+        assert!(matches!(
+            InterServerMessage::decode(&non_ascii, MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierNotAscii)
+        ));
+    }
+
+    #[test]
+    fn a_failed_lookup_with_arguments_is_rejected_on_decode() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(5.into()),
+            Value::Array(vec![
+                Value::Integer(1.into()),
+                Value::Array(vec![
+                    Value::Integer(7.into()),
+                    Value::Null,
+                    Value::Null,
+                    Value::Null,
+                ]),
+            ]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::WrongMessageArgumentCount {
+                expected: 0,
+                actual: 4,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_success_registration_without_arguments_is_rejected_on_decode() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(7.into()),
+            Value::Array(vec![Value::Integer(0.into()), Value::Array(Vec::new())]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::WrongMessageArgumentCount {
+                expected: 2,
+                actual: 0,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_lookup_result_with_a_malformed_record_is_rejected() {
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(5.into()),
+            Value::Array(vec![
+                Value::Integer(0.into()),
+                Value::Array(vec![
+                    Value::Integer(7.into()),
+                    Value::Array(vec![Value::Text("phc".to_owned()), Value::Null]),
+                    Value::Null,
+                    Value::Null,
+                ]),
+            ]),
+        ]))
+        .expect("encoding must work");
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::WrongMessageArgumentType { index: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn a_registry_message_with_trailing_bytes_is_rejected() {
+        let mut bytes = lookup_request(Some("alice"), None, None)
+            .encode(MAX_VERIFIER_BYTES)
+            .expect("encoding must work");
+        bytes.push(0x00);
+
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::TrailingBytes)
+        ));
+    }
+
+    #[test]
+    fn debug_output_omits_verifiers_tags_and_keys() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 0,
+            snapshot: Some(snapshot()),
+        };
+        let rendered = format!("{message:?}");
+        assert!(!rendered.contains("phc"), "{rendered}");
+        assert!(!rendered.contains("0x22"), "{rendered}");
+
+        let propose = format!("{:?}", propose());
+        assert!(!propose.contains("phc"), "{propose}");
+        assert!(!propose.contains("[68, 68"), "{propose}");
     }
 }
