@@ -116,6 +116,17 @@ pub fn encode_signed_frame(
     Ok(frame)
 }
 
+/// Parses the external header from a framed message without verifying its signature.
+pub fn peek_external_header(
+    bytes: &[u8],
+    max_frame_len: NonZeroU32,
+    limits: &ClientLimits,
+) -> Result<ExternalHeader> {
+    let (_, body) = split_frame(bytes, max_frame_len)?;
+    let (header, _) = decode_frame_header(body, limits)?;
+    Ok(header)
+}
+
 /// Decodes and verifies a signed frame before returning its header and opaque payload.
 pub fn decode_signed_frame(
     bytes: &[u8],
@@ -123,25 +134,8 @@ pub fn decode_signed_frame(
     max_frame_len: NonZeroU32,
     limits: &ClientLimits,
 ) -> Result<SignedApplicationFrame> {
-    let Some((prefix, body)) = bytes.split_at_checked(FRAME_LENGTH_PREFIX_LEN) else {
-        return Err(SignedFrameError::TooShort);
-    };
-    let prefix: [u8; FRAME_LENGTH_PREFIX_LEN] =
-        prefix.try_into().map_err(|_| SignedFrameError::TooShort)?;
-    let declared = FrameLength::decode(prefix, max_frame_len)?.get() as usize;
-    if body.len() != declared {
-        return Err(SignedFrameError::LengthMismatch);
-    }
-
-    let mut header_cursor = Cursor::new(body);
-    ciborium::de::from_reader::<Value, _>(&mut header_cursor)
-        .map_err(|_| SignedFrameError::Decode)?;
-    let header_len =
-        usize::try_from(header_cursor.position()).map_err(|_| SignedFrameError::Decode)?;
-    if header_len > body.len() {
-        return Err(SignedFrameError::Decode);
-    }
-    let header = decode_external_header(&body[..header_len], limits)?;
+    let (prefix, body) = split_frame(bytes, max_frame_len)?;
+    let (header, header_len) = decode_frame_header(body, limits)?;
 
     let signature_end = header_len
         .checked_add(SIGNATURE_LEN)
@@ -164,6 +158,35 @@ pub fn decode_signed_frame(
         header,
         payload: payload.to_vec(),
     })
+}
+
+fn split_frame(
+    bytes: &[u8],
+    max_frame_len: NonZeroU32,
+) -> Result<([u8; FRAME_LENGTH_PREFIX_LEN], &[u8])> {
+    let Some((prefix, body)) = bytes.split_at_checked(FRAME_LENGTH_PREFIX_LEN) else {
+        return Err(SignedFrameError::TooShort);
+    };
+    let prefix: [u8; FRAME_LENGTH_PREFIX_LEN] =
+        prefix.try_into().map_err(|_| SignedFrameError::TooShort)?;
+    let declared = FrameLength::decode(prefix, max_frame_len)?.get() as usize;
+    if body.len() != declared {
+        return Err(SignedFrameError::LengthMismatch);
+    }
+    Ok((prefix, body))
+}
+
+fn decode_frame_header(body: &[u8], limits: &ClientLimits) -> Result<(ExternalHeader, usize)> {
+    let mut header_cursor = Cursor::new(body);
+    ciborium::de::from_reader::<Value, _>(&mut header_cursor)
+        .map_err(|_| SignedFrameError::Decode)?;
+    let header_len =
+        usize::try_from(header_cursor.position()).map_err(|_| SignedFrameError::Decode)?;
+    if header_len > body.len() {
+        return Err(SignedFrameError::Decode);
+    }
+    let header = decode_external_header(&body[..header_len], limits)?;
+    Ok((header, header_len))
 }
 
 /// Encodes the unencrypted first-contact bootstrap payload.

@@ -82,11 +82,14 @@ clients; it does not relay Raft or blob traffic.
   and first-contact bootstrap payload codecs), `src/server_exchange.rs`
   (encrypted signed inter-server message composition that seals the plaintext
   for the recipient before signing the frame and verifies the signature before
-  opening it), and `src/server_transport.rs` (direct encrypted TCP transport
+  opening it), `src/server_transport.rs` (direct encrypted TCP transport
   that resolves a Raft peer from a trusted peer directory, opens one TCP
   connection per RPC, sends the signed and HPKE-sealed `[3, [rpc_bytes]]`
   envelope, and accepts a reply only when it verifies and decrypts with the
-  peer's configured keys and carries the requested sender and request ids).
+  peer's configured keys and carries the requested sender and request ids),
+  and `src/server_session.rs` (incoming peer session that resolves the sender,
+  verifies and decrypts one request, dispatches its RPC plaintext, and writes
+  the correlated signed and sealed reply with the local responder label).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `frame_validation_public_api.rs`,
@@ -107,7 +110,8 @@ clients; it does not relay Raft or blob traffic.
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
   `signed_frame_public_api.rs`, `server_exchange_public_api.rs`,
-  `server_transport_public_api.rs`, `message_public_api.rs`,
+  `server_transport_public_api.rs`, `server_session_public_api.rs`,
+  `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
@@ -366,6 +370,25 @@ sender produces a frame `InvalidSignature` error before any payload is decrypted
 and a wrong recipient private key produces `SealingError::Open`. The returned
 message carries the verified external header and the decrypted plaintext, and its
 Debug form reports the plaintext length instead of the bytes.
+
+## Peer session handling
+
+`serve_peer_connection` handles one incoming encrypted peer connection. It reads
+exactly one request frame, parses the external header, and resolves the sender in
+the local trusted peer directory by its sender id before signature verification
+and decryption. A sender that is absent from the directory is rejected without
+calling the RPC handler. The session also rejects a header that is not an ordinary
+correlated request, including a missing sender id, a non-zero frame number, or a
+non-null upload id or bootstrap key. Only then does it verify the frame signature
+with the resolved peer key and open the payload for the local recipient key.
+
+The decrypted plaintext of a Raft RPC is the `[3, [rpc_bytes]]` envelope, which
+the handler receives unchanged. A successful handler reply is sealed for the
+resolved peer and signed with the local signing key. The response repeats the
+request id, uses frame number zero, carries `upload_id = null` and
+`bootstrap_signing_public_key = null`, and names the local sender and responder
+label. A handler failure or a rejected request produces no application reply, and
+the connection carries one request only.
 
 ## Metrics
 

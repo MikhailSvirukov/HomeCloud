@@ -99,6 +99,11 @@ impl PeerDirectory {
     pub fn get(&self, node_id: NodeId) -> Option<&Peer> {
         self.peers.get(&node_id)
     }
+
+    /// Returns the peer registered with `sender_id`.
+    pub fn by_sender(&self, sender_id: [u8; SENDER_ID_LEN]) -> Option<&Peer> {
+        self.peers.values().find(|peer| peer.sender_id == sender_id)
+    }
 }
 
 /// Failure modes when building a trusted peer table.
