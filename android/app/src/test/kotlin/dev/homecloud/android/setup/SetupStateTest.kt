@@ -126,6 +126,16 @@ class SetupStateTest {
     }
 
     @Test
+    fun `save failure clears an in progress registration`() {
+        val state = SetupStateMachine.registering(initialState())
+
+        val failedState = SetupStateMachine.saveFailed(state)
+
+        assertTrue(failedState.saveFailed)
+        assertEquals(RegistrationStatus.NONE, failedState.registration)
+    }
+
+    @Test
     fun `save failure is marked without changing the rest of the state`() {
         val state =
             SetupStateMachine.edit(

@@ -118,7 +118,7 @@ internal fun SetupContent(
         }
         Button(
             onClick = onSubmit,
-            enabled = state.validation.isValid,
+            enabled = state.validation.isValid && state.registration != RegistrationStatus.IN_PROGRESS,
         ) {
             Text(text = stringResource(R.string.setup_submit_action))
         }

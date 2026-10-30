@@ -137,7 +137,11 @@ internal object SetupStateMachine {
         )
     }
 
-    fun saveFailed(state: SetupState): SetupState = state.copy(saveFailed = true)
+    fun saveFailed(state: SetupState): SetupState =
+        state.copy(
+            saveFailed = true,
+            registration = RegistrationStatus.NONE,
+        )
 
     /** Marks that a valid submission started a registration attempt (`FR-AND-042 / 1`). */
     fun registering(state: SetupState): SetupState =

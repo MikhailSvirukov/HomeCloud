@@ -33,6 +33,7 @@ import dev.homecloud.android.registration.RegistrationComposition
 import dev.homecloud.android.registration.RegistrationController
 import dev.homecloud.android.registration.RegistrationOutcome
 import dev.homecloud.android.setup.FileSetupConfigStore
+import dev.homecloud.android.setup.RegistrationStatus
 import dev.homecloud.android.setup.SetupConfigStore
 import dev.homecloud.android.setup.SetupContent
 import dev.homecloud.android.setup.SetupPrerequisites
@@ -199,11 +200,11 @@ private fun SetupSection(
         onDraftChange = { draft -> state = SetupStateMachine.edit(state, draft) },
         onSubmit = {
             val submission = SetupStateMachine.submit(current)
-            if (submission != null) {
+            if (submission != null && state.registration != RegistrationStatus.IN_PROGRESS) {
                 state = SetupStateMachine.registering(state)
                 scope.launch {
                     if (persist(store, submission)) {
-                        state = SetupStateMachine.saved(state, submission.configuration)
+                        state = SetupStateMachine.registering(SetupStateMachine.saved(state, submission.configuration))
                         val controller =
                             registrationController
                                 ?: RegistrationComposition.controller(context).also { created ->

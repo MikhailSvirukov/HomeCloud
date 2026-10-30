@@ -116,6 +116,15 @@ class SetupContentTest {
     }
 
     @Test
+    fun `submit is disabled while a registration is in progress`() {
+        val state = SetupStateMachine.registering(stateFor(validDraft(), unmetPrerequisites()))
+
+        render(state)
+
+        composeRule.onNodeWithText(submitAction()).performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
     fun `minimum port keeps submit enabled`() {
         render(stateFor(validDraft().copy(port = MIN_PORT), unmetPrerequisites()))
 
