@@ -7,10 +7,7 @@
 //! `CFG-CL-034 / 2`: the manifest is TOML 1.0 encoded as UTF-8. Covers
 //! `CFG-CL-038 / 1`: required fields are checked and unknown or duplicate
 //! fields are rejected. Covers `NFR-SEC-008 / 1`: the manifest carries only
-//! open keys. Covers `CFG-CL-033 / 1`, `CFG-CL-039 / 1`, and
-//! `CFG-CL-040 / 1`: private keys stay outside the manifest, and a manifest
-//! error stops startup before any listener is opened and without exposing key
-//! material. Covers `FR-CL-015 / 1`, `FR-CL-017 / 1`, and `FR-CL-027 / 1`:
+//! open keys. Covers `FR-CL-015 / 1`, `FR-CL-017 / 1`, and `FR-CL-027 / 1`:
 //! Raft membership is the fixed set of storage nodes from the manifest, and
 //! `INT-NET-071 / 1`: each node's `sender_id` is a unique UUID that is stable
 //! across restarts and label changes.
@@ -330,6 +327,12 @@ fn rejects_missing_unknown_duplicate_and_malformed_toml() {
     let unknown_field = format!("{}unknown = \"value\"\n", valid_manifest());
     assert!(matches!(parse_error(&unknown_field), ManifestError::Toml));
 
+    let top_level_unknown = format!("unknown = \"value\"\n{}", valid_manifest());
+    assert!(matches!(
+        parse_error(&top_level_unknown),
+        ManifestError::Toml
+    ));
+
     let duplicate_key = valid_manifest().replace(
         "label = \"dedicated\"\n",
         "label = \"dedicated\"\nlabel = \"dedicated\"\n",
@@ -405,10 +408,39 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
         ManifestError::InvalidPublicKey
     ));
 
+    let mut non_hex_key = storage_a_spec();
+    non_hex_key.x25519_public_key = "z".repeat(64);
+    let source = manifest_text(Some(&dedicated_spec()), &[non_hex_key]);
+    assert!(matches!(
+        parse_error(&source),
+        ManifestError::InvalidPublicKey
+    ));
+
+    let mut invalid_ed25519 = storage_a_spec();
+    invalid_ed25519.ed25519_public_key = "ff".repeat(32);
+    let source = manifest_text(Some(&dedicated_spec()), &[invalid_ed25519]);
+    assert!(matches!(
+        parse_error(&source),
+        ManifestError::InvalidPublicKey
+    ));
+
     let mut dns_host = storage_a_spec();
     dns_host.host = DNS_HOST.to_owned();
     let source = manifest_text(Some(&dedicated_spec()), &[dns_host]);
     assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
+
+    let mut zone_host = storage_a_spec();
+    zone_host.host = "fe80::1%eth0".to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[zone_host]);
+    assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
+
+    let mut overflow_port = storage_a_spec();
+    overflow_port.port = 70_000;
+    let source = manifest_text(Some(&dedicated_spec()), &[overflow_port]);
+    assert!(matches!(parse_error(&source), ManifestError::Toml));
+
+    let negative_port = valid_manifest().replace("port = 7001", "port = -1");
+    assert!(matches!(parse_error(&negative_port), ManifestError::Toml));
 
     let mut zero_port = storage_a_spec();
     zero_port.port = 0;

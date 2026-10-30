@@ -12,7 +12,9 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::raft::NodeId;
+use crate::sealing::RecipientPublicKey;
 use crate::server_transport::{Peer, PeerDirectory, PeerDirectoryError};
+use crate::signing::MessageVerifyingKey;
 
 /// Fallible manifest operation result.
 type Result<T> = core::result::Result<T, ManifestError>;
@@ -214,7 +216,11 @@ impl NodeEntry {
             self.port,
         );
         let x25519_public_key = parse_public_key(&self.x25519_public_key)?;
+        RecipientPublicKey::from_bytes(&x25519_public_key)
+            .map_err(|_| ManifestError::InvalidPublicKey)?;
         let ed25519_public_key = parse_public_key(&self.ed25519_public_key)?;
+        MessageVerifyingKey::from_bytes(ed25519_public_key)
+            .map_err(|_| ManifestError::InvalidPublicKey)?;
         Ok(ManifestEntry {
             sender_id,
             label: self.label,
