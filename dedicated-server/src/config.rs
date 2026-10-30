@@ -19,6 +19,7 @@ use thiserror::Error;
 
 use crate::password::Argon2Params;
 use crate::registration::CredentialLimits;
+use crate::wire::HeaderLimits;
 
 /// Environment variable holding the path to the server configuration file.
 pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
@@ -517,6 +518,19 @@ impl ServerConfig {
     /// the payload buffer is allocated (`INT-NET-004`).
     pub fn max_frame_bytes(&self) -> NonZeroU32 {
         self.max_frame_bytes
+    }
+
+    /// Bounds applied while decoding a client logical header (`INT-NET-085`,
+    /// `INT-NET-086`).
+    pub fn header_limits(&self) -> HeaderLimits {
+        HeaderLimits {
+            max_header_bytes: self.max_header_bytes.get(),
+            min_login_bytes: self.min_login_bytes.get(),
+            max_login_bytes: self.max_login_bytes.get(),
+            min_password_bytes: self.min_password_bytes.get(),
+            max_password_bytes: self.max_password_bytes.get(),
+            max_source_name_bytes: self.max_source_name_bytes.get(),
+        }
     }
 
     /// Credential length limits applied to registration (`CFG-CL-029`).

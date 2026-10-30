@@ -49,8 +49,8 @@ pub use registration::{
 pub use report::{Startup, StartupError};
 pub use topology::{Topology, TopologyNode};
 pub use wire::{
-    AccountRecord, ClientHeader, ClientOperation, Credentials, ExternalHeader, InstallationRecord,
-    InterServerMessage, MessageType, RegistrationRecord, RegistrySnapshot, ResultEnvelope,
-    WireError, CLIENT_HEADER_ELEMENTS, EXTERNAL_HEADER_ELEMENTS, IDENTIFIER_BYTES,
+    AccountRecord, ClientHeader, ClientOperation, Credentials, ExternalHeader, HeaderLimits,
+    InstallationRecord, InterServerMessage, MessageType, RegistrationRecord, RegistrySnapshot,
+    ResultEnvelope, WireError, CLIENT_HEADER_ELEMENTS, EXTERNAL_HEADER_ELEMENTS, IDENTIFIER_BYTES,
     INTER_SERVER_ELEMENTS, KEY_BYTES, PROTOCOL_VERSION, RESULT_ENVELOPE_ELEMENTS,
 };
