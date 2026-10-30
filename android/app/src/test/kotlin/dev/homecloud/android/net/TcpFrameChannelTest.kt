@@ -1,5 +1,6 @@
 package dev.homecloud.android.net
 
+import dev.homecloud.android.protocol.ProtocolEncodingException
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -92,7 +93,14 @@ class TcpFrameChannelTest {
                     TcpFrameChannel(client).use { channel ->
                         assertTrue(accepted.await(TEST_TIMEOUT_SECONDS, TimeUnit.SECONDS))
 
-                        assertThrows(ProtocolTransportException::class.java) { channel.read() }
+                        val thrown =
+                            assertThrows(ProtocolTransportException::class.java) { channel.read() }
+
+                        // The prefix alone must trigger the limit check: a timeout or a read of the body
+                        // would surface a different cause, so the encoding failure proves the order.
+                        val cause = thrown.cause
+                        assertTrue(cause is ProtocolEncodingException)
+                        assertTrue((cause as ProtocolEncodingException).message.orEmpty().contains("maximum frame size"))
                     }
                 }
             } finally {

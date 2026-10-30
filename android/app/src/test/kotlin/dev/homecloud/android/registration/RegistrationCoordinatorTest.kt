@@ -28,16 +28,23 @@ class RegistrationCoordinatorTest {
         )
 
     @Test
-    fun `missing pinned server keys reports MissingServerKeys without sending`() {
-        val identityStore = FakeInstallationIdentityStore(InstallationIdentityFactory.newIdentity())
-        val pendingStore = FakePendingRegistrationStore()
-        val transport = FakeRegistrationTransport()
+    fun `registration keeps the server keys pinned during the handshake`() {
+        val store = FakeInstallationIdentityStore(identity.copy(dedicatedServerKeys = null))
+        val serverKeys = DedicatedServerKeys(ByteArray(32) { 3 }, ByteArray(32) { 4 })
+        val transport =
+            FakeRegistrationTransport().apply {
+                onRegister = {
+                    val current = requireNotNull(store.stored)
+                    store.stored = current.copy(dedicatedServerKeys = serverKeys)
+                }
+            }
 
-        val outcome = coordinator(identityStore, pendingStore, transport).register(LOGIN, PASSWORD)
+        val outcome = coordinator(store, FakePendingRegistrationStore(), transport).register(LOGIN, PASSWORD)
 
-        assertEquals(RegistrationOutcome.MissingServerKeys, outcome)
-        assertEquals(0, pendingStore.saveCount)
-        assertTrue(transport.requests.isEmpty())
+        assertTrue(outcome is RegistrationOutcome.Registered)
+        val saved = requireNotNull(store.stored)
+        assertArrayEquals(serverKeys.x25519PublicKey, saved.dedicatedServerKeys?.x25519PublicKey)
+        assertArrayEquals(serverKeys.ed25519PublicKey, saved.dedicatedServerKeys?.ed25519PublicKey)
     }
 
     @Test

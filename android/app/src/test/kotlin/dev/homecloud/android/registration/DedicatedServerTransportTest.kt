@@ -141,6 +141,42 @@ class DedicatedServerTransportTest {
     }
 
     @Test
+    fun `a different pinned x25519 key fails without writing`() {
+        val pinnedIdentity =
+            identity.copy(
+                dedicatedServerKeys = DedicatedServerKeys(X25519.generate().publicKey, serverEd25519.publicKey),
+            )
+        val channel = ScriptedFrameChannel(listOf(bootstrapFrame()))
+        val store = ScriptedInstallationIdentityStore(pinnedIdentity)
+
+        assertThrows(RegistrationTransportException::class.java) {
+            transport(store) { channel }.register(request)
+        }
+
+        assertTrue(channel.writes.isEmpty())
+        assertEquals(0, store.saveCount)
+        assertTrue(channel.closed)
+    }
+
+    @Test
+    fun `a different pinned ed25519 key fails without writing`() {
+        val pinnedIdentity =
+            identity.copy(
+                dedicatedServerKeys = DedicatedServerKeys(serverX25519.publicKey, Ed25519.generate().publicKey),
+            )
+        val channel = ScriptedFrameChannel(listOf(bootstrapFrame()))
+        val store = ScriptedInstallationIdentityStore(pinnedIdentity)
+
+        assertThrows(RegistrationTransportException::class.java) {
+            transport(store) { channel }.register(request)
+        }
+
+        assertTrue(channel.writes.isEmpty())
+        assertEquals(0, store.saveCount)
+        assertTrue(channel.closed)
+    }
+
+    @Test
     fun `response with a bad server signature fails`() {
         val channel =
             ScriptedFrameChannel(
