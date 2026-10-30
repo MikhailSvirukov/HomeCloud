@@ -3,6 +3,7 @@ package dev.homecloud.android.catalog
 import dev.homecloud.android.crypto.Ed25519
 import dev.homecloud.android.crypto.Ed25519KeyPair
 import dev.homecloud.android.crypto.X25519
+import dev.homecloud.android.crypto.X25519KeyPair
 import dev.homecloud.android.identity.InstallationIdentity
 import dev.homecloud.android.identity.InstallationIdentityStore
 import dev.homecloud.android.net.FrameChannel
@@ -379,6 +380,54 @@ class CatalogClientTest {
             }.header
             .requestId
 
+    @Test
+    fun `identity without key pairs is rejected before opening the channel`() {
+        val emptyKeyPair = Ed25519KeyPair(ByteArray(0), ByteArray(0))
+        val emptyAgreement = X25519KeyPair(ByteArray(0), ByteArray(0))
+        val store =
+            FixedIdentityStore(
+                identity.copy(
+                    signingKeyPair = emptyKeyPair,
+                    agreementKeyPair = emptyAgreement,
+                ),
+            )
+
+        assertThrows(CatalogException::class.java) {
+            catalogClient(store) { _, _ -> unusedChannel() }.fetchPage(node, LOGIN, PASSWORD, null, null)
+        }
+    }
+
+    @Test
+    fun `entry with a text timestamp is rejected`() {
+        assertPageRejected(
+            successPage(entries = listOf(entryValue(timestamp = CborValue.Text("not-a-number")))),
+        )
+    }
+
+    @Test
+    fun `entry with a text source name is rejected`() {
+        assertPageRejected(
+            successPage(entries = listOf(entryValue(sourceName = CborValue.UInt(1)))),
+        )
+    }
+
+    @Test
+    fun `entry with a negative compressed size is rejected`() {
+        assertPageRejected(
+            successPage(entries = listOf(entryValue(compressedSize = CborValue.NInt(-1)))),
+        )
+    }
+
+    @Test
+    fun `a snapshot token without a cursor is rejected before opening the channel`() {
+        assertThrows(CatalogException::class.java) {
+            catalogClient(FixedIdentityStore(identity)) { _, _ -> unusedChannel() }
+                .fetchPage(node, LOGIN, PASSWORD, SNAPSHOT_TOKEN, null)
+        }
+    }
+
+    private fun unusedChannel(): FrameChannel = RespondingFrameChannel { throw AssertionError("the channel must not be opened") }
+
     private fun successPage(
         snapshotToken: CborValue = CborValue.Bytes(SNAPSHOT_TOKEN),
         nextCursor: CborValue = CborValue.Null,
@@ -386,7 +435,7 @@ class CatalogClientTest {
     ): ResultEnvelope =
         ResultEnvelope(
             ResultCodes.SUCCESS,
-            listOf(CborValue.Array(listOf(snapshotToken, nextCursor, CborValue.Array(entries)))),
+            listOf(snapshotToken, nextCursor, CborValue.Array(entries)),
         )
 
     private fun entryValue(

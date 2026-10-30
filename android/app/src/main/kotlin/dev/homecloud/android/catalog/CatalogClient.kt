@@ -35,7 +35,7 @@ internal class CatalogException(
 ) : Exception(message, cause)
 
 /**
- * One entry of a catalog page (`FR-CAT-012 / 1`).
+ * One entry of a catalog page (`FR-CAT-012 / 3`).
  *
  * The upload identifier and the SHA-256 digest have their fixed wire lengths, and the two size
  * fields are non-negative.
@@ -50,11 +50,11 @@ internal data class CatalogEntry(
 )
 
 /**
- * One page of a storage node's catalog (`FR-CAT-013 / 1`).
+ * One page of a storage node's catalog (`FR-CAT-013 / 2`).
  *
  * The snapshot token is present on every page. A next cursor is present only while a further page
  * exists, and the client sends both values back unchanged to continue the same snapshot
- * (`FR-CAT-009 / 1`, `FR-CAT-014 / 1`).
+ * (`FR-CAT-009 / 1`, `FR-CAT-014 / 2`).
  */
 internal data class CatalogPage(
     val snapshotToken: ByteArray,
@@ -75,7 +75,7 @@ internal data class CatalogPage(
  * The response must repeat the request id, verify against the node's Ed25519 key, and decrypt with
  * the installation X25519 key before its result envelope is read. A successful envelope carries
  * the catalog page array, and each entry is validated against its exact positional shape
- * (`FR-CAT-012 / 1`, `FR-CAT-013 / 1`, `INT-NET-061 / 1`). The channel is closed when the attempt
+ * (`FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `INT-NET-061 / 1`). The channel is closed when the attempt
  * finishes.
  */
 internal class CatalogClient(
@@ -95,6 +95,9 @@ internal class CatalogClient(
             val senderId = identity.senderId
             if (senderId == null || senderId.size != SENDER_ID_BYTES || !identity.hasKeyPairs()) {
                 throw CatalogException(IDENTITY_UNAVAILABLE_MESSAGE)
+            }
+            if ((snapshotToken == null) != (cursor == null)) {
+                throw CatalogException("the snapshot token and cursor must be supplied together")
             }
             requireToken(snapshotToken, SNAPSHOT_TOKEN_FIELD)
             requireToken(cursor, CURSOR_FIELD)
