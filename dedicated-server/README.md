@@ -498,15 +498,20 @@ implemented yet.
 `src/registration.rs` holds the in-memory account model behind client
 registration. It is pure state: no I/O, not async, and no cryptography.
 
-- `Login` is a validated, cluster-unique identifier. It must be non-empty, at
-  most 64 characters, use only the conservative ASCII subset
-  `[A-Za-z0-9._-]`, and must not be the relative path components `.` or `..`.
+- `Login` is a validated, cluster-unique identifier. It must be non-empty, use
+  only the conservative ASCII subset `[A-Za-z0-9._-]`, must not be the relative
+  path components `.` or `..`, and must fit the configured
+  `min_login_bytes`/`max_login_bytes` range (`CFG-CL-029`); `Login::parse`
+  takes the configured limits rather than a built-in maximum.
 - `Account` holds the login, the password verifier and the client encryption
   public key; it is built through the validating `Account::new` constructor,
   which rejects an empty verifier or client key.
 - `AccountRegistry` registers accounts, looks them up and iterates them in login
   order so replication to the cluster is deterministic. Registering an
-  already-taken login is rejected and leaves the registry unchanged.
+  already-taken login is rejected and leaves the registry unchanged. A password
+  outside the configured `min_password_bytes`/`max_password_bytes` range
+  (`CFG-CL-029`) is rejected before any verifier is derived, with the observed
+  length and the configured bound in the error.
 - `Account` deliberately has no `Debug`, so the verifier and key bytes cannot be
   rendered accidentally.
 - The password-hashing scheme and the key encodings are still open parameters

@@ -43,8 +43,8 @@ pub use metrics::{Metrics, Operation, CONTENT_TYPE};
 pub use metrics_server::{start as start_metrics_server, MetricsServer, TlsPaths, METRICS_PATH};
 pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
-    Account, AccountRegistry, Installation, InstallationId, InstallationKeys, Login, LoginError,
-    RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
+    Account, AccountRegistry, CredentialLimits, Installation, InstallationId, InstallationKeys,
+    Login, LoginError, RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
 };
 pub use report::{Startup, StartupError};
 pub use topology::{Topology, TopologyNode};

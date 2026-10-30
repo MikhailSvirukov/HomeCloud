@@ -6,8 +6,8 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 
 use dedicated_server::{
-    AccountRegistry, Argon2Params, InstallationKeys, Login, RegistrationError, RegistrationOutcome,
-    RegistrationRequest, RequestId,
+    AccountRegistry, Argon2Params, CredentialLimits, InstallationKeys, Login, RegistrationError,
+    RegistrationOutcome, RegistrationRequest, RequestId,
 };
 
 const LOGIN: &str = "user-1.2_x";
@@ -34,8 +34,17 @@ fn params() -> Argon2Params {
     }
 }
 
+fn registration_limits() -> CredentialLimits {
+    CredentialLimits {
+        min_login_bytes: 1,
+        max_login_bytes: 64,
+        min_password_bytes: 8,
+        max_password_bytes: 1024,
+    }
+}
+
 fn login(value: &str) -> Login {
-    Login::parse(value).expect("test login must be valid")
+    Login::parse(value, &registration_limits()).expect("test login must be valid")
 }
 
 fn keys(seed: u8) -> InstallationKeys {
@@ -66,7 +75,7 @@ fn request(
 
 #[test]
 fn first_registration_creates_one_account_with_one_installation() {
-    let mut registry = AccountRegistry::new(params());
+    let mut registry = AccountRegistry::new(params(), registration_limits());
     let keys = keys(0x11);
 
     let outcome = registry
@@ -91,7 +100,7 @@ fn first_registration_creates_one_account_with_one_installation() {
 
 #[test]
 fn second_registration_adds_an_installation_to_the_existing_account() {
-    let mut registry = AccountRegistry::new(params());
+    let mut registry = AccountRegistry::new(params(), registration_limits());
     let first_id = match registry
         .register(request(FIRST_REQUEST, LOGIN, PASSWORD, keys(0x21)))
         .expect("first registration must succeed")
@@ -118,7 +127,7 @@ fn second_registration_adds_an_installation_to_the_existing_account() {
 
 #[test]
 fn wrong_password_is_rejected_without_changing_the_account() {
-    let mut registry = AccountRegistry::new(params());
+    let mut registry = AccountRegistry::new(params(), registration_limits());
     let first_keys = keys(0x31);
     let first_id = match registry
         .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))
@@ -156,7 +165,7 @@ fn wrong_password_is_rejected_without_changing_the_account() {
 
 #[test]
 fn repeated_request_returns_the_outcome_and_different_content_conflicts() {
-    let mut registry = AccountRegistry::new(params());
+    let mut registry = AccountRegistry::new(params(), registration_limits());
     let first_keys = keys(0x41);
     let first = registry
         .register(request(FIRST_REQUEST, LOGIN, PASSWORD, first_keys))

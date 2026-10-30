@@ -48,7 +48,7 @@ impl Startup {
         )
         .map_err(|source| StartupError::Identity { source })?;
 
-        let accounts = AccountRegistry::new(config.password.params());
+        let accounts = AccountRegistry::new(config.password.params(), config.credential_limits());
 
         Ok(Self {
             config,
