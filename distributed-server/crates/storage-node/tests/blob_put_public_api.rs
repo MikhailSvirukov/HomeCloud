@@ -520,3 +520,51 @@ fn message_type_codes_are_the_assigned_blob_put_codes() {
         Err(BlobPutError::WrongMessageType)
     ));
 }
+
+#[test]
+fn rejects_noncanonical_cbor() {
+    let encoded_begin =
+        encode_blob_put_begin(&begin(), &limits(), MAX_SOURCE_NAME_LEN, MAX_FILE_BYTES)
+            .expect("the test begin encodes");
+    let mut nonminimal_begin = encoded_begin;
+    nonminimal_begin.insert(1, 0x18);
+    assert!(matches!(
+        decode_blob_put_begin(
+            &nonminimal_begin,
+            &limits(),
+            MAX_SOURCE_NAME_LEN,
+            MAX_FILE_BYTES
+        ),
+        Err(BlobPutError::Decode)
+    ));
+
+    let encoded_data =
+        encode_blob_put_data_frame(COMPRESSED_PAYLOAD).expect("the test data frame encodes");
+    let mut nonminimal_data = encoded_data;
+    nonminimal_data.insert(3, 0x18);
+    assert!(matches!(
+        decode_blob_put_data_frame(&nonminimal_data),
+        Err(BlobPutError::Decode)
+    ));
+
+    let encoded_result = encode_blob_put_result(&BlobPutResult {
+        result_code: RESULT_CODE_SUCCESS,
+        upload_id: Some(upload_id()),
+    })
+    .expect("the test result encodes");
+    let mut nonminimal_result = encoded_result;
+    nonminimal_result.insert(3, 0x18);
+    assert!(matches!(
+        decode_blob_put_result(&nonminimal_result),
+        Err(BlobPutError::Decode)
+    ));
+}
+
+#[test]
+fn debug_redacts_login_and_source_name() {
+    let rendered = format!("{:?}", begin());
+    assert!(rendered.contains("login_len"));
+    assert!(rendered.contains("source_name_len"));
+    assert!(!rendered.contains(LOGIN));
+    assert!(!rendered.contains("source_name: \"a\""));
+}

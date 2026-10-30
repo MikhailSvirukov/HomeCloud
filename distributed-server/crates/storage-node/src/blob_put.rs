@@ -2,6 +2,7 @@
 //! SRS: `INT-NET-095 / 1`, `INT-NET-096 / 1`, `INT-NET-097 / 1`,
 //! `INT-NET-114 / 1`, `INT-NET-119 / 1`, `INT-NET-128 / 1`.
 
+use core::fmt;
 use std::io::Cursor;
 
 use ciborium::value::Value;
@@ -25,31 +26,47 @@ const RESULT_ARGUMENTS_LEN: usize = 2;
 const RESULT_CODE_SUCCESS: u32 = 0;
 
 /// Metadata describing the original upload being replicated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BlobMetadata {
-    /// Source media file name.
     pub source_name: String,
-    /// Upload time as a signed Unix timestamp in milliseconds.
     pub timestamp_ms: i64,
-    /// Original uncompressed size in bytes.
     pub original_size_bytes: u64,
-    /// Compressed size in bytes.
     pub compressed_size_bytes: u64,
-    /// SHA-256 digest of the original bytes.
     pub sha256: ContentHash,
 }
 
+impl fmt::Debug for BlobMetadata {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BlobMetadata")
+            .field("source_name_len", &self.source_name.len())
+            .field("timestamp_ms", &self.timestamp_ms)
+            .field("original_size_bytes", &self.original_size_bytes)
+            .field("compressed_size_bytes", &self.compressed_size_bytes)
+            .field("sha256", &self.sha256)
+            .finish()
+    }
+}
+
 /// Blob put begin message carrying the upload identity and transfer size.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BlobPutBegin {
-    /// Login owning the upload.
     pub login: String,
-    /// Upload identifier.
     pub upload_id: UploadId,
-    /// Metadata of the original upload.
     pub metadata: BlobMetadata,
-    /// Compressed size of the current transfer stream.
     pub transfer_compressed_size: u64,
+}
+
+impl fmt::Debug for BlobPutBegin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BlobPutBegin")
+            .field("login_len", &self.login.len())
+            .field("upload_id", &self.upload_id)
+            .field("metadata", &self.metadata)
+            .field("transfer_compressed_size", &self.transfer_compressed_size)
+            .finish()
+    }
 }
 
 /// Blob put data header carrying the compressed payload length.
@@ -210,6 +227,9 @@ pub fn decode_blob_put_data_frame(bytes: &[u8]) -> Result<(BlobPutData, &[u8])> 
     let value: Value = ciborium::de::from_reader(&mut cursor).map_err(|_| BlobPutError::Decode)?;
     let consumed = usize::try_from(cursor.position()).map_err(|_| BlobPutError::Decode)?;
     let payload = bytes.get(consumed..).ok_or(BlobPutError::Decode)?;
+    if canonical_bytes(&value)? != bytes[..consumed] {
+        return Err(BlobPutError::Decode);
+    }
 
     let Value::Array(elements) = value else {
         return Err(BlobPutError::NotAnArray);
@@ -377,12 +397,22 @@ fn encode_envelope(message_type: MessageType, arguments: Value) -> Result<Vec<u8
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value> {
-    let mut slice = bytes;
-    let value = ciborium::de::from_reader(&mut slice).map_err(|_| BlobPutError::Decode)?;
-    if !slice.is_empty() {
+    let mut cursor = Cursor::new(bytes);
+    let value: Value = ciborium::de::from_reader(&mut cursor).map_err(|_| BlobPutError::Decode)?;
+    let consumed = usize::try_from(cursor.position()).map_err(|_| BlobPutError::Decode)?;
+    if consumed != bytes.len() {
+        return Err(BlobPutError::Decode);
+    }
+    if canonical_bytes(&value)? != bytes {
         return Err(BlobPutError::Decode);
     }
     Ok(value)
+}
+
+fn canonical_bytes(value: &Value) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    ciborium::ser::into_writer(value, &mut bytes).map_err(|_| BlobPutError::Encode)?;
+    Ok(bytes)
 }
 
 fn expect_message_type(value: Value, expected: MessageType) -> Result<()> {
