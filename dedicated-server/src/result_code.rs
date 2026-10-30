@@ -1,10 +1,10 @@
-//! Published v1 result codes (`INT-NET-062 / 1`, `INT-NET-063 / 1`).
+//! Published v1 result codes (`INT-NET-064 / 1`) and their reserved ranges
+//! (`INT-NET-063 / 1`).
 //!
-//! The contract fixes one numeric value per meaning and reserves one 16-bit
+//! The contract fixes one numeric value per meaning and one reserved 16-bit
 //! range per class (contract tables 5 and 6). A response carries a `uint32`
 //! result code; this module names the published values the server may send and
-//! classifies any value by its reserved range, so a future request handler
-//! cannot invent a code or assign a published value a different meaning.
+//! classifies any value by its reserved range.
 //!
 //! The envelope codec deliberately keeps decoding arbitrary values: a peer that
 //! speaks a newer revision may send a code this build does not name yet.
@@ -33,8 +33,9 @@ pub enum ResultClass {
 impl ResultClass {
     /// Class of any code inside a reserved range.
     ///
-    /// Success (`0`) and every value outside the eight reserved ranges return
-    /// `None`; such a value remains reserved and must not be sent.
+    /// Success (`0`) has no error class and returns `None`. A value outside the
+    /// eight reserved ranges also returns `None`; it is reserved and must not be
+    /// sent (`INT-NET-063 / 1`).
     pub const fn from_u32(code: u32) -> Option<Self> {
         match code >> 16 {
             0x0001 => Some(Self::Request),
@@ -50,7 +51,7 @@ impl ResultClass {
     }
 }
 
-/// A published v1 result code (contract table 5).
+/// A published v1 result code (`INT-NET-064 / 1`, contract table 5).
 ///
 /// The variants are failure codes only: success is the numeric value `0`
 /// reported by [`crate::ResultEnvelope::success`] (`INT-NET-062 / 1`).
@@ -282,10 +283,16 @@ mod tests {
             (0x0001_0000, ResultClass::Request),
             (0x0001_FFFF, ResultClass::Request),
             (0x0002_0000, ResultClass::Authentication),
+            (0x0002_FFFF, ResultClass::Authentication),
+            (0x0003_0000, ResultClass::Registration),
             (0x0003_FFFF, ResultClass::Registration),
             (0x0004_0000, ResultClass::Catalog),
+            (0x0004_FFFF, ResultClass::Catalog),
+            (0x0005_0000, ResultClass::File),
             (0x0005_FFFF, ResultClass::File),
             (0x0006_0000, ResultClass::Quorum),
+            (0x0006_FFFF, ResultClass::Quorum),
+            (0x0007_0000, ResultClass::Resource),
             (0x0007_FFFF, ResultClass::Resource),
             (0x0008_0000, ResultClass::Internal),
             (0x0008_FFFF, ResultClass::Internal),

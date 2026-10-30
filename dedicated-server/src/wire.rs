@@ -692,7 +692,7 @@ impl ResultEnvelope {
         Self { code: 0, arguments }
     }
 
-    /// Failure response for a published v1 result code (`INT-NET-063 / 1`).
+    /// Failure response for a published v1 result code (`INT-NET-064 / 1`).
     ///
     /// The argument array is empty because a nonzero code carries no arguments
     /// (`INT-NET-069 / 1`).
