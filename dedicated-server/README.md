@@ -253,8 +253,10 @@ for the whole process and flushes buffered records when dropped.
   credential minimum is not above its maximum, the registration attempt
   deadline is not above the total, the rotation age is within the retention
   period, the metrics port differs from the application port on the same
-  address, and the logical header plus its worst-case outer envelope fits the
-  configured frame body.
+  address, the worst-case registration logical header and the full topology
+  answer fit `max_header_bytes`, the generated PHC verifier fits
+  `max_verifier_bytes`, and the logical header plus its worst-case outer
+  envelope fits the configured frame body.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
 - `max_frame_bytes`: the largest frame payload the server accepts from a peer,
@@ -267,7 +269,8 @@ for the whole process and flushes buffered records when dropped.
   value is rejected while the configuration is parsed, not by a later check.
 - `password`: `memory_kib`, `iterations` and `parallelism` are non-zero
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
-  (`NonZeroUsize`). The Argon2id parameters and salt length used to derive
+  (`NonZeroUsize`) in the range 16..=48, the range a 64-character PHC salt
+  field can carry. The Argon2id parameters and salt length used to derive
   password verifiers are configured here.
 - `logging`: `path`, the structured JSON Lines log file, and four non-zero
   limits (`NonZeroU64`): `retention_ms` (how long a rotated file is kept),

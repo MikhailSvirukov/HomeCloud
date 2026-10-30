@@ -426,6 +426,28 @@ pub enum ConfigError {
         /// Configured frame body limit.
         max_frame_bytes: u64,
     },
+    /// An operation's worst-case logical header exceeds the configured limit.
+    #[error(
+        "the worst-case {operation} logical header ({needed} bytes) does not fit max_header_bytes ({max_header_bytes})"
+    )]
+    OperationDoesNotFitHeader {
+        /// Operation or answer whose header was measured.
+        operation: &'static str,
+        /// Worst-case encoded size.
+        needed: u64,
+        /// Configured logical header limit.
+        max_header_bytes: u64,
+    },
+    /// The generated PHC verifier exceeds the configured verifier limit.
+    #[error(
+        "the generated PHC verifier ({needed} bytes) does not fit max_verifier_bytes ({max_verifier_bytes})"
+    )]
+    VerifierDoesNotFit {
+        /// Worst-case PHC length for the configured parameters.
+        needed: u64,
+        /// Configured verifier limit.
+        max_verifier_bytes: u64,
+    },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
@@ -719,6 +741,41 @@ fn validate_profile(config: &ServerConfig) -> Result<()> {
     Ok(())
 }
 
+/// Worst-case size of the registration logical header (`CFG-CL-046`).
+fn maximum_registration_header_bytes(config: &ServerConfig) -> u64 {
+    // [operation, login, password, [x25519_key, ed25519_key]]
+    1 + 5
+        + (2 + config.max_login_bytes.get() as u64)
+        + (2 + config.max_password_bytes.get() as u64)
+        + 1
+        + 34
+        + 34
+}
+
+/// Worst-case size of a full topology answer for the configured cluster (`CFG-CL-046`).
+fn maximum_topology_answer_bytes(config: &ServerConfig) -> u64 {
+    // [result_code, [nodes]]; one node is
+    // [sender_id, label, host, port, x25519_public_key, ed25519_public_key].
+    let node = 1 + 18 + 3 + config.max_label_bytes.get() as u64 + 2 + 45 + 5 + 34 + 34;
+    1 + 5 + 1 + (config.cluster.nodes.len() as u64).saturating_mul(1 + node)
+}
+
+/// Worst-case PHC verifier length the configured Argon2id parameters produce (`CFG-CL-047`).
+fn maximum_phc_bytes(config: &ServerConfig) -> u64 {
+    let password = &config.password;
+    let digits = |value: u64| value.to_string().len() as u64;
+    let salt = password.salt_length_bytes.get() as u64;
+    // "$argon2id$v=19$m=" (18), ",t=" (3), ",p=" (3), "$" (1), salt, "$" (1), 32-byte hash.
+    18 + digits(password.memory_kib.get() as u64)
+        + 3
+        + digits(password.iterations.get() as u64)
+        + 3
+        + digits(password.parallelism.get() as u64)
+        + 1
+        + salt.div_ceil(3) * 4
+        + 1
+        + 32u64.div_ceil(3) * 4
+}
 /// Cross-field constraints of the configuration profile (`CFG-CL-051`).
 fn validate_relations(config: &ServerConfig) -> Result<()> {
     if config.heartbeat.timeout_ms.get() >= config.heartbeat.interval_ms.get() {
@@ -761,7 +818,9 @@ fn validate_relations(config: &ServerConfig) -> Result<()> {
         });
     }
     if config.metrics.bind.port() == config.listen.port()
-        && config.metrics.bind.ip() == config.listen.ip()
+        && (config.metrics.bind.ip() == config.listen.ip()
+            || config.metrics.bind.ip().is_unspecified()
+            || config.listen.ip().is_unspecified())
     {
         return Err(ConfigError::MetricsPortConflict {
             bind: config.metrics.bind,
@@ -782,6 +841,32 @@ fn validate_relations(config: &ServerConfig) -> Result<()> {
             max_header_bytes: config.max_header_bytes.get() as u64,
             overhead,
             max_frame_bytes: config.max_frame_bytes.get() as u64,
+        });
+    }
+
+    let header_limit = config.max_header_bytes.get() as u64;
+    let registration = maximum_registration_header_bytes(config);
+    if registration > header_limit {
+        return Err(ConfigError::OperationDoesNotFitHeader {
+            operation: "registration",
+            needed: registration,
+            max_header_bytes: header_limit,
+        });
+    }
+    let topology = maximum_topology_answer_bytes(config);
+    if topology > header_limit {
+        return Err(ConfigError::OperationDoesNotFitHeader {
+            operation: "topology answer",
+            needed: topology,
+            max_header_bytes: header_limit,
+        });
+    }
+    let verifier = maximum_phc_bytes(config);
+    let verifier_limit = config.max_verifier_bytes.get() as u64;
+    if verifier > verifier_limit {
+        return Err(ConfigError::VerifierDoesNotFit {
+            needed: verifier,
+            max_verifier_bytes: verifier_limit,
         });
     }
 
@@ -1217,6 +1302,203 @@ mod tests {
             .replace("listen = \"10.0.0.1:7000\"", "listen = \"127.0.0.1:7000\"")
             .replace("bind = \"127.0.0.1:9101\"", "bind = \"127.0.0.1:7000\"");
 
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsPortConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_header_limit_below_the_profile_minimum() {
+        let document = VALID_SERVER.replace("max_header_bytes = 1048576", "max_header_bytes = 512");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "max_header_bytes",
+                value: 512,
+                min: 1_024,
+                max: 16_777_216,
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_verifier_limit_below_the_profile_minimum() {
+        let document = VALID_SERVER.replace("max_verifier_bytes = 512", "max_verifier_bytes = 64");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "max_verifier_bytes",
+                value: 64,
+                min: 128,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_connect_timeout_below_the_profile_minimum() {
+        let document = VALID_SERVER.replace("connect_timeout_ms = 5000", "connect_timeout_ms = 50");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "connect_timeout_ms",
+                value: 50,
+                min: 100,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_an_inter_server_timeout_above_the_profile_maximum() {
+        let document = VALID_SERVER.replace(
+            "inter_server_timeout_ms = 10000",
+            "inter_server_timeout_ms = 300001",
+        );
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "inter_server_timeout_ms",
+                value: 300_001,
+                max: 300_000,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_registration_attempt_count_above_the_profile_maximum() {
+        let document = VALID_SERVER.replace("attempts = 5", "attempts = 1001");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "registration.attempts",
+                value: 1_001,
+                max: 1_000,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_salt_that_the_phc_record_cannot_carry() {
+        let document = VALID_SERVER.replace("salt_length_bytes = 16", "salt_length_bytes = 49");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "password.salt_length_bytes",
+                value: 49,
+                max: 48,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_memory_below_eight_times_the_parallelism() {
+        let document = VALID_SERVER
+            .replace("memory_kib = 8", "memory_kib = 64")
+            .replace("parallelism = 1", "parallelism = 16");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "password.memory_kib",
+                value: 64,
+                min: 128,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_retention_below_the_profile_minimum() {
+        let document = VALID_SERVER.replace("retention_ms = 604800000", "retention_ms = 500");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OutOfRange {
+                field: "logging.retention_ms",
+                value: 500,
+                min: 1_000,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_password_minimum_above_the_maximum() {
+        let document = VALID_SERVER.replace("min_password_bytes = 8", "min_password_bytes = 2048");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MinimumAboveMaximum {
+                field: "password",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_header_envelope_bound_is_exact() {
+        let base = VALID_SERVER.replace("max_frame_bytes = 4194304", "max_frame_bytes = 4096");
+        let accepted = base.replace("max_header_bytes = 1048576", "max_header_bytes = 3818");
+        assert!(
+            ServerConfig::from_toml_str(&accepted).is_ok(),
+            "a header that exactly fits the frame must be accepted"
+        );
+
+        let rejected = base.replace("max_header_bytes = 1048576", "max_header_bytes = 3819");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&rejected),
+            Err(ConfigError::HeaderDoesNotFitFrame { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_registration_header_above_the_header_limit() {
+        let document =
+            VALID_SERVER.replace("max_header_bytes = 1048576", "max_header_bytes = 1024");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OperationDoesNotFitHeader {
+                operation: "registration",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_topology_answer_above_the_header_limit() {
+        // A 4096-byte label makes one node 4238 bytes, so a two-node answer is
+        // far above the 1200-byte header limit, while the registration header
+        // (1167 bytes) still fits.
+        let document = VALID_SERVER
+            .replace("max_header_bytes = 1048576", "max_header_bytes = 1200")
+            .replace("max_label_bytes = 64", "max_label_bytes = 4096");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::OperationDoesNotFitHeader {
+                operation: "topology answer",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_phc_that_does_not_fit_the_verifier_limit() {
+        // A 48-byte salt produces a 137-byte PHC, above a 128-byte limit.
+        let document = VALID_SERVER
+            .replace("max_verifier_bytes = 512", "max_verifier_bytes = 128")
+            .replace("salt_length_bytes = 16", "salt_length_bytes = 48");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::VerifierDoesNotFit { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_metrics_port_shared_with_a_wildcard_application_address() {
+        let document =
+            VALID_SERVER.replace("listen = \"10.0.0.1:7000\"", "listen = \"0.0.0.0:9101\"");
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::MetricsPortConflict { .. })
