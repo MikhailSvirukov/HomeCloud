@@ -48,6 +48,14 @@ clients; it does not relay Raft or blob traffic.
   seven-position external header, the operation-3 request, and the result
   envelope), `src/upload_exchange.rs` (operation-4 upload request codec with the
   five upload arguments and the source-name and file-size limits),
+  `src/blob_put.rs` (inter-server blob-put codecs: the begin message
+  `[10, [login, upload_id, [source_name, timestamp_ms, original_size,
+  compressed_size, sha256], transfer_compressed_size]]`, the data message
+  `[11, [payload_length]]` header followed by exactly `payload_length`
+  compressed bytes, and the result message
+  `[12, [result_code, result_args]]` with `[upload_id]` on success and an
+  empty argument array on every non-zero code; the transfer size is bounded
+  by `B(original_size) = original_size + floor(original_size / 256) + 64`),
   `src/upload_error.rs` (typed upload protocol error codes that map upload
   request, blob-write, integrity, and frame-sequence failures to the
   `INT-NET-064` table entries, including storage-capacity exhaustion on disk-full
@@ -108,7 +116,7 @@ clients; it does not relay Raft or blob traffic.
   `catalog_error_codes_public_api.rs`,
   `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
   `upload_exchange_public_api.rs`, `upload_outcomes_public_api.rs`,
-  `upload_error_codes_public_api.rs`,
+  `upload_error_codes_public_api.rs`, `blob_put_public_api.rs`,
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
