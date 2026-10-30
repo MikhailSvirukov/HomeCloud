@@ -30,8 +30,9 @@ private const val SETUP_CONTENT_SDK_INT = 33
 /**
  * Renders [SetupContent] on the JVM and asserts what the user sees and what the surface reports for
  * `FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1` and `FR-AND-043 / 1`: the labelled inputs,
- * the masked password, the single mode choice, the inline host error, the save failure line, and the
- * prerequisite text that does not block submission of a valid draft.
+ * the masked password, the single mode choice, the inline host error, the save failure line, the
+ * registration status line, and the prerequisite text that does not block submission of a valid
+ * draft.
  *
  * Conscrypt is turned off because this test never touches TLS and loading its native library is
  * impossible on a `noexec` temp filesystem.
@@ -115,6 +116,15 @@ class SetupContentTest {
     }
 
     @Test
+    fun `submit is disabled while a registration is in progress`() {
+        val state = SetupStateMachine.registering(stateFor(validDraft(), unmetPrerequisites()))
+
+        render(state)
+
+        composeRule.onNodeWithText(submitAction()).performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
     fun `minimum port keeps submit enabled`() {
         render(stateFor(validDraft().copy(port = MIN_PORT), unmetPrerequisites()))
 
@@ -167,6 +177,36 @@ class SetupContentTest {
         render(stateFor(validDraft(), unmetPrerequisites()))
 
         composeRule.onAllNodesWithText(saveError()).assertCountEquals(0)
+    }
+
+    @Test
+    fun `an in-progress registration shows the in-progress message`() {
+        render(SetupStateMachine.registering(stateFor(validDraft(), unmetPrerequisites())))
+
+        composeRule.onNodeWithText(registrationInProgress()).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `a pending registration shows the pending message`() {
+        render(SetupStateMachine.registrationPending(stateFor(validDraft(), unmetPrerequisites())))
+
+        composeRule.onNodeWithText(registrationPending()).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `a failed registration shows the failed message`() {
+        render(SetupStateMachine.registrationFailed(stateFor(validDraft(), unmetPrerequisites())))
+
+        composeRule.onNodeWithText(registrationFailed()).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `an idle registration shows no registration message`() {
+        render(stateFor(validDraft(), unmetPrerequisites()))
+
+        listOf(registrationInProgress(), registrationPending(), registrationFailed()).forEach { text ->
+            composeRule.onAllNodesWithText(text).assertCountEquals(0)
+        }
     }
 
     private fun render(initialState: SetupState) {
@@ -223,6 +263,12 @@ class SetupContentTest {
     private fun submitAction(): String = string(R.string.setup_submit_action)
 
     private fun saveError(): String = string(R.string.setup_save_error_message)
+
+    private fun registrationInProgress(): String = string(R.string.setup_registration_in_progress)
+
+    private fun registrationPending(): String = string(R.string.setup_registration_pending)
+
+    private fun registrationFailed(): String = string(R.string.setup_registration_failed)
 
     private fun prerequisitesTitle(): String = string(R.string.setup_prerequisites_title)
 

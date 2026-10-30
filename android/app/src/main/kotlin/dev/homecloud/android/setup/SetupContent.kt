@@ -28,12 +28,12 @@ import dev.homecloud.android.R
 
 /**
  * Renders the setup surface (`FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1`,
- * `FR-AND-043 / 1`): server host and port, account login and password, the registration or
- * connection choice, inline field errors, any failed-save message and the remaining backup
- * prerequisites. The password is masked, the submit action stays disabled until the draft is valid,
- * and the only actions are the ones the caller supplies, so setup never offers a view, download,
- * restore or delete action (`FR-AND-048 / 1`). The composable keeps no state of its own and
- * performs no network or storage work.
+ * `FR-AND-043 / 1`, `FR-AND-053 / 1`): server host and port, account login and password, the
+ * registration or connection choice, inline field errors, any failed-save message, the registration
+ * status and the remaining backup prerequisites. The password is masked, the submit action stays
+ * disabled until the draft is valid, and the only actions are the ones the caller supplies, so setup
+ * never offers a view, download, restore or delete action (`FR-AND-048 / 1`). The composable keeps
+ * no state of its own and performs no network or storage work.
  */
 @Composable
 internal fun SetupContent(
@@ -112,9 +112,13 @@ internal fun SetupContent(
                 color = MaterialTheme.colorScheme.error,
             )
         }
+        val registrationMessage = registrationMessageResource(state.registration)
+        if (registrationMessage != null) {
+            Text(text = stringResource(registrationMessage), style = MaterialTheme.typography.bodyMedium)
+        }
         Button(
             onClick = onSubmit,
-            enabled = state.validation.isValid,
+            enabled = state.validation.isValid && state.registration != RegistrationStatus.IN_PROGRESS,
         ) {
             Text(text = stringResource(R.string.setup_submit_action))
         }
@@ -193,6 +197,14 @@ private fun SetupMode.labelResource(): Int =
     when (this) {
         SetupMode.REGISTER -> R.string.setup_mode_register
         SetupMode.CONNECT -> R.string.setup_mode_connect
+    }
+
+private fun registrationMessageResource(status: RegistrationStatus): Int? =
+    when (status) {
+        RegistrationStatus.NONE -> null
+        RegistrationStatus.IN_PROGRESS -> R.string.setup_registration_in_progress
+        RegistrationStatus.PENDING -> R.string.setup_registration_pending
+        RegistrationStatus.FAILED -> R.string.setup_registration_failed
     }
 
 private fun errorMessageResource(error: SetupError): Int =

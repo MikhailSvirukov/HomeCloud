@@ -7,11 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Asserts the setup transitions of `FR-AND-040 / 2`, `FR-AND-041 / 2` and `FR-AND-042 / 1`, the
- * backup gate of `FR-AND-043 / 1` and the configured credential bounds of `CFG-CL-029 / 1`: a
- * restored configuration leaves the password to the user, every edit revalidates the draft with the
- * bounds its state holds, submission needs a valid draft, a failed save is marked until the draft
- * changes or a save succeeds, and backup needs both prerequisites.
+ * Asserts the setup transitions of `FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1` and
+ * `FR-AND-053 / 1`, the backup gate of `FR-AND-043 / 1` and the configured credential bounds of
+ * `CFG-CL-029 / 1`: a restored configuration leaves the password to the user, every edit
+ * revalidates the draft with the bounds its state holds, submission needs a valid draft, a failed
+ * save is marked until the draft changes or a save succeeds, a registration attempt follows its
+ * in-progress, pending and failed statuses, and backup needs both prerequisites.
  */
 class SetupStateTest {
     @Test
@@ -125,6 +126,16 @@ class SetupStateTest {
     }
 
     @Test
+    fun `save failure clears an in progress registration`() {
+        val state = SetupStateMachine.registering(initialState())
+
+        val failedState = SetupStateMachine.saveFailed(state)
+
+        assertTrue(failedState.saveFailed)
+        assertEquals(RegistrationStatus.NONE, failedState.registration)
+    }
+
+    @Test
     fun `save failure is marked without changing the rest of the state`() {
         val state =
             SetupStateMachine.edit(
@@ -162,6 +173,140 @@ class SetupStateTest {
         val savedState = SetupStateMachine.saved(failedState, SAVED)
 
         assertFalse(savedState.saveFailed)
+    }
+
+    @Test
+    fun `initial state starts without a registration status`() {
+        val state = SetupStateMachine.initialState(saved = SAVED, prerequisites = unmetPrerequisites())
+
+        assertEquals(RegistrationStatus.NONE, state.registration)
+    }
+
+    @Test
+    fun `saved clears a registration status to none`() {
+        val registeringState = SetupStateMachine.registering(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val savedState = SetupStateMachine.saved(registeringState, SAVED)
+
+        assertEquals(RegistrationStatus.NONE, savedState.registration)
+    }
+
+    @Test
+    fun `registering marks the attempt in progress without changing the other fields`() {
+        val state = stateWith(DRAFT, hasMediaAccess = true, isAuthenticated = true)
+
+        val registeringState = SetupStateMachine.registering(state)
+
+        assertEquals(RegistrationStatus.IN_PROGRESS, registeringState.registration)
+        assertEquals(state.draft, registeringState.draft)
+        assertEquals(state.validation, registeringState.validation)
+        assertEquals(state.prerequisites, registeringState.prerequisites)
+        assertEquals(state.saved, registeringState.saved)
+        assertEquals(state.limits, registeringState.limits)
+    }
+
+    @Test
+    fun `registering clears a marked save failure`() {
+        val failedState = SetupStateMachine.saveFailed(stateWith(DRAFT, hasMediaAccess = true, isAuthenticated = true))
+
+        val registeringState = SetupStateMachine.registering(failedState)
+
+        assertFalse(registeringState.saveFailed)
+    }
+
+    @Test
+    fun `registered records the saved configuration and refills the draft without a password`() {
+        val state = SetupStateMachine.edit(initialState(), DRAFT)
+
+        val registeredState = SetupStateMachine.registered(state, SAVED)
+
+        val expectedDraft =
+            SetupDraft(
+                host = SAVED.host,
+                port = SAVED.port.toString(),
+                login = SAVED.login,
+                password = "",
+                mode = SAVED.mode,
+            )
+        assertEquals(expectedDraft, registeredState.draft)
+        assertEquals(SAVED, registeredState.saved)
+        assertEquals(RegistrationStatus.NONE, registeredState.registration)
+    }
+
+    @Test
+    fun `registered clears a marked save failure`() {
+        val failedState = SetupStateMachine.saveFailed(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val registeredState = SetupStateMachine.registered(failedState, SAVED)
+
+        assertFalse(registeredState.saveFailed)
+    }
+
+    @Test
+    fun `registered marks the authentication prerequisite as met`() {
+        val state = stateWith(DRAFT, hasMediaAccess = true, isAuthenticated = false)
+
+        val registeredState = SetupStateMachine.registered(state, CONFIGURATION)
+
+        assertTrue(registeredState.prerequisites.isAuthenticated)
+    }
+
+    @Test
+    fun `a valid draft can start backup after a registration`() {
+        val registeredState =
+            SetupStateMachine.registered(
+                stateWith(DRAFT, hasMediaAccess = true, isAuthenticated = false),
+                CONFIGURATION,
+            )
+
+        val edited = SetupStateMachine.edit(registeredState, DRAFT)
+
+        assertTrue(edited.canStartBackup)
+    }
+
+    @Test
+    fun `registration pending marks the attempt pending`() {
+        val state = SetupStateMachine.edit(initialState(), DRAFT)
+
+        val pendingState = SetupStateMachine.registrationPending(state)
+
+        assertEquals(RegistrationStatus.PENDING, pendingState.registration)
+    }
+
+    @Test
+    fun `registration failed marks the attempt failed`() {
+        val state = SetupStateMachine.edit(initialState(), DRAFT)
+
+        val failedState = SetupStateMachine.registrationFailed(state)
+
+        assertEquals(RegistrationStatus.FAILED, failedState.registration)
+    }
+
+    @Test
+    fun `edit returns an in-progress registration to none`() {
+        val registeringState = SetupStateMachine.registering(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val edited = SetupStateMachine.edit(registeringState, DRAFT.copy(login = "other"))
+
+        assertEquals(RegistrationStatus.NONE, edited.registration)
+    }
+
+    @Test
+    fun `edit returns a failed registration to none`() {
+        val failedState = SetupStateMachine.registrationFailed(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val edited = SetupStateMachine.edit(failedState, DRAFT.copy(login = "other"))
+
+        assertEquals(RegistrationStatus.NONE, edited.registration)
+    }
+
+    @Test
+    fun `edit keeps a pending registration pending`() {
+        val pendingState = SetupStateMachine.registrationPending(SetupStateMachine.edit(initialState(), DRAFT))
+
+        val edited = SetupStateMachine.edit(pendingState, DRAFT.copy(login = "other"))
+
+        assertEquals(RegistrationStatus.PENDING, edited.registration)
     }
 
     @Test

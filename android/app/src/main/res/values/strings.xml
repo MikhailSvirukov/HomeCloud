@@ -43,6 +43,9 @@
     <string name="setup_mode_connect">Connect to an existing account</string>
     <string name="setup_submit_action">Continue</string>
     <string name="setup_save_error_message">The setup could not be saved. Try again.</string>
+    <string name="setup_registration_in_progress">Registering…</string>
+    <string name="setup_registration_pending">Registration is pending and will be retried.</string>
+    <string name="setup_registration_failed">Registration failed. Try again.</string>
     <string name="setup_prerequisites_title">Before backup can start</string>
     <string name="setup_prerequisite_media_access_missing">Grant access to at least one supported media type.</string>
     <string name="setup_prerequisite_authentication_missing">Finish registration or sign in.</string>

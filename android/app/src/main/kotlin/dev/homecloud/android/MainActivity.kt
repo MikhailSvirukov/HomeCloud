@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
 import dev.homecloud.android.backup.BackupCycleComposition
@@ -28,7 +29,11 @@ import dev.homecloud.android.permissions.MediaPermissionPolicy
 import dev.homecloud.android.permissions.MediaPermissionRequestContent
 import dev.homecloud.android.queue.FileUploadQueueStore
 import dev.homecloud.android.queue.UploadQueueEntry
+import dev.homecloud.android.registration.RegistrationComposition
+import dev.homecloud.android.registration.RegistrationController
+import dev.homecloud.android.registration.RegistrationOutcome
 import dev.homecloud.android.setup.FileSetupConfigStore
+import dev.homecloud.android.setup.RegistrationStatus
 import dev.homecloud.android.setup.SetupConfigStore
 import dev.homecloud.android.setup.SetupContent
 import dev.homecloud.android.setup.SetupPrerequisites
@@ -55,12 +60,12 @@ private const val SETUP_CONFIG_FILE_NAME = "setup.conf"
  * requires it (`FR-AND-035`) without blocking the media surface when it is refused (`FR-AND-036`).
  * It hosts the setup surface next to the media permission surface and library summary
  * (`FR-AND-040 / 2`, `FR-AND-041 / 2`, `FR-AND-042 / 1`, `FR-AND-043 / 1`), restoring the saved
- * address, port, login and mode on start and persisting them again after a valid submission. The
- * backup status surface (`FR-AND-044 / 1`, `FR-AND-045 / 1`, `FR-AND-046 / 1`, `FR-AND-047 / 1`)
- * reads the queue snapshot and the recorded last cycle off the main thread once, when it enters
- * composition; a cycle that runs later is reflected on the next visit to the screen. The
- * registration and authentication layer does not exist yet, so the authentication prerequisite
- * stays unmet until it does.
+ * address, port, login and mode on start and persisting them again after a valid submission. A
+ * valid submission also starts one registration attempt off the main thread and reports its
+ * in-progress, pending or failed outcome (`FR-AND-042 / 1`, `FR-AND-053 / 1`). The backup status
+ * surface (`FR-AND-044 / 1`, `FR-AND-045 / 1`, `FR-AND-046 / 1`, `FR-AND-047 / 1`) reads the queue
+ * snapshot and the recorded last cycle off the main thread once, when it enters composition; a
+ * cycle that runs later is reflected on the next visit to the screen.
  */
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher =
@@ -162,11 +167,13 @@ private fun readQueueSnapshot(filesDir: File): List<UploadQueueEntry> =
 
 /**
  * Holds the setup draft for the current screen, restores the saved address, port, login and mode
- * when it first enters composition (`FR-AND-040 / 2`) and persists a valid submission without
- * blocking the main thread (`FR-AND-042 / 1`, `CFG-CL-029 / 1`). A failed save is reported on the
- * setup surface instead of being swallowed. The credentials of a submission stay in the submission
- * object only: the configuration is saved and the password is never stored or logged
- * (`FR-AND-041 / 2`).
+ * when it first enters composition (`FR-AND-040 / 2`), persists a valid submission without blocking
+ * the main thread (`FR-AND-042 / 1`, `CFG-CL-029 / 1`) and then runs one registration attempt off
+ * the main thread (`FR-AND-042 / 1`, `FR-AND-053 / 1`). A failed save is reported on the setup
+ * surface instead of being swallowed, and a failed save stops the submission before registration
+ * starts. The credentials of a submission stay in the submission object only: the configuration is
+ * saved and the password is never stored or logged (`FR-AND-041 / 2`). The registration controller is
+ * built on the first submission that reaches registration and reused afterwards.
  */
 @Composable
 private fun SetupSection(
@@ -181,20 +188,46 @@ private fun SetupSection(
             ),
         )
     }
+    var registrationController by remember(store) { mutableStateOf<RegistrationController?>(null) }
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val current =
         state.copy(
-            prerequisites = SetupPrerequisites(hasMediaAccess = hasMediaAccess, isAuthenticated = false),
+            prerequisites = state.prerequisites.copy(hasMediaAccess = hasMediaAccess),
         )
     SetupContent(
         state = current,
         onDraftChange = { draft -> state = SetupStateMachine.edit(state, draft) },
         onSubmit = {
             val submission = SetupStateMachine.submit(current)
-            if (submission != null) {
+            if (submission != null && state.registration != RegistrationStatus.IN_PROGRESS) {
+                state = SetupStateMachine.registering(state)
                 scope.launch {
                     if (persist(store, submission)) {
-                        state = SetupStateMachine.saved(state, submission.configuration)
+                        state = SetupStateMachine.registering(SetupStateMachine.saved(state, submission.configuration))
+                        val controller =
+                            registrationController
+                                ?: RegistrationComposition.controller(context).also { created ->
+                                    registrationController = created
+                                }
+                        val outcome =
+                            withContext(Dispatchers.IO) {
+                                controller.register(
+                                    host = submission.configuration.host,
+                                    port = submission.configuration.port,
+                                    login = submission.configuration.login,
+                                    password = submission.password,
+                                )
+                            }
+                        state =
+                            when (outcome) {
+                                is RegistrationOutcome.Registered ->
+                                    SetupStateMachine.registered(state, submission.configuration)
+                                RegistrationOutcome.Pending -> SetupStateMachine.registrationPending(state)
+                                RegistrationOutcome.StorageFailed,
+                                RegistrationOutcome.NoIdentity,
+                                -> SetupStateMachine.registrationFailed(state)
+                            }
                     } else {
                         state = SetupStateMachine.saveFailed(state)
                     }
