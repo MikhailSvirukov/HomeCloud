@@ -22,6 +22,8 @@ use std::num::NonZeroU32;
 use ciborium::Value;
 use thiserror::Error;
 
+use crate::result_code::ResultCode;
+
 /// Protocol version this codec implements.
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -688,6 +690,17 @@ impl ResultEnvelope {
     /// Successful response with its argument array.
     pub fn success(arguments: Vec<Value>) -> Self {
         Self { code: 0, arguments }
+    }
+
+    /// Failure response for a published v1 result code (`INT-NET-063 / 1`).
+    ///
+    /// The argument array is empty because a nonzero code carries no arguments
+    /// (`INT-NET-069 / 1`).
+    pub fn error(code: ResultCode) -> Self {
+        Self {
+            code: code.as_u32(),
+            arguments: Vec::new(),
+        }
     }
 
     /// Failure response without arguments; the code is nonzero by construction.
@@ -2203,6 +2216,21 @@ mod tests {
         assert_eq!(
             ResultEnvelope::decode(&bytes).expect("decoding must work"),
             failure
+        );
+    }
+
+    #[test]
+    fn an_error_envelope_carries_the_published_code_and_no_arguments() {
+        let envelope = ResultEnvelope::error(ResultCode::UnknownOperation);
+
+        assert_eq!(
+            envelope.encode().expect("encoding must work"),
+            vec![0x82, 0x1a, 0x00, 0x01, 0x00, 0x01, 0x80]
+        );
+        assert_eq!(
+            ResultEnvelope::decode(&envelope.encode().expect("encoding must work"))
+                .expect("decoding must work"),
+            envelope
         );
     }
 

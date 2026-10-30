@@ -19,6 +19,7 @@ mod metrics_server;
 mod password;
 mod registration;
 mod report;
+mod result_code;
 mod topology;
 mod wire;
 
@@ -47,6 +48,7 @@ pub use registration::{
     Login, LoginError, RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
 };
 pub use report::{Startup, StartupError};
+pub use result_code::{ResultClass, ResultCode};
 pub use topology::{Topology, TopologyNode};
 pub use wire::{
     AccountRecord, ClientHeader, ClientOperation, Credentials, ExternalHeader, HeaderLimits,
