@@ -1427,7 +1427,10 @@ mod tests {
 
     #[test]
     fn rejects_each_profile_range_violation() {
-        let cases: [(&str, &str, &'static str); 10] = [
+        // The lower bound of `logging.max_total_size_bytes` is implied by the
+        // single-file lower bound and the total-at-least-one-file rule, so it
+        // is not reachable as an out-of-range value.
+        let cases: [(&str, &str, &'static str); 16] = [
             (
                 "max_source_name_bytes = 4096",
                 "max_source_name_bytes = 65536",
@@ -1439,14 +1442,34 @@ mod tests {
                 "max_login_bytes",
             ),
             (
+                "\nmin_login_bytes = 1\n",
+                "\nmin_login_bytes = 256\n",
+                "min_login_bytes",
+            ),
+            (
                 "min_password_bytes = 8",
                 "min_password_bytes = 1025",
                 "min_password_bytes",
             ),
             (
-                "interval_ms = 1000",
-                "interval_ms = 99",
+                "\nmax_password_bytes = 1024\n",
+                "\nmax_password_bytes = 4097\n",
+                "max_password_bytes",
+            ),
+            (
+                "\nmax_label_bytes = 64\n",
+                "\nmax_label_bytes = 4097\n",
+                "max_label_bytes",
+            ),
+            (
+                "\ninterval_ms = 1000\n",
+                "\ninterval_ms = 99\n",
                 "heartbeat.interval_ms",
+            ),
+            (
+                "\ntimeout_ms = 500\n",
+                "\ntimeout_ms = 99\n",
+                "heartbeat.timeout_ms",
             ),
             (
                 "miss_threshold = 3",
@@ -1468,6 +1491,16 @@ mod tests {
                 "max_file_age_ms = 86400000",
                 "max_file_age_ms = 999",
                 "logging.max_file_age_ms",
+            ),
+            (
+                "\ntotal_deadline_ms = 30000\n",
+                "\ntotal_deadline_ms = 999\n",
+                "registration.total_deadline_ms",
+            ),
+            (
+                "\nattempt_deadline_ms = 10000\n",
+                "\nattempt_deadline_ms = 99\n",
+                "registration.attempt_deadline_ms",
             ),
             (
                 "retry_interval_ms = 1000",
@@ -1562,6 +1595,20 @@ mod tests {
     fn rejects_a_metrics_port_shared_with_a_wildcard_application_address() {
         let document =
             VALID_SERVER.replace("listen = \"10.0.0.1:7000\"", "listen = \"0.0.0.0:9101\"");
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::MetricsPortConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_metrics_port_shared_with_a_wildcard_metrics_address() {
+        let document = VALID_SERVER
+            .replace("listen = \"10.0.0.1:7000\"", "listen = \"10.0.0.1:9101\"")
+            .replace(
+                "bind = \"127.0.0.1:9101\"",
+                "bind = \"0.0.0.0:9101\"\n\n[metrics.tls]\ncertificate_path = \"/etc/homecloud/metrics/server.crt\"\nprivate_key_path = \"/etc/homecloud/metrics/server.key\"\ntrust_path = \"/etc/homecloud/metrics/ca.crt\"",
+            );
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::MetricsPortConflict { .. })
