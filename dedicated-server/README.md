@@ -301,7 +301,7 @@ Example:
 ```toml
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
-max_frame_bytes = 1048576
+max_frame_bytes = 4194304
 max_header_bytes = 1048576
 max_verifier_bytes = 512
 min_login_bytes = 1

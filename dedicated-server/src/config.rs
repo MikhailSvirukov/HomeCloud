@@ -955,7 +955,7 @@ mod tests {
             "10.0.0.1:7000".parse().expect("valid listen address")
         );
         assert_eq!(config.max_label_bytes.get(), 64);
-        assert_eq!(config.max_frame_bytes.get(), 1_048_576);
+        assert_eq!(config.max_frame_bytes.get(), 4_194_304);
         assert_eq!(config.max_header_bytes.get(), 1_048_576);
         assert_eq!(config.max_verifier_bytes.get(), 512);
         assert_eq!(config.max_login_bytes.get(), 64);
@@ -1142,7 +1142,7 @@ mod tests {
 
     #[test]
     fn rejects_a_frame_limit_below_the_profile_minimum() {
-        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 1024");
+        let document = VALID_SERVER.replace("max_frame_bytes = 4194304", "max_frame_bytes = 1024");
 
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
@@ -1291,7 +1291,7 @@ mod tests {
 
     #[test]
     fn rejects_a_zero_frame_limit() {
-        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 0");
+        let document = VALID_SERVER.replace("max_frame_bytes = 4194304", "max_frame_bytes = 0");
 
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
@@ -1301,7 +1301,7 @@ mod tests {
 
     #[test]
     fn rejects_a_missing_frame_limit() {
-        let document = VALID_SERVER.replace("max_frame_bytes = 1048576\n", "");
+        let document = VALID_SERVER.replace("max_frame_bytes = 4194304\n", "");
 
         assert!(parse_error(&document)
             .to_string()
@@ -1310,26 +1310,29 @@ mod tests {
 
     #[test]
     fn the_configured_frame_limit_is_the_receive_limit() {
-        let document = VALID_SERVER.replace("max_frame_bytes = 1048576", "max_frame_bytes = 4");
+        let document = VALID_SERVER
+            .replace("max_frame_bytes = 4194304", "max_frame_bytes = 4096")
+            .replace("max_header_bytes = 1048576", "max_header_bytes = 1024");
         let config = ServerConfig::from_toml_str(&document).expect("the document must parse");
 
         let mut encoded = Vec::new();
-        crate::frame::write_frame(&mut encoded, b"abcd").expect("the frame must be written");
+        crate::frame::write_frame(&mut encoded, &[0x11; 4096]).expect("the frame must be written");
         let mut reader = std::io::Cursor::new(encoded);
         assert_eq!(
             crate::frame::read_frame(&mut reader, config.max_frame_bytes())
-                .expect("a frame at the configured limit must be accepted"),
-            b"abcd"
+                .expect("a frame at the configured limit must be accepted")
+                .len(),
+            4096
         );
 
         let mut encoded = Vec::new();
-        crate::frame::write_frame(&mut encoded, b"abcde").expect("the frame must be written");
+        crate::frame::write_frame(&mut encoded, &[0x11; 4097]).expect("the frame must be written");
         let mut reader = std::io::Cursor::new(encoded);
         assert!(matches!(
             crate::frame::read_frame(&mut reader, config.max_frame_bytes()),
             Err(crate::frame::FrameError::TooLarge {
-                announced: 5,
-                max: 4
+                announced: 4097,
+                max: 4096
             })
         ));
     }
