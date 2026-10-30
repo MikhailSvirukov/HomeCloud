@@ -30,7 +30,8 @@ internal object FrameBodyCodec {
      * `INT-NET-019`, `INT-NET-081`).
      *
      * The declared body length is checked against the configured maximum before the frame is
-     * allocated.
+     * allocated. The returned bytes already include the length prefix, so they are written to the
+     * transport unchanged and must never be framed a second time.
      */
     fun encode(
         header: ExternalFrameHeader,
@@ -199,7 +200,9 @@ private fun requireKeyLength(
     key: ByteArray,
     field: String,
 ) {
-    require(key.size == KEY_BYTES) { "$field must contain $KEY_BYTES bytes" }
+    if (key.size != KEY_BYTES) {
+        throw ProtocolEncodingException("$field must contain $KEY_BYTES bytes")
+    }
 }
 
 private fun CborValue.asBootstrapArray(): List<CborValue> =

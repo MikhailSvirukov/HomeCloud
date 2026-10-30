@@ -6,6 +6,7 @@ import dev.homecloud.android.crypto.Ed25519KeyPair
 import dev.homecloud.android.crypto.X25519
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -212,10 +213,10 @@ class FrameBodyCodecTest {
     fun bootstrapPayloadRejectsKeyThatIsNotThirtyTwoBytes() {
         val validKey = ByteArray(KEY_BYTES)
 
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(ProtocolEncodingException::class.java) {
             FrameBodyCodec.bootstrapPayload(ByteArray(KEY_BYTES - 1), validKey)
         }
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(ProtocolEncodingException::class.java) {
             FrameBodyCodec.bootstrapPayload(validKey, ByteArray(KEY_BYTES + 1))
         }
     }
@@ -286,6 +287,7 @@ class FrameBodyCodecTest {
         const val SIGNATURE_BYTES = 64
         const val KEY_BYTES = 32
         const val GCM_TAG_BYTES = 16
+        const val MAX_NESTING_LEVELS = 64
         const val MAX_FRAME_BYTES = 4_096
         const val ZERO_LIMIT = 0
         const val NEGATIVE_LIMIT = -1
@@ -305,5 +307,75 @@ class FrameBodyCodecTest {
         val UPLOAD_ID = ByteArray(16) { index -> (index + 33).toByte() }
         val PAYLOAD = byteArrayOf(0x10, 0x20, 0x30, 0x40)
         val PLAINTEXT = byteArrayOf(0x50, 0x60, 0x70, 0x80.toByte(), 0x01, 0x02)
+    }
+
+    @Test
+    fun `encode and decode accept a body exactly at the frame limit`() {
+        val keyPair = Ed25519.generate()
+        val header = ordinaryHeader()
+        val frame = encodeFrame(header, PAYLOAD, keyPair)
+        val exactLimit = frame.size - LENGTH_PREFIX_BYTES
+
+        val encoded =
+            FrameBodyCodec.encode(
+                header = header,
+                payload = PAYLOAD,
+                sign = { signedBytes -> Ed25519.sign(keyPair.privateKey, signedBytes) },
+                maxFrameBytes = exactLimit,
+            )
+        val decoded =
+            FrameBodyCodec.decode(encoded, exactLimit) { signedBytes, signature ->
+                Ed25519.verify(keyPair.publicKey, signedBytes, signature)
+            }
+
+        assertArrayEquals(PAYLOAD, decoded.payload)
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.encode(
+                header = header,
+                payload = PAYLOAD,
+                sign = { signedBytes -> Ed25519.sign(keyPair.privateKey, signedBytes) },
+                maxFrameBytes = exactLimit - 1,
+            )
+        }
+    }
+
+    @Test
+    fun `encode rejects a signer that returns a non 64 byte signature`() {
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.encode(
+                header = ordinaryHeader(),
+                payload = PAYLOAD,
+                sign = { ByteArray(SIGNATURE_BYTES - 1) },
+                maxFrameBytes = MAX_FRAME_BYTES,
+            )
+        }
+    }
+
+    @Test
+    fun `encrypted payload uses a fresh encapsulation for every call`() {
+        val recipient = X25519.generate()
+
+        val first = FrameBodyCodec.encryptedPayload(recipient.publicKey, PAYLOAD)
+        val second = FrameBodyCodec.encryptedPayload(recipient.publicKey, PAYLOAD)
+
+        assertFalse(first.contentEquals(second))
+        assertArrayEquals(PAYLOAD, FrameBodyCodec.decryptedPayload(recipient.privateKey, first))
+        assertArrayEquals(PAYLOAD, FrameBodyCodec.decryptedPayload(recipient.privateKey, second))
+    }
+
+    @Test
+    fun `decodePrefix rejects an out of range offset`() {
+        val bytes = byteArrayOf(0x01)
+
+        assertThrows(ProtocolEncodingException::class.java) { CborDecoder.decodePrefix(bytes, -1) }
+        assertThrows(ProtocolEncodingException::class.java) { CborDecoder.decodePrefix(bytes, 2) }
+    }
+
+    @Test
+    fun `decodePrefix still bounds the array nesting depth`() {
+        var nested = ByteArray(0)
+        repeat(MAX_NESTING_LEVELS + 1) { nested = byteArrayOf(0x81.toByte()) + nested }
+
+        assertThrows(ProtocolEncodingException::class.java) { CborDecoder.decodePrefix(nested) }
     }
 }
