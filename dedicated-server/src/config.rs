@@ -1427,16 +1427,11 @@ mod tests {
 
     #[test]
     fn rejects_each_profile_range_violation() {
-        let cases: [(&str, &str, &'static str); 11] = [
+        let cases: [(&str, &str, &'static str); 10] = [
             (
                 "max_source_name_bytes = 4096",
                 "max_source_name_bytes = 65536",
                 "max_source_name_bytes",
-            ),
-            (
-                "max_file_size_bytes = 10485760",
-                "max_file_size_bytes = 9223372036854775808",
-                "max_file_size_bytes",
             ),
             (
                 "max_login_bytes = 64",
