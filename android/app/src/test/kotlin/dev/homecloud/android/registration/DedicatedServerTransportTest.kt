@@ -194,6 +194,27 @@ class DedicatedServerTransportTest {
     }
 
     @Test
+    fun `response with a different request id is rejected and closes the channel`() {
+        val channel =
+            ScriptedFrameChannel(
+                listOf(
+                    bootstrapFrame(),
+                    responseFrame(
+                        successEnvelope(CborValue.Bytes(INSTALLATION_ID)),
+                        requestId = DIFFERENT_REQUEST_ID,
+                    ),
+                ),
+            )
+
+        assertThrows(RegistrationTransportException::class.java) {
+            transport(ScriptedInstallationIdentityStore(identity)) { channel }.register(request)
+        }
+
+        assertEquals(1, channel.writes.size)
+        assertTrue(channel.closed)
+    }
+
+    @Test
     fun `non-success response envelope has no installation id`() {
         val channel =
             ScriptedFrameChannel(
@@ -333,12 +354,13 @@ class DedicatedServerTransportTest {
     private fun responseFrame(
         envelope: ResultEnvelope,
         signer: Ed25519KeyPair = serverEd25519,
+        requestId: ByteArray = REQUEST_ID,
     ): ByteArray =
         FrameBodyCodec.encode(
             header =
                 ExternalFrameHeader(
                     senderId = SERVER_SENDER_ID,
-                    requestId = REQUEST_ID,
+                    requestId = requestId,
                     frameNumber = RESPONSE_FRAME_NUMBER,
                     uploadId = null,
                     responderLabel = null,
@@ -372,6 +394,7 @@ class DedicatedServerTransportTest {
 
         val SERVER_SENDER_ID = ByteArray(16) { index -> (index + 1).toByte() }
         val REQUEST_ID = ByteArray(16) { index -> (index + 21).toByte() }
+        val DIFFERENT_REQUEST_ID = ByteArray(16) { index -> (index + 61).toByte() }
         val BOOTSTRAP_REQUEST_ID = ByteArray(16) { index -> (index + 41).toByte() }
         val INSTALLATION_ID =
             byteArrayOf(
