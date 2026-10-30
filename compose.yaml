@@ -18,10 +18,12 @@ x-agent: &agent
     DEFAULT_BRANCH: ${DEFAULT_BRANCH:-main}
     AGENT_MAX_TASKS: ${AGENT_MAX_TASKS:-20}
     AGENT_MAX_RUN_SECONDS: ${AGENT_MAX_RUN_SECONDS:-3600}
+    AGENT_DEPENDENCY_POLL_SECONDS: ${AGENT_DEPENDENCY_POLL_SECONDS:-60}
     GITHUB_MCP_TOKEN: ${GITHUB_MCP_TOKEN:?Set GITHUB_MCP_TOKEN in .env}
     DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY in .env}
   command:
     - run
+    - --standalone
     - --continue
     - --agent
     - orchestrator
@@ -35,6 +37,9 @@ x-agent: &agent
       /workspace/.agent-reports/ at startup, update it at checkpoints, and finalize it
       before exiting using docs/agent-run-report-template.md. Report the file path
       in your final summary.
+      If only cross-workstream dependencies remain, recheck them every
+      ${AGENT_DEPENDENCY_POLL_SECONDS:-60} seconds until they become available or
+      a run limit is actually reached; resume work when unblocked.
   volumes:
     - opencode-data-android:/home/opencode/.local/share/opencode
     - opencode-config-android:/home/opencode/.config/opencode
