@@ -79,10 +79,14 @@ clients; it does not relay Raft or blob traffic.
   `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
   and AES-256-GCM), `src/signed_frame.rs` (signed application frame body
   with the length prefix, external header, Ed25519 signature, opaque payload,
-  and first-contact bootstrap payload codecs), and `src/server_exchange.rs`
+  and first-contact bootstrap payload codecs), `src/server_exchange.rs`
   (encrypted signed inter-server message composition that seals the plaintext
   for the recipient before signing the frame and verifies the signature before
-  opening it).
+  opening it), and `src/server_transport.rs` (direct encrypted TCP transport
+  that resolves a Raft peer from a trusted peer directory, opens one TCP
+  connection per RPC, sends the signed and HPKE-sealed `[3, [rpc_bytes]]`
+  envelope, and accepts a reply only when it verifies and decrypts with the
+  peer's configured keys and carries the requested sender and request ids).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `frame_validation_public_api.rs`,
@@ -103,7 +107,7 @@ clients; it does not relay Raft or blob traffic.
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
   `signed_frame_public_api.rs`, `server_exchange_public_api.rs`,
-  `message_public_api.rs`,
+  `server_transport_public_api.rs`, `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
