@@ -39,7 +39,10 @@
 //! client-supplied capture/creation time, and the server acceptance time
 //! (`FR-NODE-008 / 1`), together with the blob replica set to a catalog state
 //! machine, exchanges CBOR-encoded RPCs inside the type-3 inter-server envelope
-//! over [`RaftTransport`], and keeps a durable bootstrap marker. The
+//! over [`RaftTransport`], and keeps a durable bootstrap marker. The direct
+//! encrypted TCP transport ([`ServerTransport`], [`PeerDirectory`], [`Peer`])
+//! resolves a target node in a trusted peer table and carries each inter-server
+//! RPC as a signed, HPKE-sealed frame. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API, together with the catalog entry, page, and
@@ -136,6 +139,7 @@ mod raft;
 mod response;
 mod sealing;
 mod server_exchange;
+mod server_transport;
 mod signed_frame;
 mod signing;
 mod storage_layout;
@@ -205,6 +209,7 @@ pub use sealing::{
 pub use server_exchange::{
     decode_server_message, encode_server_message, ServerExchangeError, ServerMessage,
 };
+pub use server_transport::{Peer, PeerDirectory, PeerDirectoryError, PeerError, ServerTransport};
 pub use signed_frame::{
     decode_bootstrap_payload, decode_signed_frame, encode_bootstrap_payload, encode_signed_frame,
     BootstrapPayload, SignedApplicationFrame, SignedFrameError, BOOTSTRAP_KEY_LEN,
