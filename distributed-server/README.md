@@ -29,7 +29,10 @@ clients; it does not relay Raft or blob traffic.
   `src/payload.rs` (logical payload chain / chunked streaming
   with backpressure), `src/payload_stream.rs` (file payload streamed as bounded
   frames through the payload buffer pools), `src/config.rs` (node
-  identity/configuration), `src/keys.rs` (private key material loaded from
+  identity/configuration), `src/manifest.rs` (static TOML manifest with the
+  dedicated and storage entries, strict validation, local storage lookup,
+  trusted peer directory, and fixed Raft voter membership), `src/keys.rs`
+  (private key material loaded from
   configured owner-only files), `src/response.rs` (typed upload outcomes / status
   codes), `src/metadata.rs` (idempotent upload ledger: upload id, content
   hash, upload record preserving the original source name exactly, with no
@@ -95,7 +98,8 @@ clients; it does not relay Raft or blob traffic.
   `frame_validation_public_api.rs`,
   `connection_public_api.rs`, `payload_public_api.rs`,
   `payload_stream_public_api.rs`, `config_public_api.rs`,
-  `keys_public_api.rs`, `content_hash_public_api.rs`,
+  `manifest_public_api.rs`, `keys_public_api.rs`,
+  `content_hash_public_api.rs`,
   `upload_ledger_public_api.rs`, `catalog_public_api.rs`,
   `catalog_pager_public_api.rs`, `catalog_service_public_api.rs`,
   `catalog_error_codes_public_api.rs`,
@@ -252,6 +256,51 @@ and a larger value is rejected.
 Startup loads both private key files after the configuration is validated and before
 the listener binds, so a missing or unreadable key stops the process without opening a
 port.
+
+## Static manifest
+
+`StaticManifest` loads the operator-provided topology from a TOML 1.0 file encoded as
+UTF-8 (`StaticManifest::load`) or from a string (`StaticManifest::parse`). The file has
+exactly one `[dedicated]` table and one or more `[[storage]]` tables:
+
+```toml
+[dedicated]
+sender_id = "33333333-3333-4333-8333-333333333333"
+label = "dedicated"
+host = "192.0.2.10"
+port = 7000
+x25519_public_key = "<64 hex characters>"
+ed25519_public_key = "<64 hex characters>"
+
+[[storage]]
+sender_id = "11111111-1111-4111-8111-111111111111"
+label = "storage-a"
+host = "192.0.2.11"
+port = 7001
+x25519_public_key = "<64 hex characters>"
+ed25519_public_key = "<64 hex characters>"
+```
+
+Every entry has the same six fields. `sender_id` is the node's stable UUID, `host` is
+an IP literal, `port` is a non-zero TCP port, and the two keys are 32-byte open keys
+written as 64 hexadecimal characters. The manifest contains only open keys; each
+component keeps its own private keys in separately configured files.
+
+Validation covers the whole file before a validated manifest is returned. Missing
+`[dedicated]`, missing or empty `[[storage]]`, missing or unknown fields, duplicate
+fields, malformed TOML, malformed UUIDs, keys that are not 64 hex characters, DNS host
+names, zero ports, labels that are empty or longer than `MAX_MANIFEST_LABEL_LEN`,
+duplicate labels, duplicate sender ids, duplicate addresses, and two different UUIDs
+that map to the same Raft node id are rejected. A manifest error is returned to the
+caller, which must stop startup before opening any listener; the diagnostic does not
+contain private keys.
+
+`StaticManifest::local(label)` resolves only a storage entry, by its label; the
+dedicated server and unknown labels return `LocalNotFound`. `peer_directory` builds
+the trusted directory of storage nodes from their open keys, and `voting_members`
+returns the fixed Raft voter set as storage node id to address pairs; the dedicated
+server is not a voter. Node membership changes only through a manual deployment and
+manifest update.
 
 ## Catalog page exchange
 

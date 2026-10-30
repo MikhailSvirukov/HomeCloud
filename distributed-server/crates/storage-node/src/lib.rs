@@ -20,8 +20,11 @@
 //! connections until shutdown and serves each frame pump on its own task, and
 //! the bounded CPU pool ([`CpuPool`]) that runs CPU-bound work off the Tokio
 //! worker threads, the on-disk storage layout ([`StorageLayout`]) with
-//! separate accounts and Raft roots and hex-encoded account/blob paths, and
-//! private-key file loading ([`PrivateKey`], [`KeyError`]) from configured
+//! separate accounts and Raft roots and hex-encoded account/blob paths, the
+//! static TOML manifest ([`StaticManifest`], [`ManifestError`]) that validates
+//! the dedicated server and fixed storage voter set with their addresses and
+//! public keys and derives the trusted peer directory, and private-key file
+//! loading ([`PrivateKey`], [`KeyError`]) from configured
 //! owner-only files, Ed25519 message signing/verification
 //! ([`MessageSigningKey`], [`MessageVerifyingKey`], [`SigningError`]), and HPKE
 //! Base-mode message sealing ([`seal`], [`open`]) with X25519, HKDF-SHA-256, and
@@ -131,6 +134,7 @@ mod integrity_scan;
 mod keys;
 mod listener;
 mod logging;
+mod manifest;
 mod message;
 mod metadata;
 mod metrics;
@@ -191,6 +195,7 @@ pub use logging::{
     start_logging, ErrorCategory, EventType, LogConfig, LogConfigError, LogEvent, LogLevel, Logger,
     Logging, OperationType, Outcome, StateChange,
 };
+pub use manifest::{ManifestEntry, ManifestError, StaticManifest, MAX_MANIFEST_LABEL_LEN};
 pub use message::{decode_raft_rpc, encode_raft_rpc, MessageError, MessageType};
 pub use metadata::{
     ContentHash, MetadataError, RecordOutcome, UploadId, UploadLedger, UploadRecord,
