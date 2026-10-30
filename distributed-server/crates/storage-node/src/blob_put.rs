@@ -205,6 +205,16 @@ pub fn decode_blob_put_begin(
 
 /// Encodes a blob-put data frame as `[11, [payload_length]]` followed immediately by the compressed payload.
 pub fn encode_blob_put_data_frame(payload: &[u8]) -> Result<Vec<u8>> {
+    encode_data_frame(MessageType::BlobPutData, payload)
+}
+
+/// Decodes a blob-put data frame and returns its header and the compressed payload bytes.
+pub fn decode_blob_put_data_frame(bytes: &[u8]) -> Result<(BlobPutData, &[u8])> {
+    let (payload_length, payload) = decode_data_frame(MessageType::BlobPutData, bytes)?;
+    Ok((BlobPutData { payload_length }, payload))
+}
+
+pub(crate) fn encode_data_frame(message_type: MessageType, payload: &[u8]) -> Result<Vec<u8>> {
     let payload_length =
         u32::try_from(payload.len()).map_err(|_| BlobPutError::InvalidPayloadLength)?;
     if payload_length == 0 {
@@ -212,7 +222,7 @@ pub fn encode_blob_put_data_frame(payload: &[u8]) -> Result<Vec<u8>> {
     }
 
     let header = encode_envelope(
-        MessageType::BlobPutData,
+        message_type,
         Value::Array(vec![Value::Integer(payload_length.into())]),
     )?;
     let mut bytes = Vec::with_capacity(header.len() + payload.len());
@@ -221,8 +231,7 @@ pub fn encode_blob_put_data_frame(payload: &[u8]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Decodes a blob-put data frame and returns its header and the compressed payload bytes.
-pub fn decode_blob_put_data_frame(bytes: &[u8]) -> Result<(BlobPutData, &[u8])> {
+pub(crate) fn decode_data_frame(message_type: MessageType, bytes: &[u8]) -> Result<(u32, &[u8])> {
     let mut cursor = Cursor::new(bytes);
     let value: Value = ciborium::de::from_reader(&mut cursor).map_err(|_| BlobPutError::Decode)?;
     let consumed = usize::try_from(cursor.position()).map_err(|_| BlobPutError::Decode)?;
@@ -234,8 +243,8 @@ pub fn decode_blob_put_data_frame(bytes: &[u8]) -> Result<(BlobPutData, &[u8])> 
     let Value::Array(elements) = value else {
         return Err(BlobPutError::NotAnArray);
     };
-    let [message_type, arguments] = elements.try_into().map_err(|_| BlobPutError::WrongLength)?;
-    expect_message_type(message_type, MessageType::BlobPutData)?;
+    let [frame_type, arguments] = elements.try_into().map_err(|_| BlobPutError::WrongLength)?;
+    expect_message_type(frame_type, message_type)?;
 
     let Value::Array(arguments) = arguments else {
         return Err(BlobPutError::WrongLength);
@@ -254,7 +263,7 @@ pub fn decode_blob_put_data_frame(bytes: &[u8]) -> Result<(BlobPutData, &[u8])> 
         return Err(BlobPutError::PayloadMismatch);
     }
 
-    Ok((BlobPutData { payload_length }, payload))
+    Ok((payload_length, payload))
 }
 
 /// Encodes a blob-put result as the exact `[12, [result_code, result_args]]` shape.

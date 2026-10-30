@@ -1,14 +1,14 @@
 //! Inter-server blob-get logical messages.
-//! SRS: `INT-NET-098 / 1`, `INT-NET-099 / 1`, `INT-NET-116 / 1`,
-//! `INT-NET-119 / 1`, `INT-NET-128 / 1`.
+//! SRS: `INT-NET-098 / 1`, `INT-NET-099 / 1`, `INT-NET-100 / 1`,
+//! `INT-NET-116 / 1`, `INT-NET-119 / 1`, `INT-NET-128 / 1`.
 
 use core::fmt;
 
 use ciborium::value::Value;
 
 use crate::blob_put::{
-    canonical_bytes, decode_metadata, decode_value, encode_metadata_value, transfer_size_bound,
-    validate_metadata, BlobMetadata, BlobPutError,
+    canonical_bytes, decode_data_frame, decode_metadata, decode_value, encode_data_frame,
+    encode_metadata_value, transfer_size_bound, validate_metadata, BlobMetadata, BlobPutError,
 };
 use crate::client_limits::ClientLimits;
 use crate::message::MessageType;
@@ -54,6 +54,13 @@ pub struct BlobGetResult {
     pub metadata: Option<BlobMetadata>,
     /// Compressed transfer size on success, absent on error.
     pub transfer_compressed_size: Option<u64>,
+}
+
+/// Blob get data header carrying the compressed payload length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlobGetData {
+    /// Number of compressed bytes following the CBOR header.
+    pub payload_length: u32,
 }
 
 /// Errors from encoding or decoding a blob-get logical message.
@@ -109,6 +116,17 @@ pub fn decode_blob_get(bytes: &[u8], limits: &ClientLimits) -> Result<BlobGet> {
         login,
         upload_id: decode_upload_id(upload_id)?,
     })
+}
+
+/// Encodes a blob-get data frame as `[15, [payload_length]]` followed immediately by the compressed payload.
+pub fn encode_blob_get_data_frame(payload: &[u8]) -> Result<Vec<u8>> {
+    Ok(encode_data_frame(MessageType::BlobGetData, payload)?)
+}
+
+/// Decodes a blob-get data frame and returns its header and the compressed payload bytes.
+pub fn decode_blob_get_data_frame(bytes: &[u8]) -> Result<(BlobGetData, &[u8])> {
+    let (payload_length, payload) = decode_data_frame(MessageType::BlobGetData, bytes)?;
+    Ok((BlobGetData { payload_length }, payload))
 }
 
 /// Encodes a blob-get result as the exact `[14, [result_code, result_args]]` shape.
