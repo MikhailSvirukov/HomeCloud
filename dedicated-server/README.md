@@ -395,10 +395,14 @@ client logical header for the four v1 operations (`INT-NET-051`, `INT-NET-057`,
 with the registration, topology, catalog page and upload argument schemas), the
 result envelope (`INT-NET-061`) and the inter-server envelope `[message_type,
 args]` with its heartbeat request, heartbeat response and Raft RPC messages
-(`INT-NET-072`-`INT-NET-075`). Encoding is the deterministic minimal
-representation, and decoding rejects a wrong element count, type, byte-string
-length or null rule, an unknown operation code, a reserved or unknown message
-type, a wrong argument count, type or value, and trailing bytes.
+(`INT-NET-072`-`INT-NET-075`). The inter-server envelope also carries the
+registry lookup and lookup result (`INT-NET-089`, `INT-NET-090`) and the
+registration propose and result (`INT-NET-091`, `INT-NET-092`), including the
+snapshot records and the ASCII verifier bound of `CFG-CL-047`. Encoding is the
+deterministic minimal representation, and decoding rejects a wrong element
+count, type, byte-string length or null rule, an unknown operation code, a
+reserved, unassigned or unsupported message type, a wrong argument count, type
+or value, and trailing bytes.
 
 `src/answers.rs` builds the two successful answers the server owes a client: the
 registration answer with only the assigned installation identifier
