@@ -317,6 +317,7 @@ mod tests {
             "the node must be unavailable before the recovery"
         );
 
+        publisher.poll(at(start, INTERVAL_MS * 2 + TIMEOUT_MS * 2));
         publisher
             .record_response(LABELS[0], at(start, INTERVAL_MS * 2 + TIMEOUT_MS * 2))
             .expect("the node must have an attempt in flight");
