@@ -208,6 +208,34 @@ pub enum WireError {
     /// A PHC verifier is not ASCII text.
     #[error("PHC verifier must be ASCII text")]
     VerifierNotAscii,
+    /// A text field is shorter than the configured minimum (`INT-NET-086`).
+    #[error("{field} must be at least {min} bytes, got {actual}")]
+    TextTooShort {
+        /// Field that violates its bound.
+        field: &'static str,
+        /// Observed length in bytes.
+        actual: usize,
+        /// Configured minimum.
+        min: usize,
+    },
+    /// A text field is longer than the configured maximum (`INT-NET-086`).
+    #[error("{field} must be at most {max} bytes, got {actual}")]
+    TextTooLong {
+        /// Field that violates its bound.
+        field: &'static str,
+        /// Observed length in bytes.
+        actual: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// The encoded logical header exceeds the configured limit (`INT-NET-085`).
+    #[error("encoded logical header is {actual} bytes, above max_header_bytes ({max})")]
+    HeaderTooLarge {
+        /// Observed encoded length in bytes.
+        actual: usize,
+        /// Configured maximum.
+        max: usize,
+    },
     /// Bytes remain after the CBOR value.
     #[error("unexpected trailing bytes after the CBOR value")]
     TrailingBytes,
@@ -305,6 +333,31 @@ impl ExternalHeader {
         Ok(())
     }
 }
+
+/// Bounds applied while decoding a client logical header (`CFG-CL-029`,
+/// `CFG-CL-032`, `CFG-CL-046`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeaderLimits {
+    /// Largest encoded logical header in bytes (`INT-NET-085`).
+    pub max_header_bytes: usize,
+    /// Smallest accepted login length in bytes.
+    pub min_login_bytes: usize,
+    /// Largest accepted login length in bytes.
+    pub max_login_bytes: usize,
+    /// Smallest accepted password length in bytes.
+    pub min_password_bytes: usize,
+    /// Largest accepted password length in bytes.
+    pub max_password_bytes: usize,
+    /// Largest accepted media source name in bytes.
+    pub max_source_name_bytes: usize,
+}
+
+/// Field name used when a login bound is violated.
+const LOGIN_FIELD: &str = "login";
+/// Field name used when a password bound is violated.
+const PASSWORD_FIELD: &str = "password";
+/// Field name used when a source-name bound is violated.
+const SOURCE_NAME_FIELD: &str = "source_name";
 
 /// Credentials carried in a client logical header (`INT-NET-054 / 1`).
 ///
@@ -445,11 +498,19 @@ impl ClientHeader {
         encode_value(&value)
     }
 
-    /// Decode and validate a client logical header.
+    /// Decode and validate a client logical header under the configured bounds.
     ///
-    /// Credentials are returned as sent: login syntax and password limits are
-    /// enforced by the registration layer, not by this schema codec.
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
+    /// The encoded header is bounded by `max_header_bytes` before any CBOR
+    /// parsing (`INT-NET-085`), and the login, password and source name are
+    /// bounded before they are copied (`INT-NET-086`). Login syntax is still
+    /// enforced by the registration layer.
+    pub fn decode(bytes: &[u8], limits: &HeaderLimits) -> Result<Self> {
+        if bytes.len() > limits.max_header_bytes {
+            return Err(WireError::HeaderTooLarge {
+                actual: bytes.len(),
+                max: limits.max_header_bytes,
+            });
+        }
         let Value::Array(elements) = decode_value(bytes)? else {
             return Err(WireError::NotAnArray(CLIENT_HEADER));
         };
@@ -457,9 +518,23 @@ impl ClientHeader {
 
         let code = uint32(&elements[0], CLIENT_HEADER, 1)?;
         let operation = ClientOperation::from_code(code)?;
+        let login = text(&elements[1], CLIENT_HEADER, 2)?;
+        check_text(
+            login,
+            LOGIN_FIELD,
+            limits.min_login_bytes,
+            limits.max_login_bytes,
+        )?;
+        let password = text(&elements[2], CLIENT_HEADER, 3)?;
+        check_text(
+            password,
+            PASSWORD_FIELD,
+            limits.min_password_bytes,
+            limits.max_password_bytes,
+        )?;
         let credentials = Credentials {
-            login: text(&elements[1], CLIENT_HEADER, 2)?.to_owned(),
-            password: text(&elements[2], CLIENT_HEADER, 3)?.to_owned(),
+            login: login.to_owned(),
+            password: password.to_owned(),
         };
         let Value::Array(arguments) = &elements[3] else {
             return Err(WireError::WrongType {
@@ -514,11 +589,18 @@ impl ClientHeader {
                         })
                     }
                 };
+                let source_name =
+                    text(&arguments[0], CLIENT_HEADER, 4).map_err(argument_error(operation, 0))?;
+                if source_name.len() > limits.max_source_name_bytes {
+                    return Err(WireError::TextTooLong {
+                        field: SOURCE_NAME_FIELD,
+                        actual: source_name.len(),
+                        max: limits.max_source_name_bytes,
+                    });
+                }
                 Ok(Self::Upload {
                     credentials,
-                    source_name: text(&arguments[0], CLIENT_HEADER, 4)
-                        .map_err(argument_error(operation, 0))?
-                        .to_owned(),
+                    source_name: source_name.to_owned(),
                     timestamp_ms,
                     original_size_bytes: uint(&arguments[2], CLIENT_HEADER, 4)
                         .map_err(argument_error(operation, 2))?,
@@ -659,6 +741,18 @@ fn encode_value(value: &Value) -> Result<Vec<u8>> {
     ciborium::ser::into_writer(value, &mut bytes)
         .map_err(|error| WireError::Encode(error.to_string()))?;
     Ok(bytes)
+}
+
+/// Check `value` against a configured byte range (`INT-NET-086`).
+fn check_text(value: &str, field: &'static str, min: usize, max: usize) -> Result<()> {
+    let actual = value.len();
+    if actual < min {
+        return Err(WireError::TextTooShort { field, actual, min });
+    }
+    if actual > max {
+        return Err(WireError::TextTooLong { field, actual, max });
+    }
+    Ok(())
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value> {
@@ -1627,6 +1721,17 @@ mod tests {
     const MAX_LABEL_BYTES: usize = 64;
     const MAX_VERIFIER_BYTES: usize = 512;
 
+    fn header_limits() -> HeaderLimits {
+        HeaderLimits {
+            max_header_bytes: 1_048_576,
+            min_login_bytes: 1,
+            max_login_bytes: 64,
+            min_password_bytes: 1,
+            max_password_bytes: 1_024,
+            max_source_name_bytes: 4_096,
+        }
+    }
+
     fn header() -> ExternalHeader {
         ExternalHeader {
             sender_id: Some([0x11; IDENTIFIER_BYTES]),
@@ -1755,6 +1860,210 @@ mod tests {
     }
 
     #[test]
+    fn a_header_above_the_size_limit_is_rejected_before_parsing() {
+        let limits = HeaderLimits {
+            max_header_bytes: 16,
+            ..header_limits()
+        };
+        let bytes = vec![0xff_u8; 17];
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::HeaderTooLarge {
+                actual: 17,
+                max: 16
+            })
+        ));
+    }
+
+    #[test]
+    fn a_header_at_the_configured_size_limit_is_accepted() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_header_bytes: bytes.len(),
+            ..header_limits()
+        };
+
+        assert_eq!(
+            ClientHeader::decode(&bytes, &limits).expect("a header at the limit must be accepted"),
+            header
+        );
+    }
+
+    #[test]
+    fn a_header_above_the_configured_size_limit_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_header_bytes: bytes.len() - 1,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::HeaderTooLarge { actual, max }) if actual == bytes.len() && max == bytes.len() - 1
+        ));
+    }
+
+    #[test]
+    fn a_login_below_the_configured_minimum_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            min_login_bytes: 6,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooShort {
+                field: "login",
+                actual: 5,
+                min: 6
+            })
+        ));
+    }
+
+    #[test]
+    fn a_login_above_the_configured_maximum_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_login_bytes: 4,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooLong {
+                field: "login",
+                actual: 5,
+                max: 4
+            })
+        ));
+    }
+
+    #[test]
+    fn a_password_above_the_configured_maximum_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_password_bytes: 5,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooLong {
+                field: "password",
+                actual: 6,
+                max: 5
+            })
+        ));
+    }
+
+    #[test]
+    fn credentials_at_the_configured_boundaries_are_accepted() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            min_login_bytes: 5,
+            max_login_bytes: 5,
+            min_password_bytes: 6,
+            max_password_bytes: 6,
+            ..header_limits()
+        };
+
+        assert_eq!(
+            ClientHeader::decode(&bytes, &limits)
+                .expect("credentials at both boundaries must be accepted"),
+            header
+        );
+    }
+
+    #[test]
+    fn a_password_below_the_configured_minimum_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            min_password_bytes: 7,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooShort {
+                field: "password",
+                actual: 6,
+                min: 7
+            })
+        ));
+    }
+
+    #[test]
+    fn a_source_name_above_the_configured_maximum_is_rejected() {
+        let header = ClientHeader::Upload {
+            credentials: credentials(),
+            source_name: "photo.jpg".to_owned(),
+            timestamp_ms: -1,
+            original_size_bytes: 1_000,
+            compressed_size_bytes: 500,
+            sha256: [0x99; KEY_BYTES],
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_source_name_bytes: 8,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooLong {
+                field: "source_name",
+                actual: 9,
+                max: 8
+            })
+        ));
+    }
+
+    #[test]
+    fn a_source_name_at_the_configured_maximum_is_accepted() {
+        let header = ClientHeader::Upload {
+            credentials: credentials(),
+            source_name: "photo.jpg".to_owned(),
+            timestamp_ms: -1,
+            original_size_bytes: 1_000,
+            compressed_size_bytes: 500,
+            sha256: [0x99; KEY_BYTES],
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_source_name_bytes: 9,
+            ..header_limits()
+        };
+
+        assert_eq!(
+            ClientHeader::decode(&bytes, &limits)
+                .expect("a source name at the limit must be accepted"),
+            header
+        );
+    }
+    #[test]
     fn a_byte_string_of_the_wrong_length_is_rejected() {
         let value = Value::Array(vec![
             Value::Integer(1.into()),
@@ -1785,7 +2094,7 @@ mod tests {
 
         assert_eq!(header.encode().expect("encoding must work"), expected);
         assert_eq!(
-            ClientHeader::decode(&expected).expect("decoding must work"),
+            ClientHeader::decode(&expected, &header_limits()).expect("decoding must work"),
             header
         );
     }
@@ -1823,7 +2132,8 @@ mod tests {
 
         for header in headers {
             let bytes = header.encode().expect("encoding must work");
-            let decoded = ClientHeader::decode(&bytes).expect("decoding must work");
+            let decoded =
+                ClientHeader::decode(&bytes, &header_limits()).expect("decoding must work");
             assert_eq!(decoded, header);
             assert_eq!(decoded.operation(), header.operation());
         }
@@ -1852,7 +2162,7 @@ mod tests {
             let bytes = encode_value(&value).expect("encoding must work");
 
             assert!(matches!(
-                ClientHeader::decode(&bytes),
+                ClientHeader::decode(&bytes, &header_limits()),
                 Err(WireError::UnknownOperation(_))
             ));
         }
@@ -1869,7 +2179,7 @@ mod tests {
         let bytes = encode_value(&value).expect("encoding must work");
 
         assert!(matches!(
-            ClientHeader::decode(&bytes),
+            ClientHeader::decode(&bytes, &header_limits()),
             Err(WireError::WrongArgumentCount {
                 expected: 0,
                 actual: 1,
@@ -1929,7 +2239,7 @@ mod tests {
         bytes.push(0x00);
 
         assert!(matches!(
-            ClientHeader::decode(&bytes),
+            ClientHeader::decode(&bytes, &header_limits()),
             Err(WireError::TrailingBytes)
         ));
     }
@@ -2061,7 +2371,7 @@ mod tests {
         let bytes = encode_value(&value).expect("encoding must work");
 
         assert!(matches!(
-            ClientHeader::decode(&bytes),
+            ClientHeader::decode(&bytes, &header_limits()),
             Err(WireError::IntegerOutOfRange { .. })
         ));
     }
@@ -2099,7 +2409,7 @@ mod tests {
         let bytes = encode_value(&value).expect("encoding must work");
 
         assert!(matches!(
-            ClientHeader::decode(&bytes),
+            ClientHeader::decode(&bytes, &header_limits()),
             Err(WireError::CatalogTokenPair)
         ));
     }
@@ -2164,7 +2474,7 @@ mod tests {
         };
         let bytes = client.encode().expect("encoding must work");
         assert_eq!(
-            ClientHeader::decode(&bytes).expect("decoding must work"),
+            ClientHeader::decode(&bytes, &header_limits()).expect("decoding must work"),
             client
         );
     }
@@ -2179,7 +2489,8 @@ mod tests {
         ];
         bytes.extend([0xf7, 0xf7]);
 
-        let decoded = ClientHeader::decode(&bytes).expect("undefined is read as null");
+        let decoded =
+            ClientHeader::decode(&bytes, &header_limits()).expect("undefined is read as null");
         assert_eq!(
             decoded,
             ClientHeader::CatalogPage {

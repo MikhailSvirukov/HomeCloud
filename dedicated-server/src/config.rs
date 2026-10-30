@@ -19,6 +19,7 @@ use thiserror::Error;
 
 use crate::password::Argon2Params;
 use crate::registration::CredentialLimits;
+use crate::wire::HeaderLimits;
 
 /// Environment variable holding the path to the server configuration file.
 pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
@@ -517,6 +518,19 @@ impl ServerConfig {
     /// the payload buffer is allocated (`INT-NET-004`).
     pub fn max_frame_bytes(&self) -> NonZeroU32 {
         self.max_frame_bytes
+    }
+
+    /// Bounds applied while decoding a client logical header (`INT-NET-085`,
+    /// `INT-NET-086`).
+    pub fn header_limits(&self) -> HeaderLimits {
+        HeaderLimits {
+            max_header_bytes: self.max_header_bytes.get(),
+            min_login_bytes: self.min_login_bytes.get(),
+            max_login_bytes: self.max_login_bytes.get(),
+            min_password_bytes: self.min_password_bytes.get(),
+            max_password_bytes: self.max_password_bytes.get(),
+            max_source_name_bytes: self.max_source_name_bytes.get(),
+        }
     }
 
     /// Credential length limits applied to registration (`CFG-CL-029`).
@@ -1317,6 +1331,32 @@ mod tests {
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::MetricsPortConflict { .. })
         ));
+    }
+
+    #[test]
+    fn the_header_limits_come_from_the_configuration() {
+        let config = ServerConfig::from_toml_str(VALID_SERVER).expect("valid fixture must parse");
+        let limits = config.header_limits();
+
+        assert_eq!(limits.max_header_bytes, 1_048_576);
+        assert_eq!(limits.min_login_bytes, 1);
+        assert_eq!(limits.max_login_bytes, 64);
+        assert_eq!(limits.min_password_bytes, 8);
+        assert_eq!(limits.max_password_bytes, 1_024);
+        assert_eq!(limits.max_source_name_bytes, 4_096);
+
+        let header = crate::wire::ClientHeader::Topology {
+            credentials: crate::wire::Credentials {
+                login: "alice".to_owned(),
+                password: "secret-password".to_owned(),
+            },
+        };
+        let bytes = header.encode().expect("encoding must work");
+        assert_eq!(
+            crate::wire::ClientHeader::decode(&bytes, &limits)
+                .expect("the configured limits must accept a valid header"),
+            header
+        );
     }
 
     #[test]
