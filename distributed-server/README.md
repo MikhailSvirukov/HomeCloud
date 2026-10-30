@@ -72,7 +72,10 @@ clients; it does not relay Raft or blob traffic.
   same verified durable write, refusing an unmarked local copy), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
-  persistence), `src/frame_sequence.rs` (contiguous client frame-number
+  persistence), `src/runtime.rs` (node Raft runtime that resolves the local
+  manifest entry, validates the configured identity keys, derives the transport
+  and voter set, and exposes the local OpenRaft node), `src/frame_sequence.rs`
+  (contiguous client frame-number
   validation: the sequence starts at `0`, advances by one, and never wraps
   after `u32::MAX`), `src/version_negotiation.rs` (CBOR codec for supported
   version lists and negotiation that selects protocol version `1`),
@@ -109,7 +112,8 @@ clients; it does not relay Raft or blob traffic.
   `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
-  `raft_cluster_public_api.rs`, `storage_layout_public_api.rs`,
+  `raft_cluster_public_api.rs`, `raft_runtime_public_api.rs`,
+  `storage_layout_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
@@ -185,6 +189,13 @@ at startup:
 - `ENCRYPTION_KEY_PATH` — private encryption key file (maps to the
   `encryption_key_path` key).
 - `SIGNING_KEY_PATH` — private signing key file (maps to the `signing_key_path` key).
+- `MANIFEST_PATH` — optional path to the static TOML manifest that defines the
+  dedicated server, the storage nodes, their addresses, and their open keys. When
+  set, startup loads and validates it and starts the manifest-derived Raft runtime;
+  when absent, the node serves without that runtime.
+- `RAFT_BOOTSTRAP` — explicit one-time bootstrap switch. `true` or `1` enables it,
+  `false`, `0`, or an empty value disables it, and any other value stops startup. It
+  only takes effect when `MANIFEST_PATH` is set.
 - `MAX_FRAME_LEN` — maximum frame size in bytes; must be non-zero (maps to the
   `max_frame_len` key).
 - `QUEUE_CAPACITY` — per-connection inter-actor queue capacity; must be non-zero (maps
@@ -301,6 +312,35 @@ the trusted directory of storage nodes from their open keys, and `voting_members
 returns the fixed Raft voter set as storage node id to address pairs; the dedicated
 server is not a voter. Node membership changes only through a manual deployment and
 manifest update.
+
+## Raft runtime
+
+`RaftRuntime::start` builds the process-local OpenRaft runtime from the static
+manifest. It resolves `local_label` only among the `[[storage]]` entries, so the
+dedicated-server label is rejected as a manifest `LocalNotFound` error. It requires
+the configured listen port to equal that entry's advertised port and any concrete
+listen IP to equal its advertised IP. It then checks that the private encryption and
+signing key files match the entry's X25519 and Ed25519 open keys. These identity and
+key checks run before the runtime opens any listener, so a mismatched manifest or
+key stops startup without a bound port.
+
+The transport endpoint table and the fixed voter set come from the same manifest:
+each storage entry contributes its node id, sender id, advertised address, and open
+keys, while the dedicated server is neither a voter nor an RPC relay. The local
+sender id used in peer messages is the manifest entry's identifier and does not
+change across restarts or label changes elsewhere in the deployment.
+
+Bootstrap is explicit. `RaftRuntime::initialize` sends the initial membership
+command with exactly the manifest storage voters and records the durable bootstrap
+marker, so a later command on the same node is rejected and a restart restores the
+persisted Raft state instead of forming a new cluster. `RAFT_BOOTSTRAP` selects
+this one-time command; an ordinary start does not initialize a cluster by itself.
+
+The runtime serves incoming peer connections by resolving the sender in the
+manifest-derived trusted directory before signature verification and decryption,
+and dispatches the verified RPC bytes to the local OpenRaft instance for handling.
+`RaftRuntime::node` exposes that local node, and `RaftRuntime::local` exposes the
+resolved manifest entry.
 
 ## Catalog page exchange
 
