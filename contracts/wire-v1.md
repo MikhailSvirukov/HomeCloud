@@ -23,6 +23,13 @@ Requirement identifiers are cited as `ID / revision`. The revision in Table 1 is
 | 7.1 | Catalog page answer | `FR-CAT-007 / 1`, `FR-CAT-009 / 1`, `FR-CAT-012 / 3`, `FR-CAT-013 / 2`, `FR-CAT-014 / 2`, `INT-NET-080 / 1`; `CFG-CL-032 / 1` for the source-name limit |
 | 8 | Inter-server envelope and message types | `INT-NET-051 / 3`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-075 / 1`; `INT-NET-074 / 2` for RPC OpenRaft; `FR-TIME-005 / 3` for the offset source |
 | 9 | Elements left unfixed by the SRS | `INT-NET-006 / 2`, `INT-NET-008 / 2`, `INT-NET-011 / 1`, `INT-NET-021 / 3`, `INT-NET-050 / 4`, `INT-NET-051 / 3`, `INT-NET-052 / 4`, `INT-NET-058 / 1`, `INT-NET-060 / 1`, `INT-NET-070 / 5`, `INT-NET-072 / 2`, `INT-NET-073 / 5`, `INT-NET-074 / 2`, `INT-NET-075 / 1`, `INT-NET-079 / 1`, `INT-NET-080 / 1`, `FR-CAT-013 / 2`, `FR-CAT-015 / 1`, `FR-DED-010 / 2`, `FR-DED-035 / 1`, `NFR-MAINT-005 / 1`, `NFR-MAINT-006 / 1`; `OPEN-003` (open decision, not a requirement) |
+| 10 | Delayed installation record and connection closure | `FR-NODE-014 / 1`–`FR-NODE-018 / 1`, `CFG-CL-041 / 1`, `FR-AND-052 / 1`, `FR-AND-030 / 2`, `FR-AND-017 / 1`, `FR-UP-016 / 1` |
+| 11 | Atomic initial account registration | `FR-DED-038 / 1`, `FR-DED-039 / 1`, `INT-NET-076 / 1`, `FR-DED-005 / 2`, `FR-DED-006 / 1` |
+| 12 | Persistent registration results | `FR-DED-040 / 1`–`FR-DED-042 / 1`, `FR-DED-005 / 2`, `FR-DED-006 / 1` |
+| 13 | Registration retries after temporary failure | `FR-DED-043 / 1`–`FR-DED-045 / 1`, `FR-DED-005 / 2`, `FR-DED-006 / 1` |
+| 14 | Durable pending Android registration | `FR-AND-053 / 1`–`FR-AND-055 / 1`, `FR-AND-028 / 2`, `FR-AND-023 / 1`, `FR-AND-026 / 2` |
+| 15 | Registration routing through any storage node | `FR-DED-046 / 1`–`FR-DED-048 / 1`, `INT-NET-076 / 1` |
+| 16 | Dedicated-server registration failover | `FR-DED-049 / 1`–`FR-DED-053 / 1`, `CFG-CL-042 / 1`–`CFG-CL-045 / 1`, `INT-NET-064 / 1` |
 
 ## 2. Canonical encoding
 
@@ -324,3 +331,35 @@ The following elements are left unfixed by the cited requirements, so this contr
 - **Future protocol versions.** Only version `1` and the negotiation list `[1]` are defined for v1; future-version policy and schemas are outside v1 (`INT-NET-079 / 1`).
 
 Where a field's type, size, mandatory rule or limit is not stated in §§4–8, it is not fixed by this contract, and no value should be inferred for it.
+
+## 10. Delayed installation registration on a storage replica
+
+For a client `sender_id` absent from its local replicated installation registry, the storage node refreshes the registry and waits for the committed installation record within `CFG-CL-041` (`FR-NODE-014`–`FR-NODE-017`). When the record is applied, it resolves the registered key and verifies the pending request normally. If the deadline expires first, it closes the TCP connection without sending an application response (`FR-NODE-018`). This does not introduce a result code or a plaintext error frame.
+
+The client treats closure before an application result as a temporary transport failure (`FR-AND-052`) and tries the next storage node in topology order under the existing retry budget (`FR-AND-030`). Retrying an upload preserves its `upload_id` and restarts from frame zero (`FR-AND-017`, `FR-UP-016`). A connection closure alone does not establish an authentication failure.
+
+## 11. Atomic initial account registration
+
+Creation of a new account, including its password verifier, and its first installation, including the assigned ID and public keys, is submitted as one command to the existing storage Raft cluster (`FR-DED-038`). Applying that command to the replicated registry is atomic: after application or crash recovery both new records are present or neither is present (`FR-DED-039`). Registration success still requires the majority commit specified by `INT-NET-076`. Repeating the same registration request preserves the previously defined idempotency semantics (`FR-DED-005/006`). This section fixes command semantics, not the still-open inter-server numeric code or argument positions.
+
+## 12. Persistent registration results
+
+The logical result of each committed successful registration, including the assigned installation ID, is stored in the storage cluster’s replicated registry under `(login, request_id)` (`FR-DED-040`). The result and the corresponding registry changes are applied atomically by the same Raft command (`FR-DED-041`). The result has no TTL in v1 and remains available after restarts and snapshot recovery (`FR-DED-042`). Repeating the same login/request ID/content returns this stored result without creating another installation (`FR-DED-005 / 2`); conflicting reuse is rejected under `FR-DED-006 / 1`. The logical result is retained, not a previously encrypted wire frame.
+
+## 13. Registration retries after temporary failure
+
+A temporary registration failure, including quorum unavailability or a commit-wait timeout, is not a final stored idempotency result (`FR-DED-043`). The client may retry the same login/request ID/content. If a successful result has already committed, return it; otherwise attempt the registration again, preserving the conflicting-content rule (`FR-DED-044`, `FR-DED-006`). A timeout does not prove that the original command failed to commit. The replicated state machine applies registration changes at most once for `(login, request_id)`, including duplicate commands and a late original commit (`FR-DED-045`).
+
+## 14. Durable pending Android registration
+
+Before first sending a registration request, the client persists its logical request ID, login, installation keys and registration arguments under the existing credential/key protection rules (`FR-AND-053`). A restarted client resumes a recoverable pending registration with the same logical content, request ID and installation keys, within existing retry limits (`FR-AND-054`). Each network frame is still sealed and signed according to the current frame rules; an old encrypted frame is not replayed. An absent installation ID during a recoverable pending registration does not trigger new key generation (`FR-AND-028 / 2`). After a verified successful response, persisting the assigned ID with the existing keys and completing the pending record is atomic (`FR-AND-055`).
+
+## 15. Registration through any storage node
+
+The dedicated server may submit a registration command to any available storage node from the trusted static manifest (`FR-DED-046`). A receiving follower forwards the command internally to the current Raft leader over the protected cluster channel (`FR-DED-047`). While the original connection remains available, the receiving node returns the processing result over that connection without requiring the dedicated server to connect to the leader (`FR-DED-048`). Registration success remains subject to `INT-NET-076`; this routing does not introduce a separate Raft group or remove the existing idempotency rules. Inter-server message codes and argument layouts remain to be specified under `OPEN-003`.
+
+## 16. Dedicated-server registration failover
+
+On a temporary transport failure, temporary-unavailable response or quorum-unavailable response, the dedicated server retries the same registration command through another manifest storage node while its configured budgets permit (`FR-DED-049/050`). The original login, request ID and logical command content, including the assigned installation ID, are preserved. The total monotonic deadline starts with the first storage attempt and is never reset by failover or retry delays (`FR-DED-051`). The configuration independently bounds total duration, per-attempt duration, attempts including the first, and retry spacing (`CFG-CL-042`–`CFG-CL-045`).
+
+A final argument, credential, request-ID conflict or policy error does not trigger node failover (`FR-DED-052`). Budget exhaustion without confirmed success returns the applicable existing temporary error code (`FR-DED-053`); it does not prove the original command failed to commit. Later retries remain governed by §§12–13.
