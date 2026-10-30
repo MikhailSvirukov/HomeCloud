@@ -1427,7 +1427,9 @@ mod tests {
 
     #[test]
     fn rejects_a_password_minimum_above_the_maximum() {
-        let document = VALID_SERVER.replace("min_password_bytes = 8", "min_password_bytes = 2048");
+        let document = VALID_SERVER
+            .replace("min_password_bytes = 8", "min_password_bytes = 1024")
+            .replace("max_password_bytes = 1024", "max_password_bytes = 8");
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::MinimumAboveMaximum {
