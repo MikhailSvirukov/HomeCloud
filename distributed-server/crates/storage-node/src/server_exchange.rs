@@ -14,6 +14,8 @@ use crate::sealing::{open, seal, RecipientPrivateKey, RecipientPublicKey, Sealin
 use crate::signed_frame::{decode_signed_frame, encode_signed_frame, SignedFrameError};
 use crate::signing::{MessageSigningKey, MessageVerifyingKey};
 
+type Result<T> = core::result::Result<T, ServerExchangeError>;
+
 /// Decrypted inter-server message with its verified external header.
 #[derive(PartialEq, Eq)]
 pub struct ServerMessage {
@@ -52,7 +54,7 @@ pub fn encode_server_message(
     signing_key: &MessageSigningKey,
     max_frame_len: NonZeroU32,
     limits: &ClientLimits,
-) -> Result<Vec<u8>, ServerExchangeError> {
+) -> Result<Vec<u8>> {
     let sealed = seal(recipient, &[], &[], plaintext)?;
     Ok(encode_signed_frame(
         header,
@@ -70,7 +72,7 @@ pub fn decode_server_message(
     recipient: &RecipientPrivateKey,
     max_frame_len: NonZeroU32,
     limits: &ClientLimits,
-) -> Result<ServerMessage, ServerExchangeError> {
+) -> Result<ServerMessage> {
     let frame = decode_signed_frame(bytes, sender, max_frame_len, limits)?;
     let plaintext = open(recipient, &[], &[], &frame.payload)?;
     Ok(ServerMessage {

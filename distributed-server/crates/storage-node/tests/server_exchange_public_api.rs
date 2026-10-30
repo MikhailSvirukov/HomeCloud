@@ -24,7 +24,7 @@ use storage_node::{
     ClientLimits, ExternalHeader, FramingError, MessageSigningKey, MessageVerifyingKey,
     RecipientPrivateKey, RecipientPublicKey, SealingError, ServerExchangeError, ServerMessage,
     SignedFrameError, EXTERNAL_PROTOCOL_VERSION, FRAME_LENGTH_PREFIX_LEN, REQUEST_ID_LEN,
-    SENDER_ID_LEN, SIGNING_KEY_LEN, X25519_KEY_LEN,
+    SENDER_ID_LEN, SIGNATURE_LEN, SIGNING_KEY_LEN, X25519_KEY_LEN,
 };
 
 const RECIPIENT_PRIVATE_KEY_BYTES: [u8; X25519_KEY_LEN] = [9; X25519_KEY_LEN];
@@ -308,7 +308,7 @@ fn uses_a_fresh_encapsulation_for_each_message() {
         max_frame_len(),
     )
     .expect("the second message fits the configured frame limit");
-    let encapsulated_start = FRAME_LENGTH_PREFIX_LEN + header_len;
+    let encapsulated_start = FRAME_LENGTH_PREFIX_LEN + header_len + SIGNATURE_LEN;
     let encapsulated_end = encapsulated_start + X25519_KEY_LEN;
 
     assert_ne!(
