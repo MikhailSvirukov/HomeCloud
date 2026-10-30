@@ -100,6 +100,59 @@ internal class TcpProtocolConnection private constructor(
         }
     }
 
+    /**
+     * Writes one complete application frame unchanged, including its four-byte length prefix, and
+     * flushes the socket (`INT-NET-002`, `INT-NET-003`, `INT-NET-081`).
+     *
+     * The caller owns the prefix. A closed connection or an I/O failure is reported as
+     * [ProtocolTransportException].
+     */
+    fun writeFrame(frame: ByteArray) {
+        synchronized(writeLock) {
+            requireOpen()
+            try {
+                output.write(frame)
+                output.flush()
+            } catch (exception: IOException) {
+                throw ProtocolTransportException(SEND_FAILED_MESSAGE, exception)
+            }
+        }
+    }
+
+    /**
+     * Blocks until one complete application frame arrives and returns the length prefix together
+     * with its body (`INT-NET-002`, `INT-NET-003`, `INT-NET-004`, `INT-NET-081`).
+     *
+     * The declared length is checked against the configured maximum before the body is allocated. A
+     * truncated frame, a closed connection, a read timeout or another I/O failure is reported as
+     * [ProtocolTransportException].
+     */
+    fun readFrame(): ByteArray {
+        synchronized(readLock) {
+            requireOpen()
+            return try {
+                val prefix = ByteArray(LENGTH_PREFIX_BYTES)
+                readFully(prefix, 0)
+                val declaredLength = declaredLength(prefix)
+                if (declaredLength > maxFrameBytes.toLong() ||
+                    declaredLength > (Int.MAX_VALUE - LENGTH_PREFIX_BYTES).toLong()
+                ) {
+                    throw ProtocolEncodingException("frame exceeds the maximum frame size")
+                }
+                val frame = ByteArray(LENGTH_PREFIX_BYTES + declaredLength.toInt())
+                prefix.copyInto(frame, 0)
+                readFully(frame, LENGTH_PREFIX_BYTES)
+                frame
+            } catch (exception: SocketTimeoutException) {
+                throw ProtocolTransportException("$READ_TIMEOUT_MESSAGE after $readMillis ms", exception)
+            } catch (exception: ProtocolEncodingException) {
+                throw ProtocolTransportException(RECEIVE_FAILED_MESSAGE, exception)
+            } catch (exception: IOException) {
+                throw ProtocolTransportException(RECEIVE_FAILED_MESSAGE, exception)
+            }
+        }
+    }
+
     /** Closes the socket. Repeated calls have no further effect. */
     override fun close() {
         synchronized(closeLock) {
@@ -113,6 +166,28 @@ internal class TcpProtocolConnection private constructor(
                 throw ProtocolTransportException(CLOSE_FAILED_MESSAGE, exception)
             }
         }
+    }
+
+    private fun readFully(
+        destination: ByteArray,
+        offset: Int,
+    ) {
+        var read = offset
+        while (read < destination.size) {
+            val count = input.read(destination, read, destination.size - read)
+            if (count < 0) {
+                throw ProtocolTransportException(TRUNCATED_FRAME_MESSAGE)
+            }
+            read += count
+        }
+    }
+
+    private fun declaredLength(prefix: ByteArray): Long {
+        var length = 0L
+        for (index in 0 until LENGTH_PREFIX_BYTES) {
+            length = (length shl BITS_PER_BYTE) or (prefix[index].toLong() and BYTE_MASK)
+        }
+        return length
     }
 
     private fun requireOpen() {
@@ -165,10 +240,14 @@ internal class TcpProtocolConnection private constructor(
 
 private const val MIN_PORT = 1
 private const val MAX_PORT = 65_535
+private const val LENGTH_PREFIX_BYTES = 4
+private const val BITS_PER_BYTE = 8
+private const val BYTE_MASK = 0xFFL
 private const val CONNECT_FAILED_MESSAGE = "could not establish the TCP connection"
 private const val CONNECTION_CLOSED_MESSAGE = "connection is closed"
 private const val SEND_REJECTED_MESSAGE = "frame could not be encoded for the connection"
 private const val SEND_FAILED_MESSAGE = "could not send the frame"
 private const val RECEIVE_FAILED_MESSAGE = "could not receive a frame"
+private const val TRUNCATED_FRAME_MESSAGE = "frame is truncated"
 private const val READ_TIMEOUT_MESSAGE = "frame read timed out"
 private const val CLOSE_FAILED_MESSAGE = "could not close the TCP connection"

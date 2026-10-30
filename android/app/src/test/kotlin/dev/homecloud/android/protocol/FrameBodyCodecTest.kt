@@ -233,6 +233,114 @@ class FrameBodyCodecTest {
         assertThrows(ProtocolEncodingException::class.java) { FrameBodyCodec.bootstrapKeys(shortKey) }
     }
 
+    @Test
+    fun decodeBootstrapReturnsHeaderAndBothKeysFromValidFrame() {
+        val x25519KeyPair = X25519.generate()
+        val ed25519KeyPair = Ed25519.generate()
+        val header = bootstrapHeader()
+        val frame = bootstrapFrame(x25519KeyPair.publicKey, ed25519KeyPair)
+
+        val bootstrap = FrameBodyCodec.decodeBootstrap(frame, MAX_FRAME_BYTES)
+
+        assertBytes(SENDER_ID, bootstrap.header.senderId)
+        assertArrayEquals(REQUEST_ID, bootstrap.header.requestId)
+        assertEquals(FRAME_NUMBER, bootstrap.header.frameNumber)
+        assertNull(bootstrap.header.uploadId)
+        assertNull(bootstrap.header.responderLabel)
+        assertNull(bootstrap.header.bootstrapSigningPublicKey)
+        assertArrayEquals(x25519KeyPair.publicKey, bootstrap.x25519PublicKey)
+        assertArrayEquals(ed25519KeyPair.publicKey, bootstrap.ed25519PublicKey)
+    }
+
+    @Test
+    fun decodeBootstrapRejectsThePrimaryRegistrationHeaderShape() {
+        val x25519KeyPair = X25519.generate()
+        val ed25519KeyPair = Ed25519.generate()
+        val frame =
+            FrameBodyCodec.encode(
+                header =
+                    ExternalFrameHeader(
+                        senderId = null,
+                        requestId = REQUEST_ID,
+                        frameNumber = FRAME_NUMBER,
+                        uploadId = null,
+                        responderLabel = null,
+                        bootstrapSigningPublicKey = ed25519KeyPair.publicKey,
+                    ),
+                payload = FrameBodyCodec.bootstrapPayload(x25519KeyPair.publicKey, ed25519KeyPair.publicKey),
+                sign = { signedBytes -> Ed25519.sign(ed25519KeyPair.privateKey, signedBytes) },
+                maxFrameBytes = MAX_FRAME_BYTES,
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.decodeBootstrap(frame, MAX_FRAME_BYTES)
+        }
+    }
+
+    @Test
+    fun decodeBootstrapRejectsTamperedSignature() {
+        val ed25519KeyPair = Ed25519.generate()
+        val frame = bootstrapFrame(X25519.generate().publicKey, ed25519KeyPair)
+        val signatureStart = LENGTH_PREFIX_BYTES + externalHeaderSize(bootstrapHeader())
+        val tampered = frame.copyOf()
+        tampered[signatureStart] = flipLowestBit(tampered[signatureStart])
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.decodeBootstrap(tampered, MAX_FRAME_BYTES)
+        }
+    }
+
+    @Test
+    fun decodeBootstrapRejectsPayloadThatIsNotTwoKeyArray() {
+        val ed25519KeyPair = Ed25519.generate()
+        val oneKeyPayload =
+            CborEncoder.encode(
+                CborValue.Array(listOf(CborValue.Bytes(ByteArray(KEY_BYTES)))),
+            )
+        val frame =
+            FrameBodyCodec.encode(
+                header = bootstrapHeader(),
+                payload = oneKeyPayload,
+                sign = { signedBytes -> Ed25519.sign(ed25519KeyPair.privateKey, signedBytes) },
+                maxFrameBytes = MAX_FRAME_BYTES,
+            )
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.decodeBootstrap(frame, MAX_FRAME_BYTES)
+        }
+    }
+
+    @Test
+    fun decodeBootstrapRejectsFrameAboveLimit() {
+        val frame = bootstrapFrame(X25519.generate().publicKey, Ed25519.generate())
+        val limitBelowDeclaredLength = frame.size - LENGTH_PREFIX_BYTES - 1
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            FrameBodyCodec.decodeBootstrap(frame, limitBelowDeclaredLength)
+        }
+    }
+
+    private fun bootstrapHeader(): ExternalFrameHeader =
+        ExternalFrameHeader(
+            senderId = SENDER_ID,
+            requestId = REQUEST_ID,
+            frameNumber = FRAME_NUMBER,
+            uploadId = null,
+            responderLabel = null,
+            bootstrapSigningPublicKey = null,
+        )
+
+    private fun bootstrapFrame(
+        x25519PublicKey: ByteArray,
+        ed25519KeyPair: Ed25519KeyPair,
+    ): ByteArray =
+        FrameBodyCodec.encode(
+            header = bootstrapHeader(),
+            payload = FrameBodyCodec.bootstrapPayload(x25519PublicKey, ed25519KeyPair.publicKey),
+            sign = { signedBytes -> Ed25519.sign(ed25519KeyPair.privateKey, signedBytes) },
+            maxFrameBytes = MAX_FRAME_BYTES,
+        )
+
     private fun ordinaryHeader(): ExternalFrameHeader =
         ExternalFrameHeader(
             senderId = SENDER_ID,
