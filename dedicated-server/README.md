@@ -466,6 +466,15 @@ of the contract table (`INT-NET-064`), classifies any value by its reserved
 unnamed; `ResultEnvelope::error` builds the empty-argument failure envelope for
 a named code, while the codec still decodes any `uint32` a peer may send.
 
+`src/frame_seal.rs` seals and opens an application frame body (`INT-NET-081`):
+the four-byte big-endian prefix, the encoded external header, the 64-byte
+Ed25519 signature over the prefix, the header and the payload, and the payload
+itself, which is the 32-byte HPKE encapsulated X25519 key followed by the
+AES-256-GCM ciphertext and tag. Sealing encrypts under a fresh encapsulation per
+frame with empty `info` and empty associated data; opening checks the prefix
+against the body length, verifies the signature over the whole frame before it
+decrypts, and reports a signature failure separately from a decryption failure.
+
 ## Key identity
 
 `src/identity.rs` loads the server's own key pair for startup. The identity is
