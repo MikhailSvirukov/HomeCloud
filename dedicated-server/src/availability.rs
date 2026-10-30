@@ -7,10 +7,12 @@
 //! transition or a heartbeat failure is reported, and each transition is
 //! reported once, in the configured cluster order.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 use crate::logging;
+use crate::metrics::Metrics;
 
 /// A significant availability change observed by [`AvailabilityMonitor`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +106,16 @@ impl AvailabilityMonitor {
         &self.unavailable
     }
 
+    /// Configured cluster labels, in manifest order.
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Whether the available nodes currently form a strict majority.
+    pub fn quorum_available(&self) -> bool {
+        self.quorum_available
+    }
+
     fn transitions(&mut self) -> Vec<AvailabilityEvent> {
         let current = self
             .tracker
@@ -141,6 +153,53 @@ impl AvailabilityMonitor {
 
         self.unavailable = current;
         events
+    }
+}
+
+/// Drives the monitor from the heartbeat loop and publishes its state.
+///
+/// The registry is shared with the metrics endpoint, so every poll and every
+/// recorded response is visible in the next scrape.
+pub struct AvailabilityPublisher {
+    monitor: AvailabilityMonitor,
+    metrics: Arc<Metrics>,
+}
+
+impl AvailabilityPublisher {
+    /// Publish the initial state and return the publisher.
+    pub fn new(monitor: AvailabilityMonitor, metrics: Arc<Metrics>) -> Self {
+        let publisher = Self { monitor, metrics };
+        publisher.publish();
+        publisher
+    }
+
+    /// Collect the due heartbeat actions, log the transitions and publish them.
+    pub fn poll(&mut self, now: Instant) -> Vec<HeartbeatAction> {
+        let (actions, events) = self.monitor.poll(now);
+        log_events(&events);
+        self.publish();
+        actions
+    }
+
+    /// Record a heartbeat response, log the transitions and publish them.
+    ///
+    /// A rejected response is logged and returned unchanged, exactly as
+    /// [`AvailabilityMonitor::record_response`] reports it.
+    pub fn record_response(&mut self, label: &str, at: Instant) -> Result<(), HeartbeatError> {
+        let events = self.monitor.record_response(label, at)?;
+        log_events(&events);
+        self.publish();
+        Ok(())
+    }
+
+    fn publish(&self) {
+        let unavailable = self.monitor.unavailable();
+        for label in self.monitor.labels() {
+            self.metrics
+                .set_node_available(label, !unavailable.iter().any(|node| node == label));
+        }
+        self.metrics
+            .set_quorum_available(self.monitor.quorum_available());
     }
 }
 
@@ -197,6 +256,78 @@ mod tests {
 
     fn at(start: Instant, millis: u64) -> Instant {
         start + Duration::from_millis(millis)
+    }
+
+    fn publisher() -> (AvailabilityPublisher, Instant, Arc<Metrics>) {
+        let (monitor, start) = monitor();
+        let metrics = Arc::new(Metrics::new(&LABELS));
+        let publisher = AvailabilityPublisher::new(monitor, Arc::clone(&metrics));
+        (publisher, start, metrics)
+    }
+
+    fn mark_unavailable(publisher: &mut AvailabilityPublisher, start: Instant, keep: &[usize]) {
+        publisher.poll(start);
+        for index in keep {
+            publisher
+                .record_response(LABELS[*index], at(start, 1))
+                .expect("the node must have an attempt in flight");
+        }
+        publisher.poll(at(start, TIMEOUT_MS));
+        publisher.poll(at(start, INTERVAL_MS + TIMEOUT_MS));
+        publisher.poll(at(start, INTERVAL_MS + TIMEOUT_MS * 2));
+    }
+
+    #[test]
+    fn an_unavailable_node_is_published_as_a_zero_gauge() {
+        let (mut publisher, start, metrics) = publisher();
+        mark_unavailable(&mut publisher, start, &[1, 2]);
+
+        assert!(
+            metrics
+                .render(0)
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 0"),
+            "the lost node must be published as unavailable"
+        );
+    }
+
+    #[test]
+    fn losing_the_quorum_is_published() {
+        let (mut publisher, start, metrics) = publisher();
+        mark_unavailable(&mut publisher, start, &[]);
+
+        let rendered = metrics.render(0);
+        assert!(
+            rendered.contains("homecloud_dedicated_node_available{node=\"storage-b\"} 0"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("homecloud_dedicated_quorum_available 0"),
+            "losing every node must clear the quorum gauge"
+        );
+    }
+
+    #[test]
+    fn a_response_republishes_the_recovered_node() {
+        let (mut publisher, start, metrics) = publisher();
+        mark_unavailable(&mut publisher, start, &[1, 2]);
+        assert!(
+            metrics
+                .render(0)
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 0"),
+            "the node must be unavailable before the recovery"
+        );
+
+        publisher.poll(at(start, INTERVAL_MS * 2 + TIMEOUT_MS * 2));
+        publisher
+            .record_response(LABELS[0], at(start, INTERVAL_MS * 2 + TIMEOUT_MS * 2))
+            .expect("the node must have an attempt in flight");
+
+        assert!(
+            metrics
+                .render(0)
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 1"),
+            "the recovered node must be published as available"
+        );
     }
 
     #[test]
