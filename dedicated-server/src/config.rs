@@ -665,7 +665,7 @@ fn validate_profile(config: &ServerConfig) -> Result<()> {
             "password.salt_length_bytes",
             config.password.salt_length_bytes.get() as u64,
             16,
-            64,
+            48,
         ),
         (
             "logging.retention_ms",
@@ -1594,7 +1594,8 @@ mod tests {
     fn the_configured_frame_limit_is_the_receive_limit() {
         let document = VALID_SERVER
             .replace("max_frame_bytes = 4194304", "max_frame_bytes = 4096")
-            .replace("max_header_bytes = 1048576", "max_header_bytes = 1024");
+            .replace("max_header_bytes = 1048576", "max_header_bytes = 1024")
+            .replace("max_password_bytes = 1024", "max_password_bytes = 8");
         let config = ServerConfig::from_toml_str(&document).expect("the document must parse");
 
         let mut encoded = Vec::new();
