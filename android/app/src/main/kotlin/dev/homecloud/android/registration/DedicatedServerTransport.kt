@@ -18,13 +18,14 @@ import dev.homecloud.android.protocol.ResultEnvelopeCodec
  * Performs the dedicated server's first-contact bootstrap handshake and sends one primary
  * registration frame over a freshly opened channel (`INT-NET-021`, `INT-NET-024`, `INT-NET-025`,
  * `INT-NET-026`, `INT-NET-034`, `INT-NET-036`, `INT-NET-050`, `INT-NET-058`, `INT-NET-059`,
- * `INT-NET-081`, `FR-AND-052`).
+ * `INT-NET-061`, `INT-NET-081`, `FR-AND-052`).
  *
  * The channel is closed when the attempt finishes. The installation identity supplies the signing
  * and agreement key pairs, and the dedicated server keys are pinned on first contact, so a later
- * mismatch ends the attempt. The response signature is verified before its payload is decrypted.
- * The password and key material are never logged or placed into an exception message
- * (`FR-AND-023`).
+ * mismatch ends the attempt. The response request id must equal the request id of the registration
+ * request (`INT-NET-061 / 1`). The response signature is verified first, then its request id is
+ * correlated, and only then is its payload decrypted. The password and key material are never
+ * logged or placed into an exception message (`FR-AND-023`).
  */
 internal class DedicatedServerTransport(
     private val identityStore: InstallationIdentityStore,
@@ -115,6 +116,9 @@ internal class DedicatedServerTransport(
             FrameBodyCodec.decode(channel.read(), maxFrameBytes) { bytes, signature ->
                 Ed25519.verify(serverKeys.ed25519PublicKey, bytes, signature)
             }
+        if (!response.header.requestId.contentEquals(request.requestId)) {
+            throw RegistrationTransportException(REQUEST_ID_MISMATCH_MESSAGE)
+        }
         val envelope =
             ResultEnvelopeCodec.decode(
                 FrameBodyCodec.decryptedPayload(identity.agreementKeyPair.privateKey, response.payload),
@@ -155,4 +159,5 @@ private const val UUID_VARIANT_MASK = 0xC0
 private const val UUID_VARIANT_RFC_4122 = 0x80
 private const val IDENTITY_UNAVAILABLE_MESSAGE = "the installation identity is unavailable"
 private const val SERVER_KEY_MISMATCH_MESSAGE = "the dedicated server keys do not match the pinned keys"
+private const val REQUEST_ID_MISMATCH_MESSAGE = "the registration response request id does not match the request"
 private const val REGISTRATION_FAILED_MESSAGE = "the registration request failed"
