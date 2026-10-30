@@ -18,6 +18,7 @@ use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use crate::password::Argon2Params;
+use crate::registration::CredentialLimits;
 
 /// Environment variable holding the path to the server configuration file.
 pub const CONFIG_PATH_ENV: &str = "HOMECLOUD_DEDICATED_SERVER_CONFIG";
@@ -516,6 +517,16 @@ impl ServerConfig {
     /// the payload buffer is allocated (`INT-NET-004`).
     pub fn max_frame_bytes(&self) -> NonZeroU32 {
         self.max_frame_bytes
+    }
+
+    /// Credential length limits applied to registration (`CFG-CL-029`).
+    pub fn credential_limits(&self) -> CredentialLimits {
+        CredentialLimits {
+            min_login_bytes: self.min_login_bytes.get(),
+            max_login_bytes: self.max_login_bytes.get(),
+            min_password_bytes: self.min_password_bytes.get(),
+            max_password_bytes: self.max_password_bytes.get(),
+        }
     }
 
     /// Parse and validate a configuration from TOML text.
