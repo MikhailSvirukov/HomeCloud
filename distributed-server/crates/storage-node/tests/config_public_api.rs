@@ -1,4 +1,9 @@
 //! Integration tests exercising only the public `storage_node` configuration API.
+//!
+//! SRS: `CFG-CL-007 / 1` (storage connect timeout), `CFG-CL-029 / 1` and
+//! `CFG-CL-031 / 1` (client credential and label byte bounds), and
+//! `CFG-CL-049 / 1`, `CFG-CL-050 / 1`, `CFG-CL-051 / 1` (numeric ranges,
+//! required settings, and cross-parameter constraints).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -33,6 +38,7 @@ const KEY_LOGIN_MAX_LEN: &str = "login_max_len";
 const KEY_PASSWORD_MIN_LEN: &str = "password_min_len";
 const KEY_PASSWORD_MAX_LEN: &str = "password_max_len";
 const KEY_RESPONDER_LABEL_MAX_LEN: &str = "responder_label_max_len";
+const KEY_STORAGE_CONNECT_TIMEOUT_MS: &str = "storage_connect_timeout_ms";
 const KEY_INTEGRITY_SCAN_PERIOD_SECONDS: &str = "integrity_scan_period_seconds";
 const KEY_INTEGRITY_SCAN_MAX_CONCURRENT: &str = "integrity_scan_max_concurrent";
 const KEY_LOG_FILE_PATH: &str = "log_file_path";
@@ -126,6 +132,13 @@ fn pairs_with(key: &str, value: &'static str) -> Vec<(&'static str, &'static str
         .collect()
 }
 
+/// Returns the valid pairs with an explicit storage connect timeout.
+fn pairs_with_storage_connect_timeout(value: &'static str) -> Vec<(&'static str, &'static str)> {
+    let mut pairs = valid_pairs();
+    pairs.push((KEY_STORAGE_CONNECT_TIMEOUT_MS, value));
+    pairs
+}
+
 #[test]
 fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     let config = NodeConfig::from_pairs(&[
@@ -180,6 +193,11 @@ fn from_pairs_builds_config_with_comma_separated_peers_and_whitespace() {
     assert_eq!(config.catalog_page_size.get(), 2);
     assert_eq!(config.catalog_snapshot_ttl_ms.get(), 60_000);
     assert_eq!(config.max_source_name_len.get(), 64);
+    assert_eq!(
+        config.storage_connect_timeout_ms.get(),
+        5_000,
+        "an absent optional storage connect timeout uses the documented default"
+    );
     assert_eq!(config.client_limits.login_min_len.get(), 1);
     assert_eq!(config.client_limits.login_max_len.get(), 64);
     assert_eq!(config.client_limits.password_min_len.get(), 1);
@@ -1231,5 +1249,57 @@ fn from_pairs_with_password_minimum_above_maximum_reports_password_range() {
     assert_eq!(
         NodeConfig::from_pairs(&pairs_with(KEY_PASSWORD_MIN_LEN, "129")),
         Err(ConfigError::ClientLimits(ClientLimitsError::PasswordRange))
+    );
+}
+
+#[test]
+fn from_pairs_accepts_storage_connect_timeout_at_the_lower_bound() {
+    let config = NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("100"))
+        .expect("the lower storage connect timeout bound is valid");
+
+    assert_eq!(config.storage_connect_timeout_ms.get(), 100);
+}
+
+#[test]
+fn from_pairs_accepts_storage_connect_timeout_at_the_upper_bound() {
+    let config = NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("300000"))
+        .expect("the upper storage connect timeout bound is valid");
+
+    assert_eq!(config.storage_connect_timeout_ms.get(), 300_000);
+}
+
+#[test]
+fn from_pairs_with_storage_connect_timeout_below_the_range_reports_out_of_range() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("99")),
+        Err(ConfigError::StorageConnectTimeoutOutOfRange { value: 99 })
+    );
+}
+
+#[test]
+fn from_pairs_with_storage_connect_timeout_above_the_range_reports_out_of_range() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("300001")),
+        Err(ConfigError::StorageConnectTimeoutOutOfRange { value: 300_001 })
+    );
+}
+
+#[test]
+fn from_pairs_with_zero_storage_connect_timeout_reports_invalid_timeout() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("0")),
+        Err(ConfigError::InvalidStorageConnectTimeout {
+            value: "0".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn from_pairs_with_non_numeric_storage_connect_timeout_reports_invalid_timeout() {
+    assert_eq!(
+        NodeConfig::from_pairs(&pairs_with_storage_connect_timeout("not-a-number")),
+        Err(ConfigError::InvalidStorageConnectTimeout {
+            value: "not-a-number".to_owned(),
+        })
     );
 }

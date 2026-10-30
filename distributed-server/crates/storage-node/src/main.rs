@@ -55,6 +55,8 @@ const ENV_CATALOG_PAGE_SIZE: &str = "CATALOG_PAGE_SIZE";
 const ENV_CATALOG_SNAPSHOT_TTL_MS: &str = "CATALOG_SNAPSHOT_TTL_MS";
 /// Environment variable carrying the maximum source-name length in bytes.
 const ENV_MAX_SOURCE_NAME_LEN: &str = "MAX_SOURCE_NAME_LEN";
+/// Environment variable carrying the storage peer connection timeout in milliseconds.
+const ENV_STORAGE_CONNECT_TIMEOUT_MS: &str = "STORAGE_CONNECT_TIMEOUT_MS";
 /// Environment variable carrying the minimum login length in bytes.
 const ENV_LOGIN_MIN_LEN: &str = "LOGIN_MIN_LEN";
 /// Environment variable carrying the maximum login length in bytes.
@@ -108,6 +110,8 @@ const KEY_CATALOG_PAGE_SIZE: &str = "catalog_page_size";
 const KEY_CATALOG_SNAPSHOT_TTL_MS: &str = "catalog_snapshot_ttl_ms";
 /// `from_pairs` key for the maximum source-name length in bytes.
 const KEY_MAX_SOURCE_NAME_LEN: &str = "max_source_name_len";
+/// `from_pairs` key for the storage peer connection timeout in milliseconds.
+const KEY_STORAGE_CONNECT_TIMEOUT_MS: &str = "storage_connect_timeout_ms";
 /// `from_pairs` key for the minimum login length in bytes.
 const KEY_LOGIN_MIN_LEN: &str = "login_min_len";
 /// `from_pairs` key for the maximum login length in bytes.
@@ -171,6 +175,7 @@ async fn run() -> ExitCode {
     let catalog_page_size = env_value(ENV_CATALOG_PAGE_SIZE);
     let catalog_snapshot_ttl_ms = env_value(ENV_CATALOG_SNAPSHOT_TTL_MS);
     let max_source_name_len = env_value(ENV_MAX_SOURCE_NAME_LEN);
+    let storage_connect_timeout_ms = env_value(ENV_STORAGE_CONNECT_TIMEOUT_MS);
     let login_min_len = env_value(ENV_LOGIN_MIN_LEN);
     let login_max_len = env_value(ENV_LOGIN_MAX_LEN);
     let password_min_len = env_value(ENV_PASSWORD_MIN_LEN);
@@ -220,6 +225,10 @@ async fn run() -> ExitCode {
             catalog_snapshot_ttl_ms.as_str(),
         ),
         (KEY_MAX_SOURCE_NAME_LEN, max_source_name_len.as_str()),
+        (
+            KEY_STORAGE_CONNECT_TIMEOUT_MS,
+            storage_connect_timeout_ms.as_str(),
+        ),
         (KEY_LOGIN_MIN_LEN, login_min_len.as_str()),
         (KEY_LOGIN_MAX_LEN, login_max_len.as_str()),
         (KEY_PASSWORD_MIN_LEN, password_min_len.as_str()),
@@ -246,6 +255,10 @@ async fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if raft_bootstrap && manifest_path.is_none() {
+        tracing::error!("RAFT_BOOTSTRAP requires MANIFEST_PATH");
+        return ExitCode::FAILURE;
+    }
     let logging = match start_logging(config.log.clone()) {
         Ok(logging) => logging,
         Err(error) => {
@@ -313,6 +326,7 @@ async fn run_node(
         catalog_page_size = config.catalog_page_size.get(),
         catalog_snapshot_ttl_ms = config.catalog_snapshot_ttl_ms.get(),
         max_source_name_len = config.max_source_name_len.get(),
+        storage_connect_timeout_ms = config.storage_connect_timeout_ms.get(),
         login_min_len = config.client_limits.login_min_len.get(),
         login_max_len = config.client_limits.login_max_len.get(),
         password_min_len = config.client_limits.password_min_len.get(),
@@ -364,6 +378,7 @@ async fn run_node(
                 &signing_key,
                 config.max_frame_len,
                 &config.client_limits,
+                Duration::from_millis(config.storage_connect_timeout_ms.get()),
                 layout.raft_dir(),
             )
             .await

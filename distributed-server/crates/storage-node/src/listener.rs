@@ -46,7 +46,7 @@ impl Listener {
     }
 
     /// Accepts one raw TCP stream and its peer address for a protocol session.
-    pub async fn accept_stream(&self) -> Result<(TcpStream, SocketAddr)> {
+    pub(crate) async fn accept_stream(&self) -> Result<(TcpStream, SocketAddr)> {
         let (stream, peer) = self.listener.accept().await?;
         Ok((stream, peer))
     }

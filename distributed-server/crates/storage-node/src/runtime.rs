@@ -1,8 +1,9 @@
 //! Node runtime: manifest-validated OpenRaft and encrypted peer RPC service.
 //!
 //! SRS: `FR-CL-001 / 1`, `FR-CL-015 / 1`, `FR-CL-017 / 1`, `FR-CL-027 / 1`,
-//! `FR-CL-030 / 1`, `FR-CL-031 / 1`, `CFG-CL-003 / 1`, `CFG-CL-021 / 1`,
-//! `CFG-CL-039 / 1`, `INT-NET-071 / 1`, `INT-NET-074 / 2`, `NFR-SEC-009 / 1`.
+//! `FR-CL-030 / 1`, `FR-CL-031 / 1`, `CFG-CL-003 / 1`, `CFG-CL-007 / 1`,
+//! `CFG-CL-021 / 1`, `CFG-CL-029 / 1`, `CFG-CL-031 / 1`, `CFG-CL-039 / 1`,
+//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `NFR-SEC-009 / 1`.
 
 use core::fmt;
 use core::num::NonZeroU32;
@@ -24,9 +25,7 @@ use crate::raft::{NodeId, RaftError, RaftNode, RaftTiming};
 use crate::sealing::{RecipientPrivateKey, SealingError};
 use crate::server_session::serve_peer_connection;
 use crate::server_transport::{PeerDirectory, ServerTransport};
-use crate::signing::{MessageSigningKey, SigningError};
-
-const DEFAULT_STORAGE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+use crate::signing::MessageSigningKey;
 
 /// Failure modes when starting or serving the node runtime.
 #[derive(Debug, thiserror::Error)]
@@ -46,12 +45,12 @@ pub enum RuntimeError {
     /// The configured Ed25519 key does not match the local manifest key.
     #[error("the configured Ed25519 key does not match the local manifest key")]
     Ed25519Mismatch,
+    /// The local manifest responder label exceeds the configured byte limit.
+    #[error("the local responder label is invalid")]
+    InvalidLabel,
     /// The configured encryption key is not a valid X25519 private key.
     #[error(transparent)]
     Sealing(#[from] SealingError),
-    /// The configured signing key is not a valid Ed25519 private key.
-    #[error(transparent)]
-    Signing(#[from] SigningError),
     /// The local Raft node could not be started or initialized.
     #[error("the local Raft node could not be started or initialized")]
     Raft(#[source] Box<RaftError>),
@@ -85,6 +84,7 @@ impl RaftRuntime {
         signing_key: &PrivateKey,
         max_frame_len: NonZeroU32,
         limits: &ClientLimits,
+        storage_connect_timeout: Duration,
         raft_dir: PathBuf,
     ) -> Result<Self, RuntimeError> {
         let listen_addr = listen_addr
@@ -114,6 +114,9 @@ impl RaftRuntime {
         if recipient.public_key().as_bytes() != local.x25519_public_key {
             return Err(RuntimeError::X25519Mismatch);
         }
+        if !limits.responder_label_allowed(&local.label) {
+            return Err(RuntimeError::InvalidLabel);
+        }
 
         let peers = Arc::new(manifest.peer_directory()?);
         let transport = ServerTransport::new(
@@ -123,7 +126,7 @@ impl RaftRuntime {
             Arc::clone(&peers),
             max_frame_len,
             limits.clone(),
-            DEFAULT_STORAGE_CONNECT_TIMEOUT,
+            storage_connect_timeout,
         );
         let node = RaftNode::start(local.node_id(), transport, RaftTiming::default(), raft_dir)
             .await
@@ -237,7 +240,7 @@ impl fmt::Debug for RaftRuntime {
         formatter
             .debug_struct("RaftRuntime")
             .field("sender_id", &self.local.sender_id)
-            .field("peer_count", &self.members.len())
+            .field("member_count", &self.members.len())
             .finish()
     }
 }
