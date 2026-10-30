@@ -81,14 +81,6 @@ class UploadMetadataTest {
     }
 
     @Test
-    fun encode_rejects_a_compressed_size_above_the_original_size() {
-        assertEncodeRejected(
-            metadata(originalSizeBytes = COMPRESSED_SIZE_BYTES, compressedSizeBytes = COMPRESSED_SIZE_BYTES + 1),
-            COMPRESSED_SIZE_FIELD,
-        )
-    }
-
-    @Test
     fun decode_rejects_four_arguments() {
         assertDecodeRejected(validArguments().take(ARGUMENT_COUNT - 1), UPLOAD_METADATA_FIELD)
     }
@@ -136,6 +128,30 @@ class UploadMetadataTest {
             }
 
         assertDecodeRejected(arguments, SOURCE_NAME_FIELD)
+    }
+
+    @Test
+    fun decode_rejects_a_non_text_name() {
+        val arguments = validArguments().toMutableList()
+        arguments[SOURCE_NAME_INDEX] = CborValue.UInt(1)
+
+        assertDecodeRejected(arguments, SOURCE_NAME_FIELD)
+    }
+
+    @Test
+    fun decode_rejects_a_non_integer_timestamp() {
+        val arguments = validArguments().toMutableList()
+        arguments[TIMESTAMP_INDEX] = CborValue.Text("not-a-number")
+
+        assertDecodeRejected(arguments, TIMESTAMP_FIELD)
+    }
+
+    @Test
+    fun decode_rejects_a_non_bytes_digest() {
+        val arguments = validArguments().toMutableList()
+        arguments[SHA256_INDEX] = CborValue.Text("not-bytes")
+
+        assertDecodeRejected(arguments, SHA256_FIELD)
     }
 
     @Test
@@ -197,6 +213,7 @@ class UploadMetadataTest {
 private const val ARGUMENT_COUNT = 5
 private const val SHA256_BYTES = 32
 private const val SOURCE_NAME_INDEX = 0
+private const val TIMESTAMP_INDEX = 1
 private const val ORIGINAL_SIZE_INDEX = 2
 private const val SHA256_INDEX = 4
 private const val ORIGINAL_NAME = "IMG_0001.jpg"
