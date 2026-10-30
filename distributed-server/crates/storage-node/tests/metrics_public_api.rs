@@ -1,7 +1,8 @@
 //! Integration tests exercising the public Prometheus-compatible metrics
-//! endpoint over real loopback sockets, covering `NFR-OBS-006 / 1`,
-//! `NFR-OBS-008 / 1`, and `CFG-OBS-003 / 1`: the exposition response, HTTP
-//! method/path handling, scrape accounting, and bounded static labels.
+//! endpoint over real loopback sockets, covering `NFR-OBS-005 / 3` (Raft and
+//! catalog state categories), `NFR-OBS-006 / 1`, `NFR-OBS-008 / 1`, and
+//! `CFG-OBS-003 / 1`: the exposition response, HTTP method/path handling,
+//! scrape accounting, Raft and catalog state gauges, and bounded static labels.
 
 use core::num::NonZeroUsize;
 use std::net::SocketAddr;
@@ -15,7 +16,16 @@ use tokio::task::JoinHandle;
 const METRICS_PATH: &str = "/metrics";
 const EXPOSITION_CONTENT_TYPE: &str = "text/plain; version=0.0.4; charset=utf-8";
 const STORAGE_BYTES_USED_METRIC: &str = "homecloud_storage_bytes_used";
+const RAFT_LEADER_METRIC: &str = "homecloud_raft_leader";
+const RAFT_TERM_METRIC: &str = "homecloud_raft_term";
+const RAFT_LAST_APPLIED_METRIC: &str = "homecloud_raft_last_applied";
+const RAFT_VOTERS_METRIC: &str = "homecloud_raft_voters";
+const CATALOG_VERSIONS_METRIC: &str = "homecloud_catalog_versions";
 const CONFIGURED_STORAGE_BYTES_USED: u64 = 1234;
+const RAFT_TERM: u64 = 7;
+const RAFT_LAST_APPLIED: u64 = 12;
+const RAFT_VOTERS: u64 = 3;
+const CATALOG_VERSIONS: u64 = 5;
 
 fn queue_capacity() -> NonZeroUsize {
     NonZeroUsize::new(16).expect("test capacity is non-zero")
@@ -218,6 +228,52 @@ fn renders_configured_storage_bytes_used() {
         )),
         "the exposition reports the configured occupied storage bytes, got {body:?}"
     );
+}
+
+/// Asserts one metric renders as a single unlabelled gauge sample with `value`
+/// and carries its own HELP and TYPE lines.
+fn assert_unlabelled_gauge(body: &str, name: &str, value: u64) {
+    let sample = format!("{name} {value}");
+    assert!(
+        body.lines().any(|line| line == sample),
+        "the exposition reports the unlabelled sample {sample:?}, got {body:?}"
+    );
+    assert!(
+        body.contains(&format!("# TYPE {name} gauge\n")),
+        "the exposition types {name} as a gauge"
+    );
+    assert!(
+        body.lines()
+            .any(|line| line.starts_with(&format!("# HELP {name} "))),
+        "the exposition documents {name}"
+    );
+}
+
+#[test]
+fn renders_raft_and_catalog_state_gauges() {
+    let metrics = Metrics::new(queue_capacity());
+
+    metrics.set_raft_state(true, RAFT_TERM, Some(RAFT_LAST_APPLIED), RAFT_VOTERS);
+    metrics.set_catalog_versions(CATALOG_VERSIONS);
+
+    let body = metrics.render();
+    assert_unlabelled_gauge(&body, RAFT_LEADER_METRIC, 1);
+    assert_unlabelled_gauge(&body, RAFT_TERM_METRIC, RAFT_TERM);
+    assert_unlabelled_gauge(&body, RAFT_LAST_APPLIED_METRIC, RAFT_LAST_APPLIED);
+    assert_unlabelled_gauge(&body, RAFT_VOTERS_METRIC, RAFT_VOTERS);
+    assert_unlabelled_gauge(&body, CATALOG_VERSIONS_METRIC, CATALOG_VERSIONS);
+}
+
+#[test]
+fn renders_absent_raft_state_as_zero() {
+    let metrics = Metrics::new(queue_capacity());
+    metrics.set_raft_state(false, 0, None, 0);
+
+    let body = metrics.render();
+    assert_unlabelled_gauge(&body, RAFT_LEADER_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_TERM_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_LAST_APPLIED_METRIC, 0);
+    assert_unlabelled_gauge(&body, RAFT_VOTERS_METRIC, 0);
 }
 
 #[tokio::test]

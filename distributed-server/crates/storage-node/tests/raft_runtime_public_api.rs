@@ -18,8 +18,9 @@
 //! configured storage connect timeout), `CFG-CL-029 / 1` and `CFG-CL-031 / 1`
 //! (the local responder label must fit the configured byte limit),
 //! `INT-NET-071 / 1` (the local sender id is the manifest entry's stable
-//! identifier), and `NFR-SEC-009 / 1` (local identity keys must match the
-//! trusted manifest before peer exchange).
+//! identifier), `NFR-SEC-009 / 1` (local identity keys must match the
+//! trusted manifest before peer exchange), and `NFR-OBS-005 / 3` (the node
+//! exposes its Raft leader, term, last applied index, and voter count).
 
 use core::num::{NonZeroU32, NonZeroUsize};
 use std::collections::BTreeSet;
@@ -179,7 +180,7 @@ async fn starts_initializes_and_commits_on_a_single_node_runtime() {
         .initialize()
         .await
         .expect("the explicit bootstrap initializes the single-node cluster");
-    runtime
+    let leader = runtime
         .node()
         .wait_for_leader(LEADER_BUDGET)
         .await
@@ -195,6 +196,26 @@ async fn starts_initializes_and_commits_on_a_single_node_runtime() {
         .await
         .expect("the local OpenRaft instance commits the client write");
     assert_eq!(response, RaftResponse { upload_id: None });
+
+    let status = runtime.node().status();
+    assert_eq!(
+        status.current_leader,
+        Some(leader),
+        "the node reports the elected single-node leader"
+    );
+    assert!(
+        status.current_term > 0,
+        "the node reports a non-zero Raft term after the election"
+    );
+    assert!(
+        status.last_applied.is_some(),
+        "the node reports an applied log entry after the committed client write"
+    );
+    assert_eq!(
+        runtime.voter_count(),
+        1,
+        "the runtime derives one voter from the single-entry manifest"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

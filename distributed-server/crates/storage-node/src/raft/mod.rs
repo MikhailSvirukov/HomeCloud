@@ -17,7 +17,8 @@
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
 //! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `FR-NODE-005 / 1`–
-//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`.
+//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`,
+//! `NFR-OBS-005 / 3`, `NFR-OBS-008 / 1`.
 
 mod network;
 mod store;
@@ -84,6 +85,17 @@ pub enum RaftRequest {
 pub struct RaftResponse {
     /// The version affected by this entry, or `None` when the entry did not change a catalog version.
     pub upload_id: Option<UploadId>,
+}
+
+/// Snapshot of the local Raft leadership, term, and applied log state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RaftStatus {
+    /// Current leader node id, or `None` when no leader is known.
+    pub current_leader: Option<NodeId>,
+    /// Current Raft term.
+    pub current_term: u64,
+    /// Index of the last log entry applied to the local state machine.
+    pub last_applied: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,9 +279,25 @@ impl RaftNode {
             .map(|log_id| log_id.index)
     }
 
+    /// Returns a snapshot of the local Raft metrics.
+    pub fn status(&self) -> RaftStatus {
+        let metrics = self.raft.metrics();
+        let metrics = metrics.borrow();
+        RaftStatus {
+            current_leader: metrics.current_leader,
+            current_term: metrics.current_term,
+            last_applied: metrics.last_applied.map(|log_id| log_id.index),
+        }
+    }
+
     /// Returns the applied catalog on this node.
     pub async fn committed_versions(&self) -> BTreeMap<UploadId, CommittedVersion> {
         self.store.committed_versions().await
+    }
+
+    /// Returns the number of applied catalog versions without copying them.
+    pub async fn committed_version_count(&self) -> usize {
+        self.store.committed_version_count().await
     }
 
     /// Handles one encoded Raft RPC by passing it to the local OpenRaft instance and returns the encoded reply.
