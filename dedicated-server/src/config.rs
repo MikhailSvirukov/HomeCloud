@@ -1334,6 +1334,32 @@ mod tests {
     }
 
     #[test]
+    fn the_header_limits_come_from_the_configuration() {
+        let config = ServerConfig::from_toml_str(VALID_SERVER).expect("valid fixture must parse");
+        let limits = config.header_limits();
+
+        assert_eq!(limits.max_header_bytes, 1_048_576);
+        assert_eq!(limits.min_login_bytes, 1);
+        assert_eq!(limits.max_login_bytes, 64);
+        assert_eq!(limits.min_password_bytes, 8);
+        assert_eq!(limits.max_password_bytes, 1_024);
+        assert_eq!(limits.max_source_name_bytes, 4_096);
+
+        let header = crate::wire::ClientHeader::Topology {
+            credentials: crate::wire::Credentials {
+                login: "alice".to_owned(),
+                password: "secret-password".to_owned(),
+            },
+        };
+        let bytes = header.encode().expect("encoding must work");
+        assert_eq!(
+            crate::wire::ClientHeader::decode(&bytes, &limits)
+                .expect("the configured limits must accept a valid header"),
+            header
+        );
+    }
+
+    #[test]
     fn rejects_a_header_limit_below_the_profile_minimum() {
         let document = VALID_SERVER.replace("max_header_bytes = 1048576", "max_header_bytes = 512");
         assert!(matches!(

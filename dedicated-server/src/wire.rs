@@ -1860,6 +1860,23 @@ mod tests {
     }
 
     #[test]
+    fn a_header_above_the_size_limit_is_rejected_before_parsing() {
+        let limits = HeaderLimits {
+            max_header_bytes: 16,
+            ..header_limits()
+        };
+        let bytes = vec![0xff_u8; 17];
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::HeaderTooLarge {
+                actual: 17,
+                max: 16
+            })
+        ));
+    }
+
+    #[test]
     fn a_header_at_the_configured_size_limit_is_accepted() {
         let header = ClientHeader::Topology {
             credentials: credentials(),
@@ -1933,6 +1950,48 @@ mod tests {
                 max: 4
             })
         ));
+    }
+
+    #[test]
+    fn a_password_above_the_configured_maximum_is_rejected() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            max_password_bytes: 5,
+            ..header_limits()
+        };
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &limits),
+            Err(WireError::TextTooLong {
+                field: "password",
+                actual: 6,
+                max: 5
+            })
+        ));
+    }
+
+    #[test]
+    fn credentials_at_the_configured_boundaries_are_accepted() {
+        let header = ClientHeader::Topology {
+            credentials: credentials(),
+        };
+        let bytes = header.encode().expect("encoding must work");
+        let limits = HeaderLimits {
+            min_login_bytes: 5,
+            max_login_bytes: 5,
+            min_password_bytes: 6,
+            max_password_bytes: 6,
+            ..header_limits()
+        };
+
+        assert_eq!(
+            ClientHeader::decode(&bytes, &limits)
+                .expect("credentials at both boundaries must be accepted"),
+            header
+        );
     }
 
     #[test]
