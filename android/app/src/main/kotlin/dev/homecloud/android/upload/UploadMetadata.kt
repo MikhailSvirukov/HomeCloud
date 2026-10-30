@@ -40,31 +40,53 @@ internal data class UploadMetadata(
     }
 
     override fun toString(): String =
-        "UploadMetadata(originalName=$originalName, timestampMillis=$timestampMillis, " +
+        "UploadMetadata(timestampMillis=$timestampMillis, " +
             "originalSizeBytes=$originalSizeBytes, compressedSizeBytes=$compressedSizeBytes)"
+}
+
+/** Configured bounds for the upload metadata (`CFG-CL-020`, `CFG-CL-032`). */
+internal data class UploadMetadataLimits(
+    val maxOriginalSizeBytes: Long,
+    val maxNameBytes: Int = DEFAULT_MAX_NAME_BYTES,
+) {
+    init {
+        require(maxOriginalSizeBytes >= 1L) { "maxOriginalSizeBytes must be positive" }
+        require(maxNameBytes in 1..MAX_NAME_BYTES_RANGE) { "maxNameBytes is out of range" }
+    }
 }
 
 /**
  * Encodes and decodes the positional upload metadata arguments (`INT-NET-052 / 4`, `INT-NET-053 / 2`, `INT-NET-084 / 1`, `INT-NET-038 / 2`).
  *
  * The encoded order is `source_name`, `timestamp_ms`, `original_size`, `compressed_size` and
- * `sha256`. The SRS frame-size bound B(n) is a wire-envelope check; it does not allow the client's
- * compressed size to grow beyond the original source size, so the codec requires
- * `compressed_size <= original_size` in both directions.
+ * `sha256`. The source name is bounded by the configured source-name limit (`CFG-CL-032`) and both
+ * sizes by the configured file-size limit (`CFG-CL-020`); the compressed size may exceed the original
+ * size, because Zstandard can expand incompressible input.
  */
 internal object UploadMetadataCodec {
+    /** Default name limit (`CFG-CL-032`) and no original-size bound; callers pass the configured `CFG-CL-020` value. */
+    val DEFAULT_LIMITS = UploadMetadataLimits(maxOriginalSizeBytes = Long.MAX_VALUE)
+
     /**
      * Encodes the five arguments in the order fixed by `INT-NET-052 / 4` and `INT-NET-084 / 1`.
      *
-     * A blank name, a digest whose length is not 32 bytes, a negative timestamp or size, and a
-     * compressed size above the original size are rejected.
+     * An empty name, a name above the configured byte limit, a digest whose length is not 32 bytes,
+     * a negative timestamp or size, and a size above the configured limit are rejected.
      */
-    fun encode(metadata: UploadMetadata): List<CborValue> {
+    fun encode(
+        metadata: UploadMetadata,
+        limits: UploadMetadataLimits = DEFAULT_LIMITS,
+    ): List<CborValue> {
         require(metadata.originalName.isNotEmpty()) { "$SOURCE_NAME_FIELD must not be empty" }
+        require(metadata.originalName.toByteArray(Charsets.UTF_8).size <= limits.maxNameBytes) {
+            "$SOURCE_NAME_FIELD exceeds the configured limit"
+        }
         require(metadata.sha256.size == SHA256_BYTES) { "$SHA256_FIELD must contain $SHA256_BYTES bytes" }
         require(metadata.timestampMillis >= 0) { "$TIMESTAMP_FIELD must not be negative" }
-        require(metadata.originalSizeBytes in VALID_SIZE_RANGE) { "$ORIGINAL_SIZE_FIELD is out of range" }
+        require(metadata.originalSizeBytes >= 0L) { "$ORIGINAL_SIZE_FIELD must not be negative" }
+        require(metadata.originalSizeBytes <= limits.maxOriginalSizeBytes) { "$ORIGINAL_SIZE_FIELD exceeds the configured limit" }
         require(metadata.compressedSizeBytes >= 0L) { "$COMPRESSED_SIZE_FIELD must not be negative" }
+        require(metadata.compressedSizeBytes <= limits.maxOriginalSizeBytes) { "$COMPRESSED_SIZE_FIELD exceeds the configured limit" }
         return listOf(
             CborValue.Text(metadata.originalName),
             CborValue.UInt(metadata.timestampMillis),
@@ -78,10 +100,13 @@ internal object UploadMetadataCodec {
      * Decodes and validates a five-element argument list (`INT-NET-053 / 2`, `INT-NET-084 / 1`).
      *
      * A wrong element count, a mismatched element type, a negative timestamp or size, a digest
-     * whose length is not 32 bytes, an empty name, and a compressed size above the original size
-     * are rejected.
+     * whose length is not 32 bytes, an empty name, a name above the configured byte limit, and a
+     * size above the configured limit are rejected.
      */
-    fun decode(arguments: List<CborValue>): UploadMetadata {
+    fun decode(
+        arguments: List<CborValue>,
+        limits: UploadMetadataLimits = DEFAULT_LIMITS,
+    ): UploadMetadata {
         if (arguments.size != ARGUMENT_COUNT) {
             throw ProtocolEncodingException(
                 "$UPLOAD_METADATA_FIELD must contain exactly $ARGUMENT_COUNT elements",
@@ -95,6 +120,14 @@ internal object UploadMetadataCodec {
                 compressedSizeBytes = arguments[3].unsignedSize(COMPRESSED_SIZE_FIELD),
                 sha256 = arguments[4].sha256Digest(SHA256_FIELD),
             )
+        if (metadata.originalSizeBytes > limits.maxOriginalSizeBytes ||
+            metadata.compressedSizeBytes > limits.maxOriginalSizeBytes
+        ) {
+            throw ProtocolEncodingException("$ORIGINAL_SIZE_FIELD or $COMPRESSED_SIZE_FIELD exceeds the configured limit")
+        }
+        if (metadata.originalName.toByteArray(Charsets.UTF_8).size > limits.maxNameBytes) {
+            throw ProtocolEncodingException("$SOURCE_NAME_FIELD exceeds the configured limit")
+        }
         return metadata
     }
 }
@@ -149,6 +182,8 @@ private const val HASH_MULTIPLIER = 31
 private val VALID_SIZE_RANGE = 0L..Long.MAX_VALUE
 
 private const val UPLOAD_METADATA_FIELD = "upload metadata"
+private const val DEFAULT_MAX_NAME_BYTES = 4_096
+private const val MAX_NAME_BYTES_RANGE = 65_535
 private const val SOURCE_NAME_FIELD = "source_name"
 private const val TIMESTAMP_FIELD = "timestamp_ms"
 private const val ORIGINAL_SIZE_FIELD = "original_size"

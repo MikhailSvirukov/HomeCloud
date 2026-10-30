@@ -155,6 +155,50 @@ class UploadMetadataTest {
     }
 
     @Test
+    fun `a compressed size above the original size is accepted`() {
+        val metadata =
+            metadata(
+                originalSizeBytes = COMPRESSED_SIZE_BYTES,
+                compressedSizeBytes = COMPRESSED_SIZE_BYTES + 1,
+            )
+
+        val decoded = UploadMetadataCodec.decode(UploadMetadataCodec.encode(metadata))
+
+        assertEquals(metadata.compressedSizeBytes, decoded.compressedSizeBytes)
+    }
+
+    @Test
+    fun `a name at the configured byte limit is accepted`() {
+        val limits = UploadMetadataLimits(maxOriginalSizeBytes = ORIGINAL_SIZE_BYTES, maxNameBytes = 8)
+        val metadata = metadata(originalName = "12345678")
+
+        val decoded = UploadMetadataCodec.decode(UploadMetadataCodec.encode(metadata, limits), limits)
+
+        assertEquals(metadata.originalName, decoded.originalName)
+    }
+
+    @Test
+    fun `a name above the configured byte limit is rejected`() {
+        val limits = UploadMetadataLimits(maxOriginalSizeBytes = ORIGINAL_SIZE_BYTES, maxNameBytes = 8)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadMetadataCodec.encode(metadata(originalName = "123456789"), limits)
+        }
+    }
+
+    @Test
+    fun `a size above the configured file limit is rejected on encode and decode`() {
+        val limits = UploadMetadataLimits(maxOriginalSizeBytes = COMPRESSED_SIZE_BYTES)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadMetadataCodec.encode(metadata(), limits)
+        }
+        assertThrows(ProtocolEncodingException::class.java) {
+            UploadMetadataCodec.decode(validArguments(), limits)
+        }
+    }
+
+    @Test
     fun matching_digest_round_trips_through_the_cbor_codec() {
         val metadata = metadata(sha256 = digest(0x2A))
         val bytes = CborEncoder.encode(CborValue.Array(UploadMetadataCodec.encode(metadata)))
