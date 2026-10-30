@@ -115,6 +115,7 @@
 //! - The hot path must not synchronize through a shared `Mutex`/`RwLock`, and
 //!   `tokio-uring` is not used.
 
+mod blob_get;
 mod blob_put;
 mod blob_restore;
 mod blob_writer;
@@ -159,6 +160,10 @@ mod upload_error;
 mod upload_exchange;
 mod version_negotiation;
 
+pub use blob_get::{
+    decode_blob_get, decode_blob_get_result, encode_blob_get, encode_blob_get_result, BlobGet,
+    BlobGetError, BlobGetResult,
+};
 pub use blob_put::{
     decode_blob_put_begin, decode_blob_put_data_frame, decode_blob_put_result,
     encode_blob_put_begin, encode_blob_put_data_frame, encode_blob_put_result, BlobMetadata,

@@ -1,6 +1,7 @@
 //! Inter-server message envelope for Raft RPCs.
 //!
-//! SRS: `INT-NET-072 / 2`, `INT-NET-074 / 2`, `INT-NET-075 / 1`.
+//! SRS: `INT-NET-072 / 2`, `INT-NET-074 / 2`, `INT-NET-075 / 1`,
+//! `INT-NET-098 / 1`, `INT-NET-099 / 1`.
 
 use ciborium::value::Value;
 
@@ -20,6 +21,10 @@ pub enum MessageType {
     BlobPutData = 11,
     /// Blob put result.
     BlobPutResult = 12,
+    /// Blob get request.
+    BlobGet = 13,
+    /// Blob get result.
+    BlobGetResult = 14,
 }
 
 impl TryFrom<u32> for MessageType {
@@ -34,6 +39,8 @@ impl TryFrom<u32> for MessageType {
             10 => Ok(Self::BlobPutBegin),
             11 => Ok(Self::BlobPutData),
             12 => Ok(Self::BlobPutResult),
+            13 => Ok(Self::BlobGet),
+            14 => Ok(Self::BlobGetResult),
             code => Err(MessageError::UnknownMessageType { code }),
         }
     }

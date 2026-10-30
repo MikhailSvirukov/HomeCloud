@@ -56,6 +56,12 @@ clients; it does not relay Raft or blob traffic.
   `[12, [result_code, result_args]]` with `[upload_id]` on success and an
   empty argument array on every non-zero code; the transfer size is bounded
   by `B(original_size) = original_size + floor(original_size / 256) + 64`),
+  `src/blob_get.rs` (inter-server blob-get codecs: the request
+  `[13, [login, upload_id]]` and the result
+  `[14, [result_code, result_args]]` with
+  `[metadata, transfer_compressed_size]` on success and an empty argument
+  array on every non-zero code; the transfer size is bounded by
+  `B(original_size)`),
   `src/upload_error.rs` (typed upload protocol error codes that map upload
   request, blob-write, integrity, and frame-sequence failures to the
   `INT-NET-064` table entries, including storage-capacity exhaustion on disk-full
@@ -117,7 +123,7 @@ clients; it does not relay Raft or blob traffic.
   `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
   `upload_exchange_public_api.rs`, `upload_outcomes_public_api.rs`,
   `upload_error_codes_public_api.rs`, `blob_put_public_api.rs`,
-  `listener_public_api.rs`, `metrics_public_api.rs`,
+  `blob_get_public_api.rs`, `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `raft_runtime_public_api.rs`,
@@ -413,6 +419,27 @@ the source-name limit. The codec rejects wrong top-level or argument array lengt
 wrong value types, invalid logins, empty or over-long source names, sizes above the
 limit, hashes that are not 32 bytes, and trailing bytes. Signing, encryption, and
 credential checks are separate from the codec.
+
+## Blob get exchange
+
+An inter-server blob-get request uses message type `13` and carries
+`[login, upload_id]`. The login is CBOR text within the configured byte range and
+the permitted ASCII set, and the upload id is a 16-byte byte string that stays
+unchanged through the whole transfer so the returned data frames can be correlated
+with the requested upload. The matching result uses message type `14` and has the
+`[result_code, result_args]` shape: a successful result carries
+`[metadata, transfer_compressed_size]`, while every non-zero code carries an empty
+argument array. The metadata has the same five positions as blob put, and the
+success transfer size is the total compressed byte count of the following data
+frames.
+
+`transfer_compressed_size` must stay within
+`B(original_size) = original_size + floor(original_size / 256) + 64`; the result
+codecs reject a zero or above-bound value, and the receiver uses the declared size
+to require exact consumption of one complete Zstandard frame. The codecs validate
+the message shape, the login, the upload id, the metadata name and size limits, and
+the result-code/argument combination. They do not compress, encrypt, or sequence
+the data frames, and they do not inspect the compressed bytes.
 
 ## Frame validation and version negotiation
 
