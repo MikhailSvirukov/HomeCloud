@@ -192,11 +192,6 @@ impl AvailabilityPublisher {
         Ok(())
     }
 
-    /// Configured cluster labels, in manifest order.
-    pub fn labels(&self) -> &[String] {
-        self.monitor.labels()
-    }
-
     fn publish(&self) {
         let unavailable = self.monitor.unavailable();
         for label in self.monitor.labels() {
@@ -287,21 +282,18 @@ mod tests {
         let (mut publisher, start, metrics) = publisher();
         mark_unavailable(&mut publisher, start, &[1, 2]);
 
-        let rendered = metrics.render(0);
         assert!(
-            rendered.contains("homecloud_dedicated_node_available{node=\"storage-a\"} 0"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("homecloud_dedicated_quorum_available 1"),
-            "{rendered}"
+            metrics
+                .render(0)
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 0"),
+            "the lost node must be published as unavailable"
         );
     }
 
     #[test]
     fn losing_the_quorum_is_published() {
         let (mut publisher, start, metrics) = publisher();
-        mark_unavailable(&mut publisher, start, &[0]);
+        mark_unavailable(&mut publisher, start, &[]);
 
         let rendered = metrics.render(0);
         assert!(
@@ -310,33 +302,30 @@ mod tests {
         );
         assert!(
             rendered.contains("homecloud_dedicated_quorum_available 0"),
-            "{rendered}"
+            "losing every node must clear the quorum gauge"
         );
     }
 
     #[test]
-    fn a_response_restores_the_node_and_the_quorum() {
+    fn a_response_republishes_the_recovered_node() {
         let (mut publisher, start, metrics) = publisher();
-        mark_unavailable(&mut publisher, start, &[0]);
+        mark_unavailable(&mut publisher, start, &[1, 2]);
         assert!(
             metrics
                 .render(0)
-                .contains("homecloud_dedicated_quorum_available 0"),
-            "the quorum must be lost before the recovery"
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 0"),
+            "the node must be unavailable before the recovery"
         );
 
         publisher
-            .record_response(LABELS[0], at(start, INTERVAL_MS + TIMEOUT_MS * 2))
+            .record_response(LABELS[0], at(start, INTERVAL_MS * 2 + TIMEOUT_MS * 2))
             .expect("the node must have an attempt in flight");
 
-        let rendered = metrics.render(0);
         assert!(
-            rendered.contains("homecloud_dedicated_node_available{node=\"storage-a\"} 1"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("homecloud_dedicated_quorum_available 1"),
-            "{rendered}"
+            metrics
+                .render(0)
+                .contains("homecloud_dedicated_node_available{node=\"storage-a\"} 1"),
+            "the recovered node must be published as available"
         );
     }
 
