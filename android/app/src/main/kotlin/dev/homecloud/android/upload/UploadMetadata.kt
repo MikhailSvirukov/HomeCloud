@@ -4,8 +4,7 @@ import dev.homecloud.android.protocol.CborValue
 import dev.homecloud.android.protocol.ProtocolEncodingException
 
 /**
- * The five upload metadata arguments of one version, in wire order (`INT-NET-017 / 2`,
- * `INT-NET-084 / 1`, `FR-UP-002 / 1`, `FR-UP-019 / 2`, `FR-CAT-012 / 3`).
+ * The five upload metadata arguments of one version, in wire order (`INT-NET-052 / 4`, `INT-NET-053 / 2`, `INT-NET-084 / 1`, `INT-NET-038 / 2`).
  *
  * Equality and hashing compare the SHA-256 digest by content, and the textual form never contains
  * the digest bytes.
@@ -46,8 +45,7 @@ internal data class UploadMetadata(
 }
 
 /**
- * Encodes and decodes the positional upload metadata arguments (`INT-NET-017 / 2`,
- * `INT-NET-084 / 1`, `FR-UP-002 / 1`, `FR-UP-019 / 2`, `FR-CAT-012 / 3`).
+ * Encodes and decodes the positional upload metadata arguments (`INT-NET-052 / 4`, `INT-NET-053 / 2`, `INT-NET-084 / 1`, `INT-NET-038 / 2`).
  *
  * The encoded order is `source_name`, `timestamp_ms`, `original_size`, `compressed_size` and
  * `sha256`. The SRS frame-size bound B(n) is a wire-envelope check; it does not allow the client's
@@ -56,7 +54,7 @@ internal data class UploadMetadata(
  */
 internal object UploadMetadataCodec {
     /**
-     * Encodes the five arguments in the order fixed by `INT-NET-017 / 2` and `INT-NET-084 / 1`.
+     * Encodes the five arguments in the order fixed by `INT-NET-052 / 4` and `INT-NET-084 / 1`.
      *
      * A blank name, a digest whose length is not 32 bytes, a negative timestamp or size, and a
      * compressed size above the original size are rejected.
@@ -66,10 +64,7 @@ internal object UploadMetadataCodec {
         require(metadata.sha256.size == SHA256_BYTES) { "$SHA256_FIELD must contain $SHA256_BYTES bytes" }
         require(metadata.timestampMillis >= 0) { "$TIMESTAMP_FIELD must not be negative" }
         require(metadata.originalSizeBytes in VALID_SIZE_RANGE) { "$ORIGINAL_SIZE_FIELD is out of range" }
-        require(metadata.compressedSizeBytes in VALID_SIZE_RANGE) { "$COMPRESSED_SIZE_FIELD is out of range" }
-        require(metadata.compressedSizeBytes <= metadata.originalSizeBytes) {
-            "$COMPRESSED_SIZE_FIELD must not exceed $ORIGINAL_SIZE_FIELD"
-        }
+        require(metadata.compressedSizeBytes >= 0L) { "$COMPRESSED_SIZE_FIELD must not be negative" }
         return listOf(
             CborValue.Text(metadata.originalName),
             CborValue.UInt(metadata.timestampMillis),
@@ -80,7 +75,7 @@ internal object UploadMetadataCodec {
     }
 
     /**
-     * Decodes and validates a five-element argument list (`INT-NET-017 / 2`, `INT-NET-084 / 1`).
+     * Decodes and validates a five-element argument list (`INT-NET-053 / 2`, `INT-NET-084 / 1`).
      *
      * A wrong element count, a mismatched element type, a negative timestamp or size, a digest
      * whose length is not 32 bytes, an empty name, and a compressed size above the original size
@@ -100,9 +95,6 @@ internal object UploadMetadataCodec {
                 compressedSizeBytes = arguments[3].unsignedSize(COMPRESSED_SIZE_FIELD),
                 sha256 = arguments[4].sha256Digest(SHA256_FIELD),
             )
-        if (metadata.compressedSizeBytes > metadata.originalSizeBytes) {
-            throw ProtocolEncodingException("$COMPRESSED_SIZE_FIELD must not exceed $ORIGINAL_SIZE_FIELD")
-        }
         return metadata
     }
 }
