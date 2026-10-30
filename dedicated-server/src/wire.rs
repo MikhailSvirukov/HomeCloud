@@ -2802,8 +2802,8 @@ mod tests {
         let bytes = message
             .encode(MAX_VERIFIER_BYTES)
             .expect("encoding must work");
-        let tail = &bytes[bytes.len() - 4..];
-        assert_eq!(tail, [0x63, b'p', b'h', b'c']);
+        let tail = &bytes[bytes.len() - 5..];
+        assert_eq!(tail, [0x63, b'p', b'h', b'c', 0xf6]);
         assert_eq!(
             InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES).expect("decoding must work"),
             message
