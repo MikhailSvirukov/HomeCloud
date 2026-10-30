@@ -1,9 +1,8 @@
 //! Static TOML manifest.
 //!
-//! SRS: `CFG-CL-001 / 1`–`CFG-CL-005 / 1`, `CFG-CL-021 / 1`, `CFG-CL-033 / 1`,
-//! `CFG-CL-034 / 2`, `CFG-CL-038 / 1`, `CFG-CL-039 / 1`, `CFG-CL-040 / 1`,
-//! `FR-CL-015 / 1`, `FR-CL-017 / 1`, `FR-CL-027 / 1`, `INT-NET-071 / 1`,
-//! `NFR-SEC-008 / 1`.
+//! SRS: `CFG-CL-001 / 1`–`CFG-CL-005 / 1`, `CFG-CL-021 / 1`,
+//! `CFG-CL-034 / 2`, `CFG-CL-038 / 1`, `FR-CL-015 / 1`,
+//! `FR-CL-017 / 1`, `FR-CL-027 / 1`, `INT-NET-071 / 1`, `NFR-SEC-008 / 1`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};

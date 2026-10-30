@@ -9,8 +9,7 @@
 //! fields are rejected. Covers `NFR-SEC-008 / 1`: the manifest carries only
 //! open keys. Covers `FR-CL-015 / 1`, `FR-CL-017 / 1`, and `FR-CL-027 / 1`:
 //! Raft membership is the fixed set of storage nodes from the manifest, and
-//! `INT-NET-071 / 1`: each node's `sender_id` is a unique UUID that is stable
-//! across restarts and label changes.
+//! `INT-NET-071 / 1`: each node's `sender_id` is a unique UUID taken from the manifest.
 
 use std::fs;
 
@@ -417,7 +416,7 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
     ));
 
     let mut invalid_ed25519 = storage_a_spec();
-    invalid_ed25519.ed25519_public_key = "ff".repeat(32);
+    invalid_ed25519.ed25519_public_key = format!("02{}", "00".repeat(31));
     let source = manifest_text(Some(&dedicated_spec()), &[invalid_ed25519]);
     assert!(matches!(
         parse_error(&source),
