@@ -175,7 +175,7 @@ fn rejects_a_wrong_sender_signature_before_decryption() {
         decode(
             &frame,
             &other_verifying_key(),
-            &recipient_private_key(),
+            &other_recipient_private_key(),
             max_frame_len()
         ),
         Err(ServerExchangeError::Frame(
@@ -267,7 +267,10 @@ fn enforces_the_frame_body_limit() {
             FramingError::FrameTooLarge { .. }
         )))
     ));
+}
 
+#[test]
+fn round_trips_an_empty_plaintext() {
     let frame = encode(
         &ordinary_header(),
         &[],
@@ -283,6 +286,36 @@ fn enforces_the_frame_body_limit() {
     )
     .expect("an encrypted empty plaintext decodes");
     assert!(message.plaintext.is_empty());
+}
+
+#[test]
+fn uses_a_fresh_encapsulation_for_each_message() {
+    let header = ordinary_header();
+    let header_len = encode_external_header(&header, &limits())
+        .expect("the test external header encodes")
+        .len();
+    let first = encode(
+        &header,
+        &rpc_plaintext(),
+        &recipient_public_key(),
+        max_frame_len(),
+    )
+    .expect("the first message fits the configured frame limit");
+    let second = encode(
+        &header,
+        &rpc_plaintext(),
+        &recipient_public_key(),
+        max_frame_len(),
+    )
+    .expect("the second message fits the configured frame limit");
+    let encapsulated_start = FRAME_LENGTH_PREFIX_LEN + header_len;
+    let encapsulated_end = encapsulated_start + X25519_KEY_LEN;
+
+    assert_ne!(
+        &first[encapsulated_start..encapsulated_end],
+        &second[encapsulated_start..encapsulated_end],
+        "each encrypted message uses a fresh HPKE encapsulation"
+    );
 }
 
 #[test]
