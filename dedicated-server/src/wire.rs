@@ -112,8 +112,8 @@ pub enum WireError {
     #[error("inter-server message type 0 is reserved")]
     ReservedMessageType,
     /// The inter-server message type is not one the protocol assigns.
-    #[error("unknown inter-server message type {0}")]
-    UnknownMessageType(u32),
+    #[error("unsupported inter-server message type {0}")]
+    UnsupportedMessageType(u32),
     /// An inter-server argument array has the wrong number of elements.
     #[error("message type {message_type:?} takes {expected} arguments, got {actual}")]
     WrongMessageArgumentCount {
@@ -185,6 +185,29 @@ pub enum WireError {
         /// What the success shape requires.
         reason: &'static str,
     },
+    /// A success lookup result carries no registry snapshot.
+    #[error("a success registry lookup result must carry its snapshot")]
+    MissingSnapshot,
+    /// A success registration result carries no installation id or commit index.
+    #[error("a success registration result must carry the installation id and commit index")]
+    MissingResultArguments,
+    /// A registry lookup carries neither a login nor the pre-decryption installation form.
+    #[error("registry lookup must carry a login, or only an installation_id before decryption")]
+    RegistryLookupShape,
+    /// A registration propose carries both or neither verifier.
+    #[error("registration propose must carry exactly one of expected_verifier and new_verifier")]
+    VerifierPair,
+    /// A PHC verifier exceeds the configured limit.
+    #[error("PHC verifier is {actual} ASCII bytes, above the configured {max}")]
+    VerifierTooLong {
+        /// Observed verifier length in bytes.
+        actual: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// A PHC verifier is not ASCII text.
+    #[error("PHC verifier must be ASCII text")]
+    VerifierNotAscii,
     /// Bytes remain after the CBOR value.
     #[error("unexpected trailing bytes after the CBOR value")]
     TrailingBytes,
@@ -798,6 +821,14 @@ pub enum MessageType {
     HeartbeatResponse,
     /// Code `3`: RPC OpenRaft.
     RaftRpc,
+    /// Code `4`: registry lookup (`INT-NET-089 / 1`).
+    RegistryLookup,
+    /// Code `5`: registry lookup result (`INT-NET-090 / 1`).
+    RegistryLookupResult,
+    /// Code `6`: registration propose (`INT-NET-091 / 1`).
+    RegistrationPropose,
+    /// Code `7`: registration result (`INT-NET-092 / 1`).
+    RegistrationResult,
 }
 
 impl MessageType {
@@ -807,6 +838,10 @@ impl MessageType {
             Self::HeartbeatRequest => 1,
             Self::HeartbeatResponse => 2,
             Self::RaftRpc => 3,
+            Self::RegistryLookup => 4,
+            Self::RegistryLookupResult => 5,
+            Self::RegistrationPropose => 6,
+            Self::RegistrationResult => 7,
         }
     }
 
@@ -817,15 +852,61 @@ impl MessageType {
             1 => Ok(Self::HeartbeatRequest),
             2 => Ok(Self::HeartbeatResponse),
             3 => Ok(Self::RaftRpc),
-            other => Err(WireError::UnknownMessageType(other)),
+            4 => Ok(Self::RegistryLookup),
+            5 => Ok(Self::RegistryLookupResult),
+            6 => Ok(Self::RegistrationPropose),
+            7 => Ok(Self::RegistrationResult),
+            other => Err(WireError::UnsupportedMessageType(other)),
         }
     }
 }
 
+/// Account record of a registry lookup result (`INT-NET-102 / 1`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct AccountRecord {
+    /// PHC-encoded Argon2id verifier.
+    pub verifier: String,
+}
+
+/// Registration idempotency record (`INT-NET-102 / 1`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegistrationRecord {
+    /// HMAC content tag identifying the logical registration request.
+    pub content_tag: [u8; KEY_BYTES],
+    /// Installation assigned by the committed registration.
+    pub installation_id: [u8; IDENTIFIER_BYTES],
+}
+
+/// Installation record (`INT-NET-102 / 1`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct InstallationRecord {
+    /// Login owning the installation.
+    pub login: String,
+    /// Assigned installation identifier.
+    pub installation_id: [u8; IDENTIFIER_BYTES],
+    /// Open X25519 key of the installation.
+    pub x25519_key: [u8; KEY_BYTES],
+    /// Open Ed25519 key of the installation.
+    pub ed25519_key: [u8; KEY_BYTES],
+}
+
+/// Linearizable registry snapshot returned by a lookup (`INT-NET-090`, `INT-NET-101`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct RegistrySnapshot {
+    /// Committed state index the snapshot was read at.
+    pub read_index: u64,
+    /// Account record, absent when the login is unknown.
+    pub account: Option<AccountRecord>,
+    /// Idempotency record, absent when the request identifier is unknown.
+    pub registration: Option<RegistrationRecord>,
+    /// Installation record, absent when the installation is unknown.
+    pub installation: Option<InstallationRecord>,
+}
+
 /// Inter-server message carried in the `[message_type, args]` envelope.
 ///
-/// The manual [`fmt::Debug`] implementation reports the message type and the
-/// length of an RPC payload instead of its bytes.
+/// The manual [`fmt::Debug`] implementations report identifiers and lengths
+/// instead of payloads, verifiers or content tags.
 #[derive(Clone, PartialEq, Eq)]
 pub enum InterServerMessage {
     /// Dedicated liveness heartbeat request (`INT-NET-073 / 5`).
@@ -851,6 +932,90 @@ pub enum InterServerMessage {
         /// Serialized OpenRaft RPC message, passed through unchanged.
         rpc_bytes: Vec<u8>,
     },
+    /// Registry lookup request (`INT-NET-089 / 1`).
+    RegistryLookup {
+        /// Login whose records are requested.
+        login: Option<String>,
+        /// Registration request identifier whose idempotency result is requested.
+        registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
+        /// Installation whose record is requested.
+        installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+    },
+    /// Registry lookup result (`INT-NET-090 / 1`).
+    RegistryLookupResult {
+        /// Result code; `0` carries a snapshot and every other code an empty array.
+        code: u32,
+        /// Snapshot of the linearizable registry read.
+        snapshot: Option<RegistrySnapshot>,
+    },
+    /// Registration propose command (`INT-NET-091 / 1`).
+    RegistrationPropose {
+        /// Login being registered.
+        login: String,
+        /// Logical registration request identifier.
+        registration_request_id: [u8; IDENTIFIER_BYTES],
+        /// HMAC content tag of the logical request.
+        content_tag: [u8; KEY_BYTES],
+        /// Installation identifier assigned by the dedicated server.
+        installation_id: [u8; IDENTIFIER_BYTES],
+        /// Open X25519 key of the installation.
+        x25519_key: [u8; KEY_BYTES],
+        /// Open Ed25519 key of the installation.
+        ed25519_key: [u8; KEY_BYTES],
+        /// Current verifier of an existing account the command must match.
+        expected_verifier: Option<String>,
+        /// New verifier of an account created by the command.
+        new_verifier: Option<String>,
+    },
+    /// Registration result (`INT-NET-092 / 1`).
+    RegistrationResult {
+        /// Result code; `0` carries the installation id and commit index.
+        code: u32,
+        /// Installation committed by the command.
+        installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+        /// Raft index of the commit.
+        commit_index: Option<u64>,
+    },
+}
+
+impl fmt::Debug for AccountRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AccountRecord")
+            .field("verifier_bytes", &self.verifier.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for RegistrationRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegistrationRecord")
+            .field("installation_id", &self.installation_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for InstallationRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InstallationRecord")
+            .field("login", &self.login)
+            .field("installation_id", &self.installation_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for RegistrySnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegistrySnapshot")
+            .field("read_index", &self.read_index)
+            .field("account", &self.account)
+            .field("registration", &self.registration)
+            .field("installation", &self.installation)
+            .finish()
+    }
 }
 
 impl fmt::Debug for InterServerMessage {
@@ -880,6 +1045,46 @@ impl fmt::Debug for InterServerMessage {
                 .debug_struct("RaftRpc")
                 .field("rpc_bytes_len", &rpc_bytes.len())
                 .finish(),
+            Self::RegistryLookup {
+                login,
+                registration_request_id,
+                installation_id,
+            } => formatter
+                .debug_struct("RegistryLookup")
+                .field("login", login)
+                .field("registration_request_id", registration_request_id)
+                .field("installation_id", installation_id)
+                .finish(),
+            Self::RegistryLookupResult { code, snapshot } => formatter
+                .debug_struct("RegistryLookupResult")
+                .field("code", code)
+                .field("snapshot", snapshot)
+                .finish(),
+            Self::RegistrationPropose {
+                login,
+                registration_request_id,
+                installation_id,
+                expected_verifier,
+                new_verifier,
+                ..
+            } => formatter
+                .debug_struct("RegistrationPropose")
+                .field("login", login)
+                .field("registration_request_id", registration_request_id)
+                .field("installation_id", installation_id)
+                .field("expected_verifier", &expected_verifier.is_some())
+                .field("new_verifier", &new_verifier.is_some())
+                .finish(),
+            Self::RegistrationResult {
+                code,
+                installation_id,
+                commit_index,
+            } => formatter
+                .debug_struct("RegistrationResult")
+                .field("code", code)
+                .field("installation_id", installation_id)
+                .field("commit_index", commit_index)
+                .finish(),
         }
     }
 }
@@ -891,11 +1096,18 @@ impl InterServerMessage {
             Self::HeartbeatRequest { .. } => MessageType::HeartbeatRequest,
             Self::HeartbeatResponse { .. } => MessageType::HeartbeatResponse,
             Self::RaftRpc { .. } => MessageType::RaftRpc,
+            Self::RegistryLookup { .. } => MessageType::RegistryLookup,
+            Self::RegistryLookupResult { .. } => MessageType::RegistryLookupResult,
+            Self::RegistrationPropose { .. } => MessageType::RegistrationPropose,
+            Self::RegistrationResult { .. } => MessageType::RegistrationResult,
         }
     }
 
     /// Encode the envelope as the deterministic positional CBOR array.
-    pub fn encode(&self) -> Result<Vec<u8>> {
+    ///
+    /// `max_verifier_bytes` bounds every PHC verifier the message carries
+    /// (`CFG-CL-047`).
+    pub fn encode(&self, max_verifier_bytes: usize) -> Result<Vec<u8>> {
         let message_type = self.message_type();
         let arguments = match self {
             Self::HeartbeatRequest {
@@ -920,6 +1132,102 @@ impl InterServerMessage {
                 Value::Integer((*node_sent_at_ms).into()),
             ],
             Self::RaftRpc { rpc_bytes } => vec![Value::Bytes(rpc_bytes.clone())],
+            Self::RegistryLookup {
+                login,
+                registration_request_id,
+                installation_id,
+            } => {
+                validate_registry_lookup(
+                    login.as_deref(),
+                    *registration_request_id,
+                    *installation_id,
+                )?;
+                vec![
+                    optional_text(login.as_deref()),
+                    optional_bytes(*registration_request_id),
+                    optional_bytes(*installation_id),
+                ]
+            }
+            Self::RegistryLookupResult { code, snapshot } => {
+                let args = match (*code, snapshot) {
+                    (0, Some(snapshot)) => {
+                        validate_snapshot_verifiers(snapshot, max_verifier_bytes)?;
+                        vec![
+                            Value::Integer(snapshot.read_index.into()),
+                            snapshot.account.as_ref().map_or(Value::Null, |account| {
+                                Value::Array(vec![Value::Text(account.verifier.clone())])
+                            }),
+                            snapshot
+                                .registration
+                                .as_ref()
+                                .map_or(Value::Null, |registration| {
+                                    Value::Array(vec![
+                                        Value::Bytes(registration.content_tag.to_vec()),
+                                        Value::Bytes(registration.installation_id.to_vec()),
+                                    ])
+                                }),
+                            snapshot
+                                .installation
+                                .as_ref()
+                                .map_or(Value::Null, |installation| {
+                                    Value::Array(vec![
+                                        Value::Text(installation.login.clone()),
+                                        Value::Bytes(installation.installation_id.to_vec()),
+                                        Value::Bytes(installation.x25519_key.to_vec()),
+                                        Value::Bytes(installation.ed25519_key.to_vec()),
+                                    ])
+                                }),
+                        ]
+                    }
+                    (0, None) => return Err(WireError::MissingSnapshot),
+                    (_, Some(_)) => return Err(WireError::FailureArguments),
+                    (_, None) => Vec::new(),
+                };
+                vec![Value::Integer(u64::from(*code).into()), Value::Array(args)]
+            }
+            Self::RegistrationPropose {
+                login,
+                registration_request_id,
+                content_tag,
+                installation_id,
+                x25519_key,
+                ed25519_key,
+                expected_verifier,
+                new_verifier,
+            } => {
+                if expected_verifier.is_some() == new_verifier.is_some() {
+                    return Err(WireError::VerifierPair);
+                }
+                if let Some(verifier) = expected_verifier.as_deref().or(new_verifier.as_deref()) {
+                    validate_verifier(verifier, max_verifier_bytes)?;
+                }
+                vec![
+                    Value::Text(login.clone()),
+                    Value::Bytes(registration_request_id.to_vec()),
+                    Value::Bytes(content_tag.to_vec()),
+                    Value::Bytes(installation_id.to_vec()),
+                    Value::Bytes(x25519_key.to_vec()),
+                    Value::Bytes(ed25519_key.to_vec()),
+                    optional_text(expected_verifier.as_deref()),
+                    optional_text(new_verifier.as_deref()),
+                ]
+            }
+            Self::RegistrationResult {
+                code,
+                installation_id,
+                commit_index,
+            } => {
+                let args = match (*code, installation_id, commit_index) {
+                    (0, Some(installation_id), Some(commit_index)) => vec![
+                        Value::Bytes(installation_id.to_vec()),
+                        Value::Integer((*commit_index).into()),
+                    ],
+                    (0, _, _) => return Err(WireError::MissingResultArguments),
+                    (_, Some(_), _) | (_, _, Some(_)) => return Err(WireError::FailureArguments),
+                    (_, None, None) => Vec::new(),
+                };
+                vec![Value::Integer(u64::from(*code).into()), Value::Array(args)]
+            }
         };
 
         let value = Value::Array(vec![
@@ -931,7 +1239,10 @@ impl InterServerMessage {
     }
 
     /// Decode and validate an inter-server envelope.
-    pub fn decode(bytes: &[u8]) -> Result<Self> {
+    ///
+    /// `max_verifier_bytes` bounds every PHC verifier the message carries
+    /// (`CFG-CL-047`).
+    pub fn decode(bytes: &[u8], max_verifier_bytes: usize) -> Result<Self> {
         let Value::Array(elements) = decode_value(bytes)? else {
             return Err(WireError::NotAnArray(INTER_SERVER_ENVELOPE));
         };
@@ -946,8 +1257,12 @@ impl InterServerMessage {
         };
 
         let expected = match message_type {
-            MessageType::HeartbeatRequest | MessageType::HeartbeatResponse => 3,
+            MessageType::HeartbeatRequest
+            | MessageType::HeartbeatResponse
+            | MessageType::RegistryLookup => 3,
             MessageType::RaftRpc => 1,
+            MessageType::RegistrationPropose => 8,
+            MessageType::RegistryLookupResult | MessageType::RegistrationResult => 2,
         };
         if arguments.len() != expected {
             return Err(WireError::WrongMessageArgumentCount {
@@ -977,7 +1292,228 @@ impl InterServerMessage {
                     index: 0,
                 }),
             },
+            MessageType::RegistryLookup => {
+                let login = message_text_or_null(&arguments[0], message_type, 0)?;
+                let registration_request_id = optional_uuid(&arguments[1], message_type, 1)?;
+                let installation_id = optional_uuid(&arguments[2], message_type, 2)?;
+                validate_registry_lookup(
+                    login.as_deref(),
+                    registration_request_id,
+                    installation_id,
+                )?;
+                Ok(Self::RegistryLookup {
+                    login,
+                    registration_request_id,
+                    installation_id,
+                })
+            }
+            MessageType::RegistryLookupResult => {
+                let code = message_uint32(&arguments[0], message_type, 0)?;
+                let snapshot = if code == 0 {
+                    Some(decode_snapshot(
+                        &arguments[1],
+                        message_type,
+                        max_verifier_bytes,
+                    )?)
+                } else {
+                    require_empty_arguments(&arguments[1], message_type)?;
+                    None
+                };
+                Ok(Self::RegistryLookupResult { code, snapshot })
+            }
+            MessageType::RegistrationPropose => {
+                let login = message_text(&arguments[0], message_type, 0)?.to_owned();
+                let registration_request_id = uuid(&arguments[1], message_type, 1)?;
+                let content_tag = message_key(&arguments[2], message_type, 2)?;
+                let installation_id = uuid(&arguments[3], message_type, 3)?;
+                let x25519_key = message_key(&arguments[4], message_type, 4)?;
+                let ed25519_key = message_key(&arguments[5], message_type, 5)?;
+                let expected_verifier = message_text_or_null(&arguments[6], message_type, 6)?;
+                let new_verifier = message_text_or_null(&arguments[7], message_type, 7)?;
+                if expected_verifier.is_some() == new_verifier.is_some() {
+                    return Err(WireError::VerifierPair);
+                }
+                if let Some(verifier) = expected_verifier.as_deref().or(new_verifier.as_deref()) {
+                    validate_verifier(verifier, max_verifier_bytes)?;
+                }
+                Ok(Self::RegistrationPropose {
+                    login,
+                    registration_request_id,
+                    content_tag,
+                    installation_id,
+                    x25519_key,
+                    ed25519_key,
+                    expected_verifier,
+                    new_verifier,
+                })
+            }
+            MessageType::RegistrationResult => {
+                let code = message_uint32(&arguments[0], message_type, 0)?;
+                let (installation_id, commit_index) = if code == 0 {
+                    let Value::Array(result) = &arguments[1] else {
+                        return Err(WireError::WrongMessageArgumentType {
+                            message_type,
+                            index: 1,
+                        });
+                    };
+                    if result.len() != 2 {
+                        return Err(WireError::WrongMessageArgumentCount {
+                            message_type,
+                            expected: 2,
+                            actual: result.len(),
+                        });
+                    }
+                    (
+                        Some(uuid(&result[0], message_type, 0)?),
+                        Some(uint64(&result[1], message_type, 1)?),
+                    )
+                } else {
+                    require_empty_arguments(&arguments[1], message_type)?;
+                    (None, None)
+                };
+                Ok(Self::RegistrationResult {
+                    code,
+                    installation_id,
+                    commit_index,
+                })
+            }
         }
+    }
+}
+
+fn validate_registry_lookup(
+    login: Option<&str>,
+    registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
+    installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+) -> Result<()> {
+    match (login, registration_request_id, installation_id) {
+        (Some(_), _, _) => Ok(()),
+        (None, None, Some(_)) => Ok(()),
+        (None, _, _) => Err(WireError::RegistryLookupShape),
+    }
+}
+
+fn validate_snapshot_verifiers(
+    snapshot: &RegistrySnapshot,
+    max_verifier_bytes: usize,
+) -> Result<()> {
+    match snapshot.account.as_ref() {
+        Some(account) => validate_verifier(&account.verifier, max_verifier_bytes),
+        None => Ok(()),
+    }
+}
+
+fn validate_verifier(verifier: &str, max_verifier_bytes: usize) -> Result<()> {
+    if !verifier.is_ascii() {
+        return Err(WireError::VerifierNotAscii);
+    }
+    if verifier.len() > max_verifier_bytes {
+        return Err(WireError::VerifierTooLong {
+            actual: verifier.len(),
+            max: max_verifier_bytes,
+        });
+    }
+    Ok(())
+}
+
+fn decode_snapshot(
+    value: &Value,
+    message_type: MessageType,
+    max_verifier_bytes: usize,
+) -> Result<RegistrySnapshot> {
+    let Value::Array(fields) = value else {
+        return Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index: 1,
+        });
+    };
+    if fields.len() != 4 {
+        return Err(WireError::WrongMessageArgumentCount {
+            message_type,
+            expected: 4,
+            actual: fields.len(),
+        });
+    }
+    let read_index = uint64(&fields[0], message_type, 0)?;
+    let account = match &fields[1] {
+        Value::Null => None,
+        Value::Array(account) if account.len() == 1 => {
+            let verifier = message_text(&account[0], message_type, 1)?.to_owned();
+            validate_verifier(&verifier, max_verifier_bytes)?;
+            Some(AccountRecord { verifier })
+        }
+        _ => {
+            return Err(WireError::WrongMessageArgumentType {
+                message_type,
+                index: 1,
+            })
+        }
+    };
+    let registration = match &fields[2] {
+        Value::Null => None,
+        Value::Array(registration) if registration.len() == 2 => Some(RegistrationRecord {
+            content_tag: message_key(&registration[0], message_type, 2)?,
+            installation_id: uuid(&registration[1], message_type, 2)?,
+        }),
+        _ => {
+            return Err(WireError::WrongMessageArgumentType {
+                message_type,
+                index: 2,
+            })
+        }
+    };
+    let installation = match &fields[3] {
+        Value::Null => None,
+        Value::Array(installation) if installation.len() == 4 => Some(InstallationRecord {
+            login: message_text(&installation[0], message_type, 3)?.to_owned(),
+            installation_id: uuid(&installation[1], message_type, 3)?,
+            x25519_key: message_key(&installation[2], message_type, 3)?,
+            ed25519_key: message_key(&installation[3], message_type, 3)?,
+        }),
+        _ => {
+            return Err(WireError::WrongMessageArgumentType {
+                message_type,
+                index: 3,
+            })
+        }
+    };
+
+    Ok(RegistrySnapshot {
+        read_index,
+        account,
+        registration,
+        installation,
+    })
+}
+
+fn require_empty_arguments(value: &Value, message_type: MessageType) -> Result<()> {
+    match value {
+        Value::Array(arguments) if arguments.is_empty() => Ok(()),
+        Value::Array(arguments) => Err(WireError::WrongMessageArgumentCount {
+            message_type,
+            expected: 0,
+            actual: arguments.len(),
+        }),
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index: 1,
+        }),
+    }
+}
+
+fn uuid(value: &Value, message_type: MessageType, index: usize) -> Result<[u8; IDENTIFIER_BYTES]> {
+    fixed_bytes::<IDENTIFIER_BYTES>(value, INTER_SERVER_ENVELOPE, index + 1)
+        .map_err(|error| map_message_error(error, message_type, index))
+}
+
+fn optional_uuid(
+    value: &Value,
+    message_type: MessageType,
+    index: usize,
+) -> Result<Option<[u8; IDENTIFIER_BYTES]>> {
+    match value {
+        Value::Null => Ok(None),
+        other => uuid(other, message_type, index).map(Some),
     }
 }
 
@@ -1017,11 +1553,62 @@ fn optional_int64(value: &Value, message_type: MessageType, index: usize) -> Res
         other => int64(other, message_type, index).map(Some),
     }
 }
+
+fn map_message_error(error: WireError, message_type: MessageType, index: usize) -> WireError {
+    match error {
+        WireError::WrongType { .. } | WireError::ByteStringLength { .. } => {
+            WireError::WrongMessageArgumentType {
+                message_type,
+                index,
+            }
+        }
+        other => other,
+    }
+}
+
+fn message_key(value: &Value, message_type: MessageType, index: usize) -> Result<[u8; KEY_BYTES]> {
+    fixed_bytes::<KEY_BYTES>(value, INTER_SERVER_ENVELOPE, index + 1)
+        .map_err(|error| map_message_error(error, message_type, index))
+}
+fn message_uint32(value: &Value, message_type: MessageType, index: usize) -> Result<u32> {
+    u32::try_from(uint64(value, message_type, index)?).map_err(|_| {
+        WireError::MessageArgumentOutOfRange {
+            message_type,
+            index,
+        }
+    })
+}
+
+fn message_text(value: &Value, message_type: MessageType, index: usize) -> Result<&str> {
+    match value {
+        Value::Text(text) => Ok(text.as_str()),
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index,
+        }),
+    }
+}
+
+fn message_text_or_null(
+    value: &Value,
+    message_type: MessageType,
+    index: usize,
+) -> Result<Option<String>> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Text(text) => Ok(Some(text.clone())),
+        _ => Err(WireError::WrongMessageArgumentType {
+            message_type,
+            index,
+        }),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const MAX_LABEL_BYTES: usize = 64;
+    const MAX_VERIFIER_BYTES: usize = 512;
 
     fn header() -> ExternalHeader {
         ExternalHeader {
@@ -1597,9 +2184,14 @@ mod tests {
             0x82, 0x01, 0x83, 0x07, 0x1b, 0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x00, 0xf6,
         ];
 
-        assert_eq!(message.encode().expect("encoding must work"), expected);
         assert_eq!(
-            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
             message
         );
     }
@@ -1613,7 +2205,12 @@ mod tests {
         };
         let expected = vec![0x82, 0x01, 0x83, 0x01, 0x02, 0x24];
 
-        assert_eq!(message.encode().expect("encoding must work"), expected);
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
     }
 
     #[test]
@@ -1628,9 +2225,14 @@ mod tests {
             0x00, 0x00, 0x01, 0x8b, 0xcf, 0xe5, 0x68, 0x01,
         ];
 
-        assert_eq!(message.encode().expect("encoding must work"), expected);
         assert_eq!(
-            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
             message
         );
     }
@@ -1642,9 +2244,14 @@ mod tests {
         };
         let expected = vec![0x82, 0x03, 0x81, 0x42, 0x01, 0x02];
 
-        assert_eq!(message.encode().expect("encoding must work"), expected);
         assert_eq!(
-            InterServerMessage::decode(&expected).expect("decoding must work"),
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
             message
         );
         assert_eq!(message.message_type(), MessageType::RaftRpc);
@@ -1659,22 +2266,22 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&bytes),
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
             Err(WireError::ReservedMessageType)
         ));
     }
 
     #[test]
-    fn an_unknown_message_type_is_rejected() {
+    fn an_unassigned_message_type_is_rejected() {
         let bytes = encode_value(&Value::Array(vec![
-            Value::Integer(4.into()),
+            Value::Integer(18.into()),
             Value::Array(vec![Value::Integer(1.into())]),
         ]))
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&bytes),
-            Err(WireError::UnknownMessageType(4))
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::UnsupportedMessageType(18))
         ));
     }
 
@@ -1687,7 +2294,7 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&short),
+            InterServerMessage::decode(&short, MAX_VERIFIER_BYTES),
             Err(WireError::WrongMessageArgumentCount {
                 message_type: MessageType::HeartbeatRequest,
                 expected: 3,
@@ -1705,7 +2312,7 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&wrong_type),
+            InterServerMessage::decode(&wrong_type, MAX_VERIFIER_BYTES),
             Err(WireError::WrongMessageArgumentType {
                 message_type: MessageType::RaftRpc,
                 index: 0
@@ -1726,7 +2333,7 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&negative_sequence),
+            InterServerMessage::decode(&negative_sequence, MAX_VERIFIER_BYTES),
             Err(WireError::MessageArgumentOutOfRange {
                 message_type: MessageType::HeartbeatResponse,
                 index: 0
@@ -1750,9 +2357,11 @@ mod tests {
         ];
 
         for message in messages {
-            let bytes = message.encode().expect("encoding must work");
+            let bytes = message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work");
             assert_eq!(
-                InterServerMessage::decode(&bytes).expect("decoding must work"),
+                InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES).expect("decoding must work"),
                 message
             );
         }
@@ -1771,7 +2380,7 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&bytes),
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
             Err(WireError::MessageArgumentOutOfRange {
                 message_type: MessageType::HeartbeatRequest,
                 index: 1
@@ -1792,11 +2401,372 @@ mod tests {
         .expect("encoding must work");
 
         assert!(matches!(
-            InterServerMessage::decode(&bytes),
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
             Err(WireError::WrongMessageArgumentType {
                 message_type: MessageType::HeartbeatRequest,
                 index: 0
             })
+        ));
+    }
+
+    fn lookup_request(
+        login: Option<&str>,
+        request: Option<[u8; IDENTIFIER_BYTES]>,
+        installation: Option<[u8; IDENTIFIER_BYTES]>,
+    ) -> InterServerMessage {
+        InterServerMessage::RegistryLookup {
+            login: login.map(str::to_owned),
+            registration_request_id: request,
+            installation_id: installation,
+        }
+    }
+
+    fn propose() -> InterServerMessage {
+        InterServerMessage::RegistrationPropose {
+            login: "alice".to_owned(),
+            registration_request_id: [0x11; IDENTIFIER_BYTES],
+            content_tag: [0x22; KEY_BYTES],
+            installation_id: [0x33; IDENTIFIER_BYTES],
+            x25519_key: [0x44; KEY_BYTES],
+            ed25519_key: [0x55; KEY_BYTES],
+            expected_verifier: None,
+            new_verifier: Some("phc".to_owned()),
+        }
+    }
+
+    #[test]
+    fn the_registry_lookup_encodes_the_documented_layout() {
+        let message = lookup_request(Some("alice"), None, Some([0x11; IDENTIFIER_BYTES]));
+        let mut expected = vec![
+            0x82, 0x04, 0x83, 0x65, b'a', b'l', b'i', b'c', b'e', 0xf6, 0x50,
+        ];
+        expected.extend([0x11; IDENTIFIER_BYTES]);
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn the_pre_decryption_lookup_form_is_accepted() {
+        let message = lookup_request(None, None, Some([0x11; IDENTIFIER_BYTES]));
+        let mut expected = vec![0x82, 0x04, 0x83, 0xf6, 0xf6, 0x50];
+        expected.extend([0x11; IDENTIFIER_BYTES]);
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_lookup_without_login_or_installation_is_rejected() {
+        let message = lookup_request(None, Some([0x11; IDENTIFIER_BYTES]), None);
+        assert!(matches!(
+            message.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::RegistryLookupShape)
+        ));
+
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(4.into()),
+            Value::Array(vec![
+                Value::Null,
+                Value::Bytes(vec![0x11; IDENTIFIER_BYTES]),
+                Value::Null,
+            ]),
+        ]))
+        .expect("encoding must work");
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::RegistryLookupShape)
+        ));
+    }
+
+    fn snapshot() -> RegistrySnapshot {
+        RegistrySnapshot {
+            read_index: 7,
+            account: Some(AccountRecord {
+                verifier: "phc".to_owned(),
+            }),
+            registration: Some(RegistrationRecord {
+                content_tag: [0x22; KEY_BYTES],
+                installation_id: [0x33; IDENTIFIER_BYTES],
+            }),
+            installation: Some(InstallationRecord {
+                login: "alice".to_owned(),
+                installation_id: [0x33; IDENTIFIER_BYTES],
+                x25519_key: [0x44; KEY_BYTES],
+                ed25519_key: [0x55; KEY_BYTES],
+            }),
+        }
+    }
+
+    #[test]
+    fn the_found_lookup_result_encodes_the_documented_layout() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 0,
+            snapshot: Some(snapshot()),
+        };
+        let mut expected = vec![
+            0x82, 0x05, 0x82, 0x00, 0x84, 0x07, 0x81, 0x63, b'p', b'h', b'c', 0x82, 0x58, 0x20,
+        ];
+        expected.extend([0x22; KEY_BYTES]);
+        expected.push(0x50);
+        expected.extend([0x33; IDENTIFIER_BYTES]);
+        expected.push(0x84);
+        expected.extend([0x65, b'a', b'l', b'i', b'c', b'e']);
+        expected.push(0x50);
+        expected.extend([0x33; IDENTIFIER_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x44; KEY_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x55; KEY_BYTES]);
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn the_missing_lookup_result_encodes_nulls() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 0,
+            snapshot: Some(RegistrySnapshot {
+                read_index: 7,
+                account: None,
+                registration: None,
+                installation: None,
+            }),
+        };
+        let expected = vec![0x82, 0x05, 0x82, 0x00, 0x84, 0x07, 0xf6, 0xf6, 0xf6];
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_failed_lookup_result_carries_empty_arguments() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 0x0001_0001,
+            snapshot: None,
+        };
+        let expected = vec![0x82, 0x05, 0x82, 0x1a, 0x00, 0x01, 0x00, 0x01, 0x80];
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_success_lookup_without_a_snapshot_is_rejected() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 0,
+            snapshot: None,
+        };
+        assert!(matches!(
+            message.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::MissingSnapshot)
+        ));
+
+        let bytes = encode_value(&Value::Array(vec![
+            Value::Integer(5.into()),
+            Value::Array(vec![Value::Integer(0.into()), Value::Array(Vec::new())]),
+        ]))
+        .expect("encoding must work");
+        assert!(matches!(
+            InterServerMessage::decode(&bytes, MAX_VERIFIER_BYTES),
+            Err(WireError::WrongMessageArgumentCount { .. })
+        ));
+    }
+
+    #[test]
+    fn a_failed_lookup_with_a_snapshot_is_rejected() {
+        let message = InterServerMessage::RegistryLookupResult {
+            code: 1,
+            snapshot: Some(snapshot()),
+        };
+        assert!(matches!(
+            message.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::FailureArguments)
+        ));
+    }
+
+    #[test]
+    fn the_registration_propose_encodes_the_documented_layout() {
+        let message = propose();
+        let mut expected = vec![0x82, 0x06, 0x88, 0x65, b'a', b'l', b'i', b'c', b'e', 0x50];
+        expected.extend([0x11; IDENTIFIER_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x22; KEY_BYTES]);
+        expected.push(0x50);
+        expected.extend([0x33; IDENTIFIER_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x44; KEY_BYTES]);
+        expected.extend([0x58, 0x20]);
+        expected.extend([0x55; KEY_BYTES]);
+        expected.push(0xf6);
+        expected.extend([0x63, b'p', b'h', b'c']);
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_propose_with_both_or_neither_verifier_is_rejected() {
+        let both = InterServerMessage::RegistrationPropose {
+            login: "alice".to_owned(),
+            registration_request_id: [0x11; IDENTIFIER_BYTES],
+            content_tag: [0x22; KEY_BYTES],
+            installation_id: [0x33; IDENTIFIER_BYTES],
+            x25519_key: [0x44; KEY_BYTES],
+            ed25519_key: [0x55; KEY_BYTES],
+            expected_verifier: Some("phc".to_owned()),
+            new_verifier: Some("phc".to_owned()),
+        };
+        assert!(matches!(
+            both.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierPair)
+        ));
+
+        let neither = InterServerMessage::RegistrationPropose {
+            login: "alice".to_owned(),
+            registration_request_id: [0x11; IDENTIFIER_BYTES],
+            content_tag: [0x22; KEY_BYTES],
+            installation_id: [0x33; IDENTIFIER_BYTES],
+            x25519_key: [0x44; KEY_BYTES],
+            ed25519_key: [0x55; KEY_BYTES],
+            expected_verifier: None,
+            new_verifier: None,
+        };
+        assert!(matches!(
+            neither.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierPair)
+        ));
+    }
+
+    #[test]
+    fn a_verifier_above_the_limit_is_rejected() {
+        let mut message = propose();
+        if let InterServerMessage::RegistrationPropose { new_verifier, .. } = &mut message {
+            *new_verifier = Some("x".repeat(9));
+        }
+
+        assert!(matches!(
+            message.encode(8),
+            Err(WireError::VerifierTooLong { actual: 9, max: 8 })
+        ));
+    }
+
+    #[test]
+    fn a_non_ascii_verifier_is_rejected() {
+        let mut message = propose();
+        if let InterServerMessage::RegistrationPropose { new_verifier, .. } = &mut message {
+            *new_verifier = Some("п".to_owned());
+        }
+
+        assert!(matches!(
+            message.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::VerifierNotAscii)
+        ));
+    }
+
+    #[test]
+    fn the_committed_registration_result_encodes_the_documented_layout() {
+        let message = InterServerMessage::RegistrationResult {
+            code: 0,
+            installation_id: Some([0x33; IDENTIFIER_BYTES]),
+            commit_index: Some(7),
+        };
+        let mut expected = vec![0x82, 0x07, 0x82, 0x00, 0x82, 0x50];
+        expected.extend([0x33; IDENTIFIER_BYTES]);
+        expected.push(0x07);
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_failed_registration_result_carries_empty_arguments() {
+        let message = InterServerMessage::RegistrationResult {
+            code: 0x0003_0001,
+            installation_id: None,
+            commit_index: None,
+        };
+        let expected = vec![0x82, 0x07, 0x82, 0x1a, 0x00, 0x03, 0x00, 0x01, 0x80];
+
+        assert_eq!(
+            message
+                .encode(MAX_VERIFIER_BYTES)
+                .expect("encoding must work"),
+            expected
+        );
+        assert_eq!(
+            InterServerMessage::decode(&expected, MAX_VERIFIER_BYTES).expect("decoding must work"),
+            message
+        );
+    }
+
+    #[test]
+    fn a_success_registration_without_arguments_is_rejected() {
+        let message = InterServerMessage::RegistrationResult {
+            code: 0,
+            installation_id: None,
+            commit_index: None,
+        };
+        assert!(matches!(
+            message.encode(MAX_VERIFIER_BYTES),
+            Err(WireError::MissingResultArguments)
         ));
     }
 }
