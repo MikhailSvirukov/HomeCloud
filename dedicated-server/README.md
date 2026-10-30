@@ -466,6 +466,11 @@ of the contract table (`INT-NET-064`), classifies any value by its reserved
 unnamed; `ResultEnvelope::error` builds the empty-argument failure envelope for
 a named code, while the codec still decodes any `uint32` a peer may send.
 
+`AvailabilityPublisher` drives the monitor from the heartbeat loop against the
+shared metrics registry: every poll and every recorded response logs the
+transitions and republishes each node gauge and the quorum gauge, so the next
+scrape reflects the availability the monitor observed.
+
 `src/frame_seal.rs` seals and opens an application frame body (`INT-NET-081`):
 the four-byte big-endian prefix, the encoded external header, the 64-byte
 Ed25519 signature over the prefix, the header and the payload, and the payload

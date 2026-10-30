@@ -28,7 +28,7 @@ pub use answers::{
     decode_topology_answer, registration_answer, topology_answer, TopologyEntry,
     TOPOLOGY_ENTRY_ELEMENTS,
 };
-pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
+pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor, AvailabilityPublisher};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
     ConfigError, LoggingConfig, MetricsConfig, MetricsTlsConfig, NodeField, NodeId, PublicKey,
