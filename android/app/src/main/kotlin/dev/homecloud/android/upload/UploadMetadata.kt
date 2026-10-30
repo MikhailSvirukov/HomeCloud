@@ -82,14 +82,13 @@ internal object UploadMetadataCodec {
             "$SOURCE_NAME_FIELD exceeds the configured limit"
         }
         require(metadata.sha256.size == SHA256_BYTES) { "$SHA256_FIELD must contain $SHA256_BYTES bytes" }
-        require(metadata.timestampMillis >= 0) { "$TIMESTAMP_FIELD must not be negative" }
         require(metadata.originalSizeBytes >= 0L) { "$ORIGINAL_SIZE_FIELD must not be negative" }
         require(metadata.originalSizeBytes <= limits.maxOriginalSizeBytes) { "$ORIGINAL_SIZE_FIELD exceeds the configured limit" }
         require(metadata.compressedSizeBytes >= 0L) { "$COMPRESSED_SIZE_FIELD must not be negative" }
         require(metadata.compressedSizeBytes <= limits.maxOriginalSizeBytes) { "$COMPRESSED_SIZE_FIELD exceeds the configured limit" }
         return listOf(
             CborValue.Text(metadata.originalName),
-            CborValue.UInt(metadata.timestampMillis),
+            metadata.timestampMillis.toCborInteger(),
             CborValue.UInt(metadata.originalSizeBytes),
             CborValue.UInt(metadata.compressedSizeBytes),
             CborValue.Bytes(metadata.sha256),
@@ -120,10 +119,11 @@ internal object UploadMetadataCodec {
                 compressedSizeBytes = arguments[3].unsignedSize(COMPRESSED_SIZE_FIELD),
                 sha256 = arguments[4].sha256Digest(SHA256_FIELD),
             )
-        if (metadata.originalSizeBytes > limits.maxOriginalSizeBytes ||
-            metadata.compressedSizeBytes > limits.maxOriginalSizeBytes
-        ) {
-            throw ProtocolEncodingException("$ORIGINAL_SIZE_FIELD or $COMPRESSED_SIZE_FIELD exceeds the configured limit")
+        if (metadata.originalSizeBytes > limits.maxOriginalSizeBytes) {
+            throw ProtocolEncodingException("$ORIGINAL_SIZE_FIELD exceeds the configured limit")
+        }
+        if (metadata.compressedSizeBytes > limits.maxOriginalSizeBytes) {
+            throw ProtocolEncodingException("$COMPRESSED_SIZE_FIELD exceeds the configured limit")
         }
         if (metadata.originalName.toByteArray(Charsets.UTF_8).size > limits.maxNameBytes) {
             throw ProtocolEncodingException("$SOURCE_NAME_FIELD exceeds the configured limit")
@@ -149,9 +149,6 @@ private fun CborValue.timestamp(field: String): Long {
             is CborValue.NInt -> value
             else -> throw ProtocolEncodingException("$field must be an integer")
         }
-    if (value < 0) {
-        throw ProtocolEncodingException("$field must not be negative")
-    }
     return value
 }
 
@@ -179,8 +176,6 @@ private const val ARGUMENT_COUNT = 5
 private const val SHA256_BYTES = 32
 private const val HASH_MULTIPLIER = 31
 
-private val VALID_SIZE_RANGE = 0L..Long.MAX_VALUE
-
 private const val UPLOAD_METADATA_FIELD = "upload metadata"
 private const val DEFAULT_MAX_NAME_BYTES = 4_096
 private const val MAX_NAME_BYTES_RANGE = 65_535
@@ -189,3 +184,5 @@ private const val TIMESTAMP_FIELD = "timestamp_ms"
 private const val ORIGINAL_SIZE_FIELD = "original_size"
 private const val COMPRESSED_SIZE_FIELD = "compressed_size"
 private const val SHA256_FIELD = "sha256"
+
+private fun Long.toCborInteger(): CborValue = if (this >= 0L) CborValue.UInt(this) else CborValue.NInt(this)

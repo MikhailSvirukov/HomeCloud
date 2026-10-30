@@ -63,11 +63,6 @@ class UploadMetadataTest {
     }
 
     @Test
-    fun encode_rejects_a_negative_timestamp() {
-        assertEncodeRejected(metadata(timestampMillis = -1L), TIMESTAMP_FIELD)
-    }
-
-    @Test
     fun encode_rejects_a_negative_original_size() {
         assertEncodeRejected(
             metadata(originalSizeBytes = -1L, compressedSizeBytes = 0L),
@@ -195,6 +190,38 @@ class UploadMetadataTest {
         }
         assertThrows(ProtocolEncodingException::class.java) {
             UploadMetadataCodec.decode(validArguments(), limits)
+        }
+    }
+
+    @Test
+    fun `a negative timestamp round-trips`() {
+        val metadata = metadata(timestampMillis = -1_000L)
+
+        val decoded = UploadMetadataCodec.decode(UploadMetadataCodec.encode(metadata))
+
+        assertEquals(metadata.timestampMillis, decoded.timestampMillis)
+    }
+
+    @Test
+    fun `decode rejects a name above the configured byte limit`() {
+        val encoded = UploadMetadataCodec.encode(metadata(originalName = "12345678"))
+        val limits = UploadMetadataLimits(maxOriginalSizeBytes = ORIGINAL_SIZE_BYTES, maxNameBytes = 4)
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            UploadMetadataCodec.decode(encoded, limits)
+        }
+    }
+
+    @Test
+    fun `decode rejects a compressed size above the configured file limit`() {
+        val encoded =
+            UploadMetadataCodec.encode(
+                metadata(originalSizeBytes = 100L, compressedSizeBytes = 200L),
+            )
+        val limits = UploadMetadataLimits(maxOriginalSizeBytes = 150L)
+
+        assertThrows(ProtocolEncodingException::class.java) {
+            UploadMetadataCodec.decode(encoded, limits)
         }
     }
 
