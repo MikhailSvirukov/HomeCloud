@@ -197,8 +197,8 @@ impl ServerTransport {
     ) -> TransportResult<Vec<u8>> {
         let mut stream = tokio::time::timeout(self.connect_timeout, TcpStream::connect(address))
             .await
-            .map_err(|_| RaftTransportError::Unreachable { target })?
-            .map_err(|_| RaftTransportError::Unreachable { target })?;
+            .map_err(|_| send_error(target))?
+            .map_err(|_| send_error(target))?;
 
         stream
             .write_all(frame)

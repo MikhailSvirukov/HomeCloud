@@ -316,6 +316,25 @@ async fn unknown_target_is_unreachable() {
 }
 
 #[tokio::test]
+async fn connect_failure_is_send() {
+    let listener = TcpListener::bind(TEST_BIND_ADDR)
+        .await
+        .expect("binding an ephemeral loopback port cannot fail");
+    let address = listener
+        .local_addr()
+        .expect("a bound listener reports its address");
+    drop(listener);
+
+    let transport = transport_with_peer(address);
+    assert!(matches!(
+        transport
+            .send(SERVER_NODE_ID, request_envelope())
+            .await,
+        Err(RaftTransportError::Send { target }) if target == SERVER_NODE_ID
+    ));
+}
+
+#[tokio::test]
 async fn rejects_a_reply_signed_by_the_wrong_server_key() {
     let listener = TcpListener::bind(TEST_BIND_ADDR)
         .await
