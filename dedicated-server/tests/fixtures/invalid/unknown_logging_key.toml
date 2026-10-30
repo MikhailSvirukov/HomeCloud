@@ -1,6 +1,16 @@
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
 max_frame_bytes = 1048576
+max_header_bytes = 1048576
+max_verifier_bytes = 512
+min_login_bytes = 1
+max_login_bytes = 64
+min_password_bytes = 8
+max_password_bytes = 1024
+max_source_name_bytes = 4096
+max_file_size_bytes = 10485760
+connect_timeout_ms = 5000
+inter_server_timeout_ms = 10000
 
 [identity]
 label = "dedicated-1"
@@ -42,3 +52,9 @@ signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 [metrics]
 bind = "127.0.0.1:9101"
+
+[registration]
+total_deadline_ms = 30000
+attempt_deadline_ms = 10000
+attempts = 5
+retry_interval_ms = 1000

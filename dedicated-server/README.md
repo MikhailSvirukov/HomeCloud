@@ -227,8 +227,34 @@ for the whole process and flushes buffered records when dropped.
 ## Configuration schema
 
 - Top level: `listen` (socket address string), `max_label_bytes`,
-  `max_frame_bytes`, `[identity]`, `[heartbeat]`, `[password]`, `[logging]`,
-  `[metrics]`, `[[cluster.nodes]]`.
+  `max_frame_bytes`, `max_header_bytes`, `max_verifier_bytes`,
+  `min_login_bytes`, `max_login_bytes`, `min_password_bytes`,
+  `max_password_bytes`, `max_source_name_bytes`, `max_file_size_bytes`,
+  `connect_timeout_ms`, `inter_server_timeout_ms`, `[registration]`,
+  `[identity]`, `[heartbeat]`, `[password]`, `[logging]`, `[metrics]`,
+  `[[cluster.nodes]]`.
+- `max_header_bytes` bounds one encoded logical header (`CFG-CL-046`, range
+  `1024..=16777216`); `max_verifier_bytes` bounds a PHC verifier
+  (`CFG-CL-047`, range `128..=4096`); the login and password limits are ASCII
+  and UTF-8 byte counts (`CFG-CL-029`, login `1..=255`, password `1..=4096`);
+  `max_source_name_bytes` bounds the original media name (`CFG-CL-032`,
+  `1..=65535`); `max_file_size_bytes` bounds the original and compressed media
+  size (`CFG-CL-020`, `1..=i64::MAX`); `connect_timeout_ms` and
+  `inter_server_timeout_ms` bound a connection attempt and one control
+  inter-server request (`CFG-CL-027`, `CFG-CL-054`, `100..=300000`).
+- `registration`: `total_deadline_ms` (`1000..=300000`), `attempt_deadline_ms`
+  (`100..=300000`, not above the total), `attempts` (`1..=1000`, the first
+  attempt included) and `retry_interval_ms` (`1..=60000`) bound the storage
+  commit stage (`CFG-CL-042`-`CFG-CL-045`).
+- Every numeric setting is validated against the approved range
+  (`CFG-CL-049`), a missing required setting fails before any listener opens
+  (`CFG-CL-050`) and the cross-field rules of the profile are enforced
+  (`CFG-CL-051`): the heartbeat response timeout is below the interval, each
+  credential minimum is not above its maximum, the registration attempt
+  deadline is not above the total, the rotation age is within the retention
+  period, the metrics port differs from the application port on the same
+  address, and the logical header plus its worst-case outer envelope fits the
+  configured frame body.
 - `max_label_bytes`: the maximum length of any node or identity label in UTF-8
   bytes (`NonZeroUsize`). It has no default.
 - `max_frame_bytes`: the largest frame payload the server accepts from a peer,
@@ -276,6 +302,22 @@ Example:
 listen = "10.0.0.1:7000"
 max_label_bytes = 64
 max_frame_bytes = 1048576
+max_header_bytes = 1048576
+max_verifier_bytes = 512
+min_login_bytes = 1
+max_login_bytes = 64
+min_password_bytes = 8
+max_password_bytes = 1024
+max_source_name_bytes = 4096
+max_file_size_bytes = 10485760
+connect_timeout_ms = 5000
+inter_server_timeout_ms = 10000
+
+[registration]
+total_deadline_ms = 30000
+attempt_deadline_ms = 10000
+attempts = 5
+retry_interval_ms = 1000
 
 [metrics]
 bind = "127.0.0.1:9101"
