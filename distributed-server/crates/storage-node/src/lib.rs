@@ -42,7 +42,9 @@
 //! over [`RaftTransport`], and keeps a durable bootstrap marker. The direct
 //! encrypted TCP transport ([`ServerTransport`], [`PeerDirectory`], [`Peer`])
 //! resolves a target node in a trusted peer table and carries each inter-server
-//! RPC as a signed, HPKE-sealed frame. The
+//! RPC as a signed, HPKE-sealed frame; its incoming counterpart
+//! ([`serve_peer_connection`], [`ServerSessionError`]) verifies a peer request,
+//! dispatches its RPC bytes, and returns a signed, sealed correlated reply. The
 //! inter-server Raft RPC envelope ([`encode_raft_rpc`], [`decode_raft_rpc`])
 //! and its message-type registry ([`MessageType`], [`MessageError`]) are also
 //! part of the public wire API, together with the catalog entry, page, and
@@ -139,6 +141,7 @@ mod raft;
 mod response;
 mod sealing;
 mod server_exchange;
+mod server_session;
 mod server_transport;
 mod signed_frame;
 mod signing;
@@ -209,10 +212,12 @@ pub use sealing::{
 pub use server_exchange::{
     decode_server_message, encode_server_message, ServerExchangeError, ServerMessage,
 };
+pub use server_session::{serve_peer_connection, ServerSessionError};
 pub use server_transport::{Peer, PeerDirectory, PeerDirectoryError, PeerError, ServerTransport};
 pub use signed_frame::{
     decode_bootstrap_payload, decode_signed_frame, encode_bootstrap_payload, encode_signed_frame,
-    BootstrapPayload, SignedApplicationFrame, SignedFrameError, BOOTSTRAP_KEY_LEN,
+    peek_external_header, BootstrapPayload, SignedApplicationFrame, SignedFrameError,
+    BOOTSTRAP_KEY_LEN,
 };
 pub use signing::{
     MessageSigningKey, MessageVerifyingKey, SigningError, SIGNATURE_LEN, SIGNING_KEY_LEN,
