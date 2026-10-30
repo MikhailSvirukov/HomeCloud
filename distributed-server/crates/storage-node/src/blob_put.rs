@@ -319,7 +319,7 @@ pub fn decode_blob_put_result(bytes: &[u8]) -> Result<BlobPutResult> {
     }
 }
 
-fn validate_metadata(
+pub(crate) fn validate_metadata(
     metadata: &BlobMetadata,
     max_source_name_len: usize,
     max_file_bytes: u64,
@@ -335,7 +335,7 @@ fn validate_metadata(
     Ok(())
 }
 
-fn decode_metadata(
+pub(crate) fn decode_metadata(
     value: Value,
     max_source_name_len: usize,
     max_file_bytes: u64,
@@ -376,7 +376,7 @@ fn decode_metadata(
     })
 }
 
-fn encode_metadata_value(metadata: &BlobMetadata) -> Value {
+pub(crate) fn encode_metadata_value(metadata: &BlobMetadata) -> Value {
     Value::Array(vec![
         Value::Text(metadata.source_name.clone()),
         Value::Integer(metadata.timestamp_ms.into()),
@@ -396,7 +396,7 @@ fn encode_envelope(message_type: MessageType, arguments: Value) -> Result<Vec<u8
     Ok(bytes)
 }
 
-fn decode_value(bytes: &[u8]) -> Result<Value> {
+pub(crate) fn decode_value(bytes: &[u8]) -> Result<Value> {
     let mut cursor = Cursor::new(bytes);
     let value: Value = ciborium::de::from_reader(&mut cursor).map_err(|_| BlobPutError::Decode)?;
     let consumed = usize::try_from(cursor.position()).map_err(|_| BlobPutError::Decode)?;
@@ -409,7 +409,7 @@ fn decode_value(bytes: &[u8]) -> Result<Value> {
     Ok(value)
 }
 
-fn canonical_bytes(value: &Value) -> Result<Vec<u8>> {
+pub(crate) fn canonical_bytes(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     ciborium::ser::into_writer(value, &mut bytes).map_err(|_| BlobPutError::Encode)?;
     Ok(bytes)
@@ -467,7 +467,7 @@ fn validate_transfer_size(original_size_bytes: u64, transfer_compressed_size: u6
     }
 }
 
-fn transfer_size_bound(original_size_bytes: u64) -> Option<u64> {
+pub(crate) fn transfer_size_bound(original_size_bytes: u64) -> Option<u64> {
     original_size_bytes
         .checked_add(original_size_bytes / 256)?
         .checked_add(64)
