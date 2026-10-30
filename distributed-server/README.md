@@ -77,9 +77,12 @@ clients; it does not relay Raft or blob traffic.
   args]` envelope with `message_type = 3` for Raft RPCs), `src/signing.rs`
   (Ed25519 message signing/verification with a redacted signing key),
   `src/sealing.rs` (HPKE Base-mode message sealing with X25519, HKDF-SHA-256,
-  and AES-256-GCM), and `src/signed_frame.rs` (signed application frame body
+  and AES-256-GCM), `src/signed_frame.rs` (signed application frame body
   with the length prefix, external header, Ed25519 signature, opaque payload,
-  and first-contact bootstrap payload codecs).
+  and first-contact bootstrap payload codecs), and `src/server_exchange.rs`
+  (encrypted signed inter-server message composition that seals the plaintext
+  for the recipient before signing the frame and verifies the signature before
+  opening it).
 - `crates/storage-node/tests/` — public API integration tests
   (`public_api.rs`, `codec_public_api.rs`, `frame_buffer_public_api.rs`,
   `frame_validation_public_api.rs`,
@@ -99,7 +102,8 @@ clients; it does not relay Raft or blob traffic.
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
-  `signed_frame_public_api.rs`, `message_public_api.rs`,
+  `signed_frame_public_api.rs`, `server_exchange_public_api.rs`,
+  `message_public_api.rs`,
   `e2e_pump_over_tcp.rs`, `e2e_upload_over_tcp.rs`).
 
 ## Status
@@ -339,6 +343,25 @@ The only unencrypted payload is the first-contact bootstrap payload: the CBOR ar
 Ed25519 bytes. The frame is signed with the Ed25519 key whose public key it carries, so a
 valid signature proves key possession rather than server identity. The codec also rejects
 a bootstrap payload with a different arity or key length and any trailing bytes.
+
+## Inter-server message exchange
+
+`encode_server_message` composes an inter-server message as an ordinary signed
+application frame whose payload is sealed for the recipient. The plaintext is the
+`[message_type, args]` logical header of the message type, such as `[3, [rpc_bytes]]`
+for a Raft RPC. The plaintext is sealed with HPKE Base mode
+(DHKEM(X25519, HKDF-SHA-256), HKDF-SHA-256, and AES-256-GCM) using empty `info` and
+`aad`, so the payload is the 32-byte encapsulated key followed by the AES-256-GCM
+ciphertext and tag. A fresh HPKE encapsulation is created for each call.
+
+`decode_server_message` first verifies the Ed25519 frame signature and only then
+opens the sealed payload. The caller supplies the sender verifying key that it
+resolved from the trusted peer registry for the message's sender; the codec does
+not derive or trust a key from the frame itself. A key that does not match the
+sender produces a frame `InvalidSignature` error before any payload is decrypted,
+and a wrong recipient private key produces `SealingError::Open`. The returned
+message carries the verified external header and the decrypted plaintext, and its
+Debug form reports the plaintext length instead of the bytes.
 
 ## Metrics
 
