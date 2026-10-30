@@ -1,190 +1,124 @@
 package dev.homecloud.android.catalog
 
-import org.junit.Assert.assertArrayEquals
+import dev.homecloud.android.media.MediaVersionIdentity
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Asserts the catalog comparison of `FR-CAT-003` and `FR-CAT-004`: only local versions whose
- * content, name and time all match a confirmed catalog entry are excluded.
+ * Asserts the catalog comparison of `FR-CAT-003 / 1` and `FR-CAT-004 / 1`: a local version is
+ * selected unless the confirmed catalog already contains the same content hash, source name and
+ * tracked time.
  */
 class CatalogComparisonTest {
     @Test
-    fun `a fully matching version is excluded`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion()),
-                catalog = listOf(catalogEntry()),
-            )
+    fun `a fully matching version is not selected`() {
+        val version = version()
 
-        assertTrue(result.isEmpty())
+        assertTrue(CatalogComparison.missingVersions(listOf(version), listOf(entry())).isEmpty())
     }
 
     @Test
-    fun `a changed content hash includes the version`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion(contentSha256 = OTHER_CONTENT_HASH)),
-                catalog = listOf(catalogEntry()),
-            )
+    fun `a changed content hash selects the version`() {
+        val other = version(contentSha256 = "ff".repeat(32))
 
-        assertArrayEquals(OTHER_CONTENT_HASH, result.single().contentSha256)
+        assertEquals(listOf(other), CatalogComparison.missingVersions(listOf(other), listOf(entry())))
     }
 
     @Test
-    fun `a changed name includes the version`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion(originalName = OTHER_ORIGINAL_NAME)),
-                catalog = listOf(catalogEntry()),
-            )
+    fun `a changed name selects the version`() {
+        val other = version(originalName = "other.jpg")
 
-        assertEquals(OTHER_ORIGINAL_NAME, result.single().originalName)
+        assertEquals(listOf(other), CatalogComparison.missingVersions(listOf(other), listOf(entry())))
     }
 
     @Test
-    fun `a changed tracked time includes the version`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion(trackedTimeMillis = OTHER_TRACKED_TIME_MILLIS)),
-                catalog = listOf(catalogEntry()),
-            )
+    fun `a changed tracked time selects the version`() {
+        val other = version(trackedTimeMillis = TRACKED_TIME_MILLIS + 1)
 
-        assertEquals(OTHER_TRACKED_TIME_MILLIS, result.single().trackedTimeMillis)
+        assertEquals(listOf(other), CatalogComparison.missingVersions(listOf(other), listOf(entry())))
     }
 
     @Test
-    fun `an empty catalog returns every local version`() {
-        val local = listOf(localVersion(), localVersion(originalName = OTHER_ORIGINAL_NAME))
+    fun `an empty catalog selects every local version`() {
+        val versions = listOf(version(), version(contentSha256 = "ab".repeat(32)))
 
-        val result = CatalogComparison.missingVersions(local = local, catalog = emptyList())
-
-        assertEquals(local, result)
+        assertEquals(versions, CatalogComparison.missingVersions(versions, emptyList()))
     }
 
     @Test
-    fun `an empty local list returns no versions`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = emptyList(),
-                catalog = listOf(catalogEntry()),
-            )
-
-        assertTrue(result.isEmpty())
+    fun `an empty local list selects nothing`() {
+        assertTrue(CatalogComparison.missingVersions(emptyList(), listOf(entry())).isEmpty())
     }
 
     @Test
-    fun `local input order is preserved`() {
-        val first = localVersion(originalName = FIRST_NAME)
-        val second = localVersion(originalName = SECOND_NAME)
-        val third = localVersion(originalName = THIRD_NAME)
+    fun `the input order is preserved`() {
+        val first = version(contentSha256 = "01".repeat(32))
+        val second = version(contentSha256 = "02".repeat(32))
+        val third = version(contentSha256 = "03".repeat(32))
 
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(first, second, third),
-                catalog = listOf(catalogEntry(sourceName = SECOND_NAME)),
-            )
-
-        assertEquals(listOf(FIRST_NAME, THIRD_NAME), result.map { version -> version.originalName })
+        assertEquals(
+            listOf(first, second, third),
+            CatalogComparison.missingVersions(listOf(third, first, second), emptyList()),
+        )
     }
 
     @Test
-    fun `duplicate local identities produce one version`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local =
-                    listOf(
-                        localVersion(),
-                        localVersion(contentSha256 = CONTENT_HASH.copyOf()),
-                    ),
-                catalog = emptyList(),
-            )
+    fun `a repeated identity appears once`() {
+        val duplicate = version()
 
-        assertEquals(1, result.size)
-        assertArrayEquals(CONTENT_HASH, result.single().contentSha256)
+        assertEquals(listOf(duplicate), CatalogComparison.missingVersions(listOf(duplicate, duplicate), emptyList()))
     }
 
     @Test
-    fun `catalog sizes do not affect matching`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion()),
-                catalog =
-                    listOf(
-                        catalogEntry(
-                            originalSizeBytes = OTHER_ORIGINAL_SIZE_BYTES,
-                            compressedSizeBytes = OTHER_COMPRESSED_SIZE_BYTES,
-                        ),
-                    ),
-            )
+    fun `differing catalog sizes still match`() {
+        val entry = entry(originalSizeBytes = ORIGINAL_SIZE_BYTES + 1, compressedSizeBytes = COMPRESSED_SIZE_BYTES + 1)
 
-        assertTrue(result.isEmpty())
+        assertTrue(CatalogComparison.missingVersions(listOf(version()), listOf(entry)).isEmpty())
     }
 
     @Test
-    fun `a digest of a different length does not match`() {
-        val result =
-            CatalogComparison.missingVersions(
-                local = listOf(localVersion()),
-                catalog = listOf(catalogEntry(sha256 = CONTENT_HASH.copyOf(SHA256_BYTES - 1))),
-            )
+    fun `a digest of a different length never matches`() {
+        val entry = entry(sha256 = ByteArray(SHA256_BYTES - 1) { index -> (index + 1).toByte() })
 
-        assertEquals(1, result.size)
+        assertEquals(listOf(version()), CatalogComparison.missingVersions(listOf(version()), listOf(entry)))
     }
 
-    @Test
-    fun `the text form omits the digest bytes`() {
-        val text = localVersion().toString()
-
-        assertFalse(text.lowercase().contains(CONTENT_HASH_HEX_PREFIX))
-        assertTrue(text.contains(ORIGINAL_NAME))
-    }
-
-    private fun localVersion(
-        contentSha256: ByteArray = CONTENT_HASH,
+    private fun version(
+        contentSha256: String = CONTENT_SHA256_HEX,
         originalName: String = ORIGINAL_NAME,
         trackedTimeMillis: Long = TRACKED_TIME_MILLIS,
-    ) = LocalVersion(
-        contentSha256 = contentSha256,
-        originalName = originalName,
-        trackedTimeMillis = trackedTimeMillis,
-    )
+    ): MediaVersionIdentity =
+        MediaVersionIdentity(
+            contentSha256 = contentSha256,
+            originalName = originalName,
+            trackedTimeMillis = trackedTimeMillis,
+        )
 
-    private fun catalogEntry(
-        sha256: ByteArray = CONTENT_HASH,
-        sourceName: String = ORIGINAL_NAME,
-        timestampMillis: Long = TRACKED_TIME_MILLIS,
+    private fun entry(
+        sha256: ByteArray = hexToBytes(CONTENT_SHA256_HEX),
         originalSizeBytes: Long = ORIGINAL_SIZE_BYTES,
         compressedSizeBytes: Long = COMPRESSED_SIZE_BYTES,
-    ) = CatalogEntry(
-        uploadId = UPLOAD_ID,
-        sourceName = sourceName,
-        timestampMillis = timestampMillis,
-        originalSizeBytes = originalSizeBytes,
-        compressedSizeBytes = compressedSizeBytes,
-        sha256 = sha256,
-    )
+    ): CatalogEntry =
+        CatalogEntry(
+            uploadId = UPLOAD_ID,
+            sourceName = ORIGINAL_NAME,
+            timestampMillis = TRACKED_TIME_MILLIS,
+            originalSizeBytes = originalSizeBytes,
+            compressedSizeBytes = compressedSizeBytes,
+            sha256 = sha256,
+        )
+
+    private fun hexToBytes(hex: String): ByteArray =
+        ByteArray(hex.length / 2) { index -> hex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
 
     private companion object {
-        const val SHA256_BYTES = 32
-        const val UPLOAD_ID_BYTES = 16
-        const val CONTENT_HASH_HEX_PREFIX = "00010203"
-        const val ORIGINAL_NAME = "IMG_0001.jpg"
-        const val OTHER_ORIGINAL_NAME = "IMG_0002.jpg"
-        const val FIRST_NAME = "first.jpg"
-        const val SECOND_NAME = "second.jpg"
-        const val THIRD_NAME = "third.jpg"
+        const val CONTENT_SHA256_HEX = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+        const val ORIGINAL_NAME = "photo.jpg"
         const val TRACKED_TIME_MILLIS = 1_700_000_000_000L
-        const val OTHER_TRACKED_TIME_MILLIS = 1_700_000_000_001L
-        const val ORIGINAL_SIZE_BYTES = 4_096L
-        const val COMPRESSED_SIZE_BYTES = 1_024L
-        const val OTHER_ORIGINAL_SIZE_BYTES = 2_048L
-        const val OTHER_COMPRESSED_SIZE_BYTES = 512L
-
-        val CONTENT_HASH = ByteArray(SHA256_BYTES) { index -> index.toByte() }
-        val OTHER_CONTENT_HASH = ByteArray(SHA256_BYTES) { index -> (index + 1).toByte() }
-        val UPLOAD_ID = ByteArray(UPLOAD_ID_BYTES) { index -> index.toByte() }
+        const val ORIGINAL_SIZE_BYTES = 1_024L
+        const val COMPRESSED_SIZE_BYTES = 512L
+        const val SHA256_BYTES = 32
+        val UPLOAD_ID = ByteArray(16) { index -> (index + 1).toByte() }
     }
 }

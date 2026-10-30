@@ -1,65 +1,49 @@
 package dev.homecloud.android.catalog
 
+import dev.homecloud.android.media.MediaVersionIdentity
+
 /**
- * The identity of one local version: the content SHA-256, the source file name and the tracked
- * time (`FR-CAT-003 / 1`, `FR-CAT-004 / 1`).
+ * Selects the local versions that the confirmed server catalog does not yet contain
+ * (`FR-CAT-003 / 1`, `FR-CAT-004 / 1`).
  *
- * The digest is the 32-byte SHA-256 of the version's original bytes. Equality and hashing use the
- * digest content rather than the array instance, and the text form never contains the digest bytes.
- */
-internal data class LocalVersion(
-    val contentSha256: ByteArray,
-    val originalName: String,
-    val trackedTimeMillis: Long,
-) {
-    override fun toString(): String = "LocalVersion(originalName=$originalName, trackedTimeMillis=$trackedTimeMillis)"
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) {
-            return true
-        }
-        if (other !is LocalVersion) {
-            return false
-        }
-        return contentSha256.contentEquals(other.contentSha256) &&
-            originalName == other.originalName &&
-            trackedTimeMillis == other.trackedTimeMillis
-    }
-
-    override fun hashCode(): Int {
-        var result = contentSha256.contentHashCode()
-        result = 31 * result + originalName.hashCode()
-        result = 31 * result + trackedTimeMillis.hashCode()
-        return result
-    }
-}
-
-/**
- * Selects the local versions that are absent from the confirmed catalog (`FR-CAT-003 / 1`,
- * `FR-CAT-004 / 1`).
+ * A local [MediaVersionIdentity] matches a [CatalogEntry] when the catalog entry's 32-byte SHA-256,
+ * rendered as lowercase hexadecimal, equals the identity's content hash, and its source name and
+ * timestamp equal the identity's original name and tracked time. A difference in any of the three
+ * fields selects the version for upload. Catalog sizes are derived metadata and do not participate.
+ * The input order is preserved and a repeated identity appears once, because the three fields are
+ * exactly the version identity (`FR-AND-015 / 1`).
  */
 internal object CatalogComparison {
     /**
-     * Produces the local versions the confirmed catalog does not already contain, preserving the
-     * order in which they first appear locally.
-     *
-     * A local version matches a catalog entry when their content SHA-256, source name and timestamp
-     * are equal. The catalog's size fields never participate, so entries whose sizes differ still
-     * match. Repeated local identities produce one result because the three compared fields are the
-     * version identity.
+     * The local versions absent from [catalog], in input order, with repeated identities collapsed.
      */
     fun missingVersions(
-        local: List<LocalVersion>,
+        local: List<MediaVersionIdentity>,
         catalog: List<CatalogEntry>,
-    ): List<LocalVersion> {
-        val catalogIdentities =
-            catalog.mapTo(HashSet()) { entry ->
-                LocalVersion(
-                    contentSha256 = entry.sha256,
-                    originalName = entry.sourceName,
-                    trackedTimeMillis = entry.timestampMillis,
-                )
-            }
-        return local.distinct().filterNot(catalogIdentities::contains)
+    ): List<MediaVersionIdentity> {
+        val confirmed = catalog.map { entry -> entry.confirmedIdentityKey() }.toSet()
+        return local
+            .distinct()
+            .filter { version -> version.catalogKey() !in confirmed }
     }
+
+    private fun CatalogEntry.confirmedIdentityKey(): String = "${sha256.toLowercaseHex()}\u0000$sourceName\u0000$timestampMillis"
+
+    private fun MediaVersionIdentity.catalogKey(): String = "$contentSha256\u0000$originalName\u0000$trackedTimeMillis"
 }
+
+private fun ByteArray.toLowercaseHex(): String {
+    val digits = "0123456789abcdef"
+    val builder = StringBuilder(size * HEX_DIGITS_PER_BYTE)
+    for (byte in this) {
+        val value = byte.toInt() and BYTE_MASK
+        builder.append(digits[value ushr BITS_PER_HEX_DIGIT])
+        builder.append(digits[value and HEX_DIGIT_MASK])
+    }
+    return builder.toString()
+}
+
+private const val HEX_DIGITS_PER_BYTE = 2
+private const val BITS_PER_HEX_DIGIT = 4
+private const val HEX_DIGIT_MASK = 0x0F
+private const val BYTE_MASK = 0xFF
