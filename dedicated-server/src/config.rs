@@ -1308,28 +1308,28 @@ mod tests {
     fn rejects_malformed_node_key_hex_as_parse_error() {
         assert!(parse_error(INVALID_NODE_KEY_HEX)
             .to_string()
-            .contains("expected 64 hexadecimal characters"));
+            .contains("expected 64 lowercase hexadecimal characters"));
     }
 
     #[test]
     fn rejects_non_hexadecimal_node_key_as_parse_error() {
         assert!(parse_error(INVALID_NODE_KEY_NON_HEX)
             .to_string()
-            .contains("expected 64 hexadecimal characters"));
+            .contains("expected 64 lowercase hexadecimal characters"));
     }
 
     #[test]
     fn rejects_wrong_length_node_id_as_parse_error() {
         assert!(parse_error(INVALID_NODE_ID_HEX)
             .to_string()
-            .contains("expected 32 hexadecimal characters"));
+            .contains("expected 32 lowercase hexadecimal characters"));
     }
 
     #[test]
     fn rejects_label_longer_than_maximum() {
         assert!(matches!(
             ServerConfig::from_toml_str(LABEL_TOO_LONG),
-            Err(ConfigError::LabelTooLong { max_bytes: 8 })
+            Err(ConfigError::LabelTooLong { max_bytes: 16 })
         ));
     }
 
