@@ -110,9 +110,10 @@ fn exchange(
     identity: &ServerIdentity,
     storage: &ManifestEntry,
     request: &InterServerMessage,
-    request_id: [u8; IDENTIFIER_BYTES],
     attempt_budget: Duration,
 ) -> Result<InterServerMessage> {
+    let started = Instant::now();
+    let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
     let signing_seed = key_seed(identity.signing_private_key(), "signing")?;
     let header = ExternalHeader {
         sender_id: Some(*config.dedicated.sender_id.as_bytes()),
@@ -140,8 +141,9 @@ fn exchange(
                 source,
             }
         })?;
+    let remaining = attempt_budget.saturating_sub(started.elapsed());
     let exchange_timeout =
-        Duration::from_millis(config.inter_server_timeout_ms.get()).min(attempt_budget);
+        Duration::from_millis(config.inter_server_timeout_ms.get()).min(remaining);
     stream.set_read_timeout(Some(exchange_timeout))?;
     stream.set_write_timeout(Some(exchange_timeout))?;
     stream.write_all(&frame)?;
@@ -296,10 +298,14 @@ pub(crate) fn propose_registration(
         expected_verifier: request.expected_verifier.map(str::to_owned),
         new_verifier: request.new_verifier.map(str::to_owned),
     };
-    let exchange_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
-
     let response = with_registration_budget(config, |storage, budget| {
-        exchange(config, identity, storage, &message, exchange_id, budget)
+        let response = exchange(config, identity, storage, &message, budget)?;
+        match &response {
+            InterServerMessage::RegistrationResult { code, .. } if is_temporary_code(*code) => {
+                Err(InterServerClientError::Rejected(*code))
+            }
+            _ => Ok(response),
+        }
     })?;
 
     match response {
@@ -360,12 +366,20 @@ fn with_registration_budget<T>(
 /// Only a transport failure is retried; a protocol rejection, a malformed
 /// frame or an invalid signature is final (`INT-NET-065 / 1`).
 fn is_transient(error: &InterServerClientError) -> bool {
-    matches!(
-        error,
+    match error {
         InterServerClientError::Connect { .. }
-            | InterServerClientError::Io(_)
-            | InterServerClientError::Deadline { .. }
-    )
+        | InterServerClientError::Io(_)
+        | InterServerClientError::Deadline { .. } => true,
+        InterServerClientError::Frame(FrameError::Io(_)) => true,
+        InterServerClientError::Rejected(code) => is_temporary_code(*code),
+        _ => false,
+    }
+}
+
+/// Whether a storage result code asks for a later attempt (`INT-NET-066 / 1`).
+fn is_temporary_code(code: u32) -> bool {
+    code == crate::result_code::ResultCode::QuorumUnavailable.as_u32()
+        || code == crate::result_code::ResultCode::TemporaryUnavailable.as_u32()
 }
 
 /// Length of the encoded external header at the start of `body`.
@@ -382,8 +396,9 @@ fn external_header_length(body: &[u8]) -> Result<usize> {
 
 /// Look up the registry of a storage node.
 ///
-/// The first storage entry of the static manifest is used; failover across
-/// storage nodes is a separate step (`FR-DED-046`).
+/// The attempt count, the per-attempt deadline, the retry pause and the total
+/// deadline come from the configuration, and the attempts rotate through the
+/// storage entries of the static manifest in order (`FR-DED-046`-`FR-DED-053`).
 pub(crate) fn lookup_registry(
     config: &ServerConfig,
     identity: &ServerIdentity,
@@ -401,7 +416,6 @@ pub(crate) fn lookup_registry(
             config.max_login_bytes.get(),
         )?;
     }
-    let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
     let request = InterServerMessage::RegistryLookup {
         login: login.map(str::to_owned),
         registration_request_id,
@@ -409,7 +423,13 @@ pub(crate) fn lookup_registry(
     };
 
     let response = with_registration_budget(config, |storage, budget| {
-        exchange(config, identity, storage, &request, request_id, budget)
+        let message = exchange(config, identity, storage, &request, budget)?;
+        match &message {
+            InterServerMessage::RegistryLookupResult { code, .. } if is_temporary_code(*code) => {
+                Err(InterServerClientError::Rejected(*code))
+            }
+            _ => Ok(message),
+        }
     })?;
 
     match response {
@@ -435,6 +455,8 @@ pub(crate) fn lookup_registry(
 mod tests {
     use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
     use std::thread;
 
     use hpke::kem::X25519HkdfSha256;
@@ -456,6 +478,8 @@ mod tests {
     const DEDICATED_ED25519_SEED: [u8; 32] = [0x41; 32];
     const STORAGE_X25519_SEED: [u8; 32] = [0x51; 32];
     const STORAGE_ED25519_SEED: [u8; 32] = [0x61; 32];
+    const STORAGE2_X25519_SEED: [u8; 32] = [0x53; 32];
+    const STORAGE2_ED25519_SEED: [u8; 32] = [0x63; 32];
     const FOREIGN_ED25519_SEED: [u8; 32] = [0x71; 32];
 
     fn hex(bytes: &[u8]) -> String {
@@ -604,11 +628,11 @@ mod tests {
             )
             .replace(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                &hex(&x25519(&STORAGE_X25519_SEED).1),
+                &hex(&x25519(&STORAGE2_X25519_SEED).1),
             )
             .replace(
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                &hex(&ed25519(&STORAGE_ED25519_SEED)),
+                &hex(&ed25519(&STORAGE2_ED25519_SEED)),
             );
 
         ServerConfig::from_toml_str(&document).expect("the failover configuration must parse")
@@ -660,76 +684,119 @@ mod tests {
         MalformedHeader,
     }
 
-    fn mock_storage(listener: TcpListener, reply: Reply) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("the client must connect");
-            let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
-            let body = read_frame(&mut stream, limit).expect("the request must arrive");
-            let header_length =
-                external_header_length(&body).expect("the request header must be found");
-            let request_header =
-                ExternalHeader::decode(&body[..header_length], 64).expect("the header must parse");
-            assert_eq!(request_header.sender_id, Some(DEDICATED_ID));
-            assert_eq!(request_header.frame_number, 0);
-            assert_eq!(request_header.upload_id, None);
-            assert_eq!(request_header.responder_label, None);
-            assert_eq!(request_header.bootstrap_signing_public_key, None);
-            let mut sealed = Vec::with_capacity(4 + body.len());
-            sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            sealed.extend_from_slice(&body);
-            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
-            let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
-            let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
-                .expect("the request must open");
-            let request =
-                InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
-            match request {
-                InterServerMessage::RegistryLookup { login, .. } => {
-                    assert_eq!(login.as_deref(), Some("alice"));
-                }
-                _ => panic!("the request must be a registry lookup"),
-            }
+    /// Keys and identity a mock storage node presents.
+    #[derive(Clone, Copy)]
+    struct MockNode {
+        x25519_secret: [u8; 32],
+        ed25519_seed: [u8; 32],
+        sender_id: [u8; 16],
+        label: &'static str,
+    }
 
-            let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
-            let (response, signing_seed) = match reply {
-                Reply::Message(response) => (response, STORAGE_ED25519_SEED),
-                Reply::ForeignSignature(response) => (response, FOREIGN_ED25519_SEED),
-                Reply::MalformedHeader => {
-                    let frame = seal_frame(
-                        &[0xFF; 4],
-                        &[0x80],
-                        &dedicated_x25519,
-                        &STORAGE_ED25519_SEED,
-                    )
-                    .expect("the malformed response must seal");
-                    stream
-                        .write_all(&frame)
-                        .expect("the malformed response must be written");
-                    return;
+    fn node_two() -> MockNode {
+        MockNode {
+            x25519_secret: STORAGE2_X25519_SEED,
+            ed25519_seed: STORAGE2_ED25519_SEED,
+            sender_id: {
+                let mut id = [0x00; 16];
+                id[15] = 0x02;
+                id
+            },
+            label: "storage-2",
+        }
+    }
+
+    fn node_one() -> MockNode {
+        MockNode {
+            x25519_secret: STORAGE_X25519_SEED,
+            ed25519_seed: STORAGE_ED25519_SEED,
+            sender_id: STORAGE_ID,
+            label: "storage-1",
+        }
+    }
+
+    fn mock_storage(listener: TcpListener, reply: Reply, node: MockNode) -> thread::JoinHandle<()> {
+        mock_storage_sequence(listener, vec![reply], node).0
+    }
+
+    fn mock_storage_sequence(
+        listener: TcpListener,
+        replies: Vec<Reply>,
+        node: MockNode,
+    ) -> (thread::JoinHandle<()>, Arc<AtomicU32>) {
+        let accepted = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&accepted);
+        let handle = thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().expect("the client must connect");
+                counter.fetch_add(1, Ordering::Relaxed);
+                let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+                let body = read_frame(&mut stream, limit).expect("the request must arrive");
+                let header_length =
+                    external_header_length(&body).expect("the request header must be found");
+                let request_header = ExternalHeader::decode(&body[..header_length], 64)
+                    .expect("the header must parse");
+                assert_eq!(request_header.sender_id, Some(DEDICATED_ID));
+                assert_eq!(request_header.frame_number, 0);
+                assert_eq!(request_header.upload_id, None);
+                assert_eq!(request_header.responder_label, None);
+                assert_eq!(request_header.bootstrap_signing_public_key, None);
+                let mut sealed = Vec::with_capacity(4 + body.len());
+                sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                sealed.extend_from_slice(&body);
+                let (storage_x25519, _) = x25519(&node.x25519_secret);
+                let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+                let plaintext =
+                    open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                        .expect("the request must open");
+                let request =
+                    InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+                match request {
+                    InterServerMessage::RegistryLookup { login, .. } => {
+                        assert_eq!(login.as_deref(), Some("alice"));
+                    }
+                    _ => panic!("the request must be a registry lookup"),
                 }
-            };
-            let response_message = InterServerMessage::RegistryLookupResult {
-                code: response.code,
-                snapshot: response.snapshot,
-            };
-            let payload = response_message
-                .encode(512)
-                .expect("the response must encode");
-            let header = ExternalHeader {
-                sender_id: response.sender_id,
-                request_id: response.request_id.unwrap_or(request_header.request_id),
-                frame_number: response.frame_number,
-                upload_id: response.upload_id,
-                responder_label: response.responder_label,
-                bootstrap_signing_public_key: None,
-            };
-            let header_bytes = header.encode(64).expect("the response header must encode");
-            let frame = seal_frame(&header_bytes, &payload, &dedicated_x25519, &signing_seed)
-                .expect("the response must seal");
-            stream
-                .write_all(&frame)
-                .expect("the response must be written");
-        })
+
+                let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+                let (response, signing_seed) = match reply {
+                    Reply::Message(response) => (response, node.ed25519_seed),
+                    Reply::ForeignSignature(response) => (response, FOREIGN_ED25519_SEED),
+                    Reply::MalformedHeader => {
+                        let frame =
+                            seal_frame(&[0xFF; 4], &[0x80], &dedicated_x25519, &node.ed25519_seed)
+                                .expect("the malformed response must seal");
+                        stream
+                            .write_all(&frame)
+                            .expect("the malformed response must be written");
+                        continue;
+                    }
+                };
+                let response_message = InterServerMessage::RegistryLookupResult {
+                    code: response.code,
+                    snapshot: response.snapshot,
+                };
+                let payload = response_message
+                    .encode(512)
+                    .expect("the response must encode");
+                let header = ExternalHeader {
+                    sender_id: response.sender_id,
+                    request_id: response.request_id.unwrap_or(request_header.request_id),
+                    frame_number: response.frame_number,
+                    upload_id: response.upload_id,
+                    responder_label: response.responder_label,
+                    bootstrap_signing_public_key: None,
+                };
+                let header_bytes = header.encode(64).expect("the response header must encode");
+                let frame = seal_frame(&header_bytes, &payload, &dedicated_x25519, &signing_seed)
+                    .expect("the response must seal");
+                stream
+                    .write_all(&frame)
+                    .expect("the response must be written");
+            }
+        });
+
+        (handle, accepted)
     }
 
     fn secret(dir: &TempDir) -> RegistrationSecret {
@@ -901,7 +968,7 @@ mod tests {
             .expect("the listener must have an address")
             .port();
         let config = config_with(port, header_limit);
-        let server = mock_storage(listener, reply);
+        let server = mock_storage(listener, reply, node_one());
         let result = lookup_registry(&config, &identity, Some("alice"), None, None);
         server.join().expect("the mock server must finish");
 
@@ -1013,6 +1080,87 @@ mod tests {
     }
 
     #[test]
+    fn a_permanent_rejection_is_not_retried() {
+        let dir = TempDir::new("permanent");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(port, 3, 1, 5_000);
+        let response = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            code: 0x0001_0002,
+            snapshot: None,
+            ..MockResponse::empty()
+        };
+        let (server, accepted) =
+            mock_storage_sequence(listener, vec![Reply::Message(response)], node_two());
+
+        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect_err("a permanent rejection must fail");
+
+        server.join().expect("the mock server must finish");
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0001_0002)
+        ));
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            1,
+            "a permanent rejection must not be retried"
+        );
+    }
+
+    #[test]
+    fn a_temporary_rejection_is_retried() {
+        let dir = TempDir::new("temporary");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(port, 3, 1, 5_000);
+        let temporary = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            code: 0x0007_0001,
+            snapshot: None,
+            ..MockResponse::empty()
+        };
+        let snapshot = RegistrySnapshot {
+            read_index: 9,
+            account: None,
+            registration: None,
+            installation: None,
+        };
+        let recovery = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            ..MockResponse::snapshot(snapshot.clone())
+        };
+        let (server, accepted) = mock_storage_sequence(
+            listener,
+            vec![Reply::Message(temporary), Reply::Message(recovery)],
+            node_two(),
+        );
+
+        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect("the temporary rejection must be retried");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(found, snapshot);
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            2,
+            "the temporary rejection must be retried once"
+        );
+    }
+
+    #[test]
     fn a_lookup_fails_over_to_the_next_storage_node() {
         let dir = TempDir::new("failover");
         let identity = identity(&dir);
@@ -1027,17 +1175,12 @@ mod tests {
             registration: None,
             installation: None,
         };
-        let second_node = {
-            let mut id = [0x00; 16];
-            id[15] = 0x02;
-            id
-        };
         let response = MockResponse {
-            sender_id: Some(second_node),
-            responder_label: Some("storage-2".to_owned()),
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
             ..MockResponse::snapshot(snapshot.clone())
         };
-        let server = mock_storage(listener, Reply::Message(response));
+        let server = mock_storage(listener, Reply::Message(response), node_two());
         let config = config_with_failover(port, 2, 1, 5_000);
 
         let found = lookup_registry(&config, &identity, Some("alice"), None, None)
