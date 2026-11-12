@@ -50,6 +50,9 @@ pub enum RegistrationFlowError {
     /// The registry lookup or the propose exchange failed.
     #[error(transparent)]
     Exchange(#[from] InterServerClientError),
+    /// The login is not a valid login for this server.
+    #[error(transparent)]
+    Login(#[from] crate::registration::LoginError),
     /// The content tag could not be computed.
     #[error(transparent)]
     Tag(#[from] RegistrationSecretError),
@@ -74,6 +77,7 @@ pub(crate) fn register(
     secret: &RegistrationSecret,
     input: &RegistrationInput<'_>,
 ) -> Result<CommittedRegistration, RegistrationFlowError> {
+    crate::registration::Login::parse(input.login, &config.credential_limits())?;
     let tag = content_tag(
         secret,
         input.login,
@@ -284,8 +288,16 @@ mod tests {
         Commit {
             installation_id: [u8; 16],
             commit_index: u64,
+            form: VerifierForm,
         },
         Rejected(u32),
+    }
+
+    /// Verifier form the propose command must carry (`INT-NET-103 / 1`).
+    #[derive(Clone, Copy)]
+    enum VerifierForm {
+        NewAccount,
+        ExistingAccount,
     }
 
     fn read_request(stream: &mut TcpStream) -> (ExternalHeader, InterServerMessage) {
@@ -341,13 +353,26 @@ mod tests {
                 let (mut stream, _) = listener.accept().expect("the client must connect");
                 let (header, request) = read_request(&mut stream);
                 let response = match reply_kind {
-                    Reply::Snapshot(snapshot) => InterServerMessage::RegistryLookupResult {
-                        code: 0,
-                        snapshot: Some(snapshot),
+                    Reply::Snapshot(snapshot) => match request {
+                        InterServerMessage::RegistryLookup {
+                            login,
+                            registration_request_id,
+                            installation_id,
+                        } => {
+                            assert_eq!(login.as_deref(), Some(LOGIN));
+                            assert_eq!(registration_request_id, Some(REQUEST));
+                            assert_eq!(installation_id, Some(INSTALLATION));
+                            InterServerMessage::RegistryLookupResult {
+                                code: 0,
+                                snapshot: Some(snapshot),
+                            }
+                        }
+                        _ => panic!("the request must be a lookup"),
                     },
                     Reply::Commit {
                         installation_id,
                         commit_index,
+                        form,
                     } => match request {
                         InterServerMessage::RegistrationPropose {
                             installation_id: sent,
@@ -356,7 +381,16 @@ mod tests {
                             ..
                         } => {
                             assert_eq!(sent, INSTALLATION);
-                            assert_eq!(new_verifier.is_some(), expected_verifier.is_none());
+                            match form {
+                                VerifierForm::NewAccount => {
+                                    assert!(new_verifier.is_some());
+                                    assert!(expected_verifier.is_none());
+                                }
+                                VerifierForm::ExistingAccount => {
+                                    assert!(expected_verifier.is_some());
+                                    assert!(new_verifier.is_none());
+                                }
+                            }
                             InterServerMessage::RegistrationResult {
                                 code: 0,
                                 installation_id: Some(installation_id),
@@ -432,6 +466,7 @@ mod tests {
                 Reply::Commit {
                     installation_id: INSTALLATION,
                     commit_index: 8,
+                    form: VerifierForm::NewAccount,
                 },
             ],
             LOGIN,
@@ -504,7 +539,7 @@ mod tests {
             registration: None,
             installation: Some(InstallationRecord {
                 login: LOGIN.to_owned(),
-                installation_id: [0x77; 16],
+                installation_id: INSTALLATION,
                 x25519_key: X25519_KEY,
                 ed25519_key: ED25519_KEY,
             }),
@@ -516,6 +551,7 @@ mod tests {
                 Reply::Commit {
                     installation_id: INSTALLATION,
                     commit_index: 9,
+                    form: VerifierForm::ExistingAccount,
                 },
             ],
             LOGIN,
@@ -523,7 +559,13 @@ mod tests {
         )
         .expect("the additional installation must commit");
 
-        assert_eq!(outcome.commit_index, 9);
+        assert_eq!(
+            outcome,
+            CommittedRegistration {
+                installation_id: INSTALLATION,
+                commit_index: 9
+            }
+        );
     }
 
     #[test]
@@ -554,6 +596,7 @@ mod tests {
                     Reply::Commit {
                         installation_id: [0x88; 16],
                         commit_index: 9,
+                        form: VerifierForm::NewAccount,
                     },
                 ],
                 LOGIN,
