@@ -14,7 +14,7 @@ mod common;
 use std::time::Duration;
 
 use bollard::Docker;
-use harness_core::NodeRole;
+use harness_core::{HarnessError, NodeRole};
 use harness_docker::{
     BollardClusterRuntime, ClusterPlan, ClusterRuntime, ContainerPlan, DockerProcessFault,
     PlanSettings, ProcessRestart, container_name,
@@ -83,6 +83,12 @@ struct ClusterGuard<'a> {
     plan: &'a ClusterPlan,
 }
 
+impl ClusterGuard<'_> {
+    fn start(&mut self) -> Result<(), HarnessError> {
+        self.runtime.start(self.plan)
+    }
+}
+
 impl Drop for ClusterGuard<'_> {
     fn drop(&mut self) {
         let _ = self.runtime.remove(self.plan);
@@ -101,13 +107,13 @@ fn abrupt_child_kill_restarts_the_supervised_process_in_place() {
     let mut cluster =
         BollardClusterRuntime::connect().expect("a Docker daemon is required for this test");
 
-    cluster
-        .start(&cluster_plan)
-        .expect("the planned containers must start on the Docker daemon");
-    let _guard = ClusterGuard {
+    let mut guard = ClusterGuard {
         runtime: &mut cluster,
         plan: &cluster_plan,
     };
+    guard
+        .start()
+        .expect("the planned containers must start on the Docker daemon");
 
     let storage = storage_container(&cluster_plan);
     let storage_name = container_name(&cluster_plan, storage);

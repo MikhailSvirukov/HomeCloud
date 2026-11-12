@@ -52,7 +52,7 @@ const CHILD_PROCESSES_SCRIPT: &str = r#"for pid in $(cat /proc/1/task/1/children
   [ "$pid" = "$$" ] && continue
   comm=$(cat /proc/$pid/comm 2>/dev/null) || continue
   stat=$(cat /proc/$pid/stat 2>/dev/null) || continue
-  rest=${stat#*) }
+  rest=${stat##*) }
   state=${rest%% *}
   printf '%s %s %s\n' "$pid" "$comm" "$state"
 done"#;
@@ -119,8 +119,7 @@ impl DockerProcessFault {
         let (container_id, started_at) = self.inspect_identity(&name)?;
 
         let children = self.read_child_processes(&name)?;
-        let previous_pid = matching_pid(&children, expected_comm, None)
-            .ok_or(HarnessError::SupervisedProcessMissing { node })?;
+        let previous_pid = initial_supervised_pid(&children, expected_comm, node)?;
 
         self.exec_ok(
             &name,
@@ -320,6 +319,27 @@ fn is_running_child(state: &str) -> bool {
     state != ZOMBIE_STATE && state != DEAD_STATE
 }
 
+fn initial_supervised_pid(
+    children: &[(u32, String, String)],
+    comm: &str,
+    node: NodeId,
+) -> Result<u32> {
+    let live: Vec<u32> = children
+        .iter()
+        .filter(|(_, child_comm, state)| child_comm == comm && is_running_child(state))
+        .map(|(pid, _, _)| *pid)
+        .collect();
+
+    match live.as_slice() {
+        [] => Err(HarnessError::SupervisedProcessMissing { node }),
+        [pid] => Ok(*pid),
+        _ => Err(HarnessError::SupervisedProcessAmbiguous {
+            node,
+            count: live.len(),
+        }),
+    }
+}
+
 fn matching_pid(
     children: &[(u32, String, String)],
     comm: &str,
@@ -336,10 +356,10 @@ fn matching_pid(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHILD_PROCESSES_SCRIPT, exec_argv, kill_process_script, matching_pid,
-        parse_child_processes, validate_process_name,
+        CHILD_PROCESSES_SCRIPT, exec_argv, initial_supervised_pid, kill_process_script,
+        matching_pid, parse_child_processes, validate_process_name,
     };
-    use harness_core::HarnessError;
+    use harness_core::{HarnessError, NodeId};
 
     #[test]
     fn parses_child_processes_with_state() {
@@ -350,8 +370,17 @@ mod tests {
                 (456, "storage-node".to_string(), "R".to_string()),
             ])
         );
+        assert_eq!(
+            parse_child_processes("123 a) b S\n"),
+            Ok(vec![(123, "a) b".to_string(), "S".to_string())])
+        );
         assert_eq!(parse_child_processes(""), Ok(Vec::new()));
         assert_eq!(parse_child_processes("789 \n"), Ok(Vec::new()));
+    }
+
+    #[test]
+    fn read_script_strips_the_final_parenthesised_comm() {
+        assert!(CHILD_PROCESSES_SCRIPT.contains("rest=${stat##*) }"));
     }
 
     #[test]
@@ -385,6 +414,21 @@ mod tests {
         assert_eq!(matching_pid(&children, "storage-node", None), Some(13));
         assert_eq!(matching_pid(&children, "missing", None), None);
         assert_eq!(matching_pid(&children, "storage-node", Some(13)), None);
+    }
+
+    #[test]
+    fn reports_ambiguous_live_supervised_children() {
+        let node = NodeId::new(7);
+        let children = vec![
+            (10, "storage-node".to_string(), "S".to_string()),
+            (11, "storage-node".to_string(), "R".to_string()),
+            (12, "storage-node".to_string(), "Z".to_string()),
+        ];
+
+        assert_eq!(
+            initial_supervised_pid(&children, "storage-node", node),
+            Err(HarnessError::SupervisedProcessAmbiguous { node, count: 2 })
+        );
     }
 
     #[test]

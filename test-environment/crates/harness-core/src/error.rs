@@ -96,6 +96,9 @@ pub enum HarnessError {
     /// The container identity changed while the supervised process was restarted.
     #[error("container for {node} was recreated during the process restart")]
     ContainerRecreated { node: NodeId },
+    /// More than one live child matches the expected supervised process name.
+    #[error("container for {node} has {count} live supervised processes")]
+    SupervisedProcessAmbiguous { node: NodeId, count: usize },
     /// The expected supervised process name is not a valid `/proc/<pid>/comm` value.
     #[error("invalid supervised process name {name:?}")]
     InvalidProcessName { name: String },
