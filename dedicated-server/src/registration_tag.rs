@@ -82,7 +82,7 @@ impl RegistrationSecret {
             path: path.to_path_buf(),
             source,
         })?;
-        if metadata.len() > MAX_SECRET_FILE_BYTES {
+        if metadata.len() > REGISTRATION_SECRET_BYTES as u64 {
             return Err(RegistrationSecretError::TooLarge {
                 path: path.to_path_buf(),
             });
