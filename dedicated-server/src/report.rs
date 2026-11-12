@@ -63,6 +63,20 @@ impl Startup {
         })
     }
 
+    /// Propose one registration command to the first storage node in the manifest.
+    pub fn propose_registration(
+        &self,
+        request: crate::inter_server_client::RegistrationProposeRequest<'_>,
+    ) -> core::result::Result<crate::inter_server_client::RegistrationCommit, InterServerClientError>
+    {
+        crate::inter_server_client::propose_registration(
+            &self.config,
+            &self.identity,
+            &self.registration_secret,
+            &request,
+        )
+    }
+
     /// Look up the registry of the first storage node in the static manifest.
     pub fn lookup_registry(
         &self,
