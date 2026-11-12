@@ -1,5 +1,5 @@
 listen = "10.0.0.1:7000"
-max_label_bytes = 8
+max_label_bytes = 16
 max_frame_bytes = 4194304
 max_header_bytes = 1048576
 max_verifier_bytes = 512
@@ -43,7 +43,7 @@ signing_public_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 
 [[storage]]
 sender_id = "00000000000000000000000000000001"
-label = "storage-1"
+label = "storage-label-too-long"
 address = "10.0.0.11:7100"
 encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
 signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"

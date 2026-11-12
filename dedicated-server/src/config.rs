@@ -271,7 +271,7 @@ where
     let text = <&str>::deserialize(deserializer)?;
     decode_hex(text).ok_or_else(|| {
         <D::Error as serde::de::Error>::custom(format!(
-            "expected {} hexadecimal characters",
+            "expected {} lowercase hexadecimal characters",
             N * HEX_CHARS_PER_BYTE
         ))
     })
@@ -1177,6 +1177,36 @@ mod tests {
             config.storage[1].signing_public_key.as_bytes(),
             &[0xBB; PUBLIC_KEY_BYTES]
         );
+    }
+
+    #[test]
+    fn rejects_a_manifest_without_a_dedicated_entry() {
+        let start = VALID_SERVER
+            .find("[dedicated]")
+            .expect("the fixture must carry a dedicated entry");
+        let end = VALID_SERVER
+            .find("[[storage]]")
+            .expect("the fixture must carry a storage entry");
+        let mut document = VALID_SERVER.to_owned();
+        document.replace_range(start..end, "");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_an_unknown_key_inside_a_storage_entry() {
+        let document = VALID_SERVER.replace(
+            "label = \"storage-1\"",
+            "label = \"storage-1\"\nnode_id = \"00000000000000000000000000000001\"",
+        );
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::Parse { .. })
+        ));
     }
 
     #[test]
