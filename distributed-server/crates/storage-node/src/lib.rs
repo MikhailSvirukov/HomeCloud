@@ -98,6 +98,14 @@
 //! coordinator, fixed voter membership, unique strict-majority replicas, and
 //! the committed upload's login and SHA-256 (`INT-NET-113 / 1`,
 //! `INT-NET-124 / 1`).
+//! Publish-version and replica-status wire codecs
+//! ([`encode_publish_version`], [`decode_publish_version`],
+//! [`encode_publish_version_result`], [`decode_publish_version_result`],
+//! [`encode_replica_status`], [`decode_replica_status`],
+//! [`encode_replica_status_result`], [`decode_replica_status_result`]) carry
+//! the exact inter-server message shapes with strict CBOR decoding
+//! (`INT-NET-093 / 1`, `INT-NET-094 / 1`, `INT-NET-121 / 1`,
+//! `INT-NET-122 / 1`).
 //! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! monitoring listener, using plaintext HTTP only on loopback and TLS with the
@@ -159,6 +167,7 @@ mod payload;
 mod payload_stream;
 mod raft;
 mod replication;
+mod replication_exchange;
 mod response;
 mod runtime;
 mod sealing;
@@ -241,6 +250,12 @@ pub use raft::{
 pub use replication::{
     validate_publish_version, validate_replica_status, PublishVersion, ReplicaStatus,
     ReplicationError,
+};
+pub use replication_exchange::{
+    decode_publish_version, decode_publish_version_result, decode_replica_status,
+    decode_replica_status_result, encode_publish_version, encode_publish_version_result,
+    encode_replica_status, encode_replica_status_result, PublishVersionMessage,
+    ReplicaStatusMessage, ReplicationExchangeError, ReplicationResult,
 };
 pub use response::{ResponseError, UploadStatus};
 pub use runtime::{RaftRuntime, RuntimeError};
