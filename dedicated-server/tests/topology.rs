@@ -29,12 +29,7 @@ const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
 /// Manifest entries read back from the configuration template.
 #[derive(Deserialize)]
 struct TemplateConfig {
-    cluster: TemplateCluster,
-}
-
-#[derive(Deserialize)]
-struct TemplateCluster {
-    nodes: Vec<TemplateNode>,
+    storage: Vec<TemplateNode>,
 }
 
 #[derive(Deserialize)]
@@ -98,8 +93,7 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path) -> PathBuf {
 fn expected_nodes() -> Vec<TemplateNode> {
     toml::from_str::<TemplateConfig>(CONFIG_TEMPLATE)
         .expect("the configuration template must parse")
-        .cluster
-        .nodes
+        .storage
 }
 
 #[test]

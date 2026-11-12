@@ -6,7 +6,7 @@
 
 use std::net::SocketAddr;
 
-use crate::config::{ClusterConfig, NodeId, PublicKey};
+use crate::config::{ManifestEntry, NodeId, PublicKey};
 
 /// One storage node as clients receive it.
 pub struct TopologyNode {
@@ -30,10 +30,9 @@ pub struct Topology {
 
 impl Topology {
     /// Build the topology from the static manifest, preserving manifest order.
-    pub(crate) fn from_manifest(cluster: &ClusterConfig) -> Self {
+    pub(crate) fn from_manifest(storage: &[ManifestEntry]) -> Self {
         Self {
-            nodes: cluster
-                .nodes
+            nodes: storage
                 .iter()
                 .map(|node| TopologyNode {
                     sender_id: node.sender_id,
@@ -53,7 +52,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::config::ClusterNode;
+    use crate::config::ManifestEntry;
 
     fn node_id(index: u8) -> NodeId {
         let hex = format!("{index:032x}");
@@ -73,32 +72,30 @@ mod tests {
             .expect("test public keys are 64 hexadecimal characters")
     }
 
-    fn manifest() -> ClusterConfig {
-        ClusterConfig {
-            nodes: vec![
-                ClusterNode {
-                    sender_id: node_id(3),
-                    label: "zeta".to_string(),
-                    address: SocketAddr::from(([127, 0, 0, 1], 8001)),
-                    encryption_public_key: public_key(0x11),
-                    signing_public_key: public_key(0x22),
-                },
-                ClusterNode {
-                    sender_id: node_id(2),
-                    label: "alpha".to_string(),
-                    address: SocketAddr::from(([127, 0, 0, 1], 8002)),
-                    encryption_public_key: public_key(0x33),
-                    signing_public_key: public_key(0x44),
-                },
-                ClusterNode {
-                    sender_id: node_id(1),
-                    label: "mu".to_string(),
-                    address: SocketAddr::from(([127, 0, 0, 1], 8003)),
-                    encryption_public_key: public_key(0x55),
-                    signing_public_key: public_key(0x66),
-                },
-            ],
-        }
+    fn manifest() -> Vec<ManifestEntry> {
+        vec![
+            ManifestEntry {
+                sender_id: node_id(3),
+                label: "zeta".to_string(),
+                address: SocketAddr::from(([127, 0, 0, 1], 8001)),
+                encryption_public_key: public_key(0x11),
+                signing_public_key: public_key(0x22),
+            },
+            ManifestEntry {
+                sender_id: node_id(2),
+                label: "alpha".to_string(),
+                address: SocketAddr::from(([127, 0, 0, 1], 8002)),
+                encryption_public_key: public_key(0x33),
+                signing_public_key: public_key(0x44),
+            },
+            ManifestEntry {
+                sender_id: node_id(1),
+                label: "mu".to_string(),
+                address: SocketAddr::from(([127, 0, 0, 1], 8003)),
+                encryption_public_key: public_key(0x55),
+                signing_public_key: public_key(0x66),
+            },
+        ]
     }
 
     #[test]
@@ -129,7 +126,7 @@ mod tests {
 
         let topology = Topology::from_manifest(&cluster);
 
-        assert_eq!(topology.nodes.len(), cluster.nodes.len());
+        assert_eq!(topology.nodes.len(), cluster.len());
         let first = &topology.nodes[0];
         assert_eq!(first.address, SocketAddr::from(([127, 0, 0, 1], 8001)));
         assert_eq!(first.label, "zeta");

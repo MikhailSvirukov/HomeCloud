@@ -1,5 +1,5 @@
 listen = "10.0.0.1:7000"
-max_label_bytes = 8
+max_label_bytes = 16
 max_frame_bytes = 4194304
 max_header_bytes = 1048576
 max_verifier_bytes = 512
@@ -13,7 +13,6 @@ connect_timeout_ms = 5000
 inter_server_timeout_ms = 10000
 
 [identity]
-label = "node-1"
 encryption_private_key = "/etc/homecloud/dedicated/encryption.key"
 signing_private_key = "/etc/homecloud/dedicated/signing.key"
 
@@ -35,9 +34,16 @@ max_file_age_ms = 86400000
 max_file_size_bytes = 104857600
 max_total_size_bytes = 1073741824
 
-[[cluster.nodes]]
+[dedicated]
+sender_id = "00000000000000000000000000000000"
+label = "dedicated-1"
+address = "10.0.0.1:7000"
+encryption_public_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signing_public_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+[[storage]]
 sender_id = "00000000000000000000000000000001"
-label = "storage-1"
+label = "storage-label-too-long"
 address = "10.0.0.11:7100"
 encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
 signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"

@@ -42,7 +42,7 @@ impl Startup {
     /// Load the key identity named by an already loaded configuration.
     pub fn from_config(config: ServerConfig) -> Result<Self> {
         let identity = ServerIdentity::load(
-            &config.identity.label,
+            &config.dedicated.label,
             &config.identity.encryption_private_key,
             &config.identity.signing_private_key,
         )
@@ -67,14 +67,13 @@ impl Startup {
 
     /// The topology to hand to a new client connection.
     pub fn topology(&self) -> Topology {
-        Topology::from_manifest(&self.config.cluster)
+        Topology::from_manifest(&self.config.storage)
     }
 
     /// Configured cluster labels, in manifest order.
     pub fn cluster_labels(&self) -> Vec<&str> {
         self.config
-            .cluster
-            .nodes
+            .storage
             .iter()
             .map(|node| node.label.as_str())
             .collect()
@@ -91,7 +90,7 @@ impl Startup {
             "dedicated-server listening on {} label={} nodes={} interval_ms={} timeout_ms={} miss_threshold={} encryption_key_bytes={} signing_key_bytes={}",
             self.config.listen,
             self.identity.label(),
-            self.config.cluster.nodes.len(),
+            self.config.storage.len(),
             self.config.heartbeat.interval().as_millis(),
             self.config.heartbeat.timeout().as_millis(),
             self.config.heartbeat.miss_threshold,
