@@ -489,6 +489,10 @@ mod tests {
         };
         assert_eq!(metadata.len(), 5, "metadata has five fields");
         assert_eq!(metadata[0], Value::Text("report.txt".to_owned()));
+        assert_eq!(metadata[1], Value::Integer(1_700_000_000_000_i64.into()));
+        assert_eq!(metadata[2], Value::Integer(10_u64.into()));
+        assert_eq!(metadata[3], Value::Integer(4_u64.into()));
+        assert_eq!(metadata[4], Value::Bytes(vec![0xab; CONTENT_HASH_LEN]));
         assert_eq!(arguments[3], Value::Bytes(vec![2; NODE_ID_LEN]));
         assert_eq!(
             arguments[4],
@@ -507,6 +511,7 @@ mod tests {
         let Value::Array(envelope) = value else {
             panic!("the replica status is an envelope");
         };
+        assert_eq!(envelope.len(), 2, "the envelope has exactly two elements");
         assert_eq!(envelope[0], Value::Integer(16.into()));
         let Value::Array(arguments) = &envelope[1] else {
             panic!("the replica status arguments are an array");
@@ -517,6 +522,19 @@ mod tests {
         assert_eq!(arguments[2], Value::Bytes(vec![5; NODE_ID_LEN]));
         assert_eq!(arguments[3], Value::Bytes(vec![6; CONTENT_HASH_LEN]));
         assert_eq!(arguments[4], Value::Bool(true));
+
+        let mut damaged = replica_status();
+        damaged.available = false;
+        let bytes =
+            encode_replica_status(&damaged, &limits()).expect("the damaged replica status encodes");
+        let value = decode_value(&bytes).expect("the damaged status is canonical");
+        let Value::Array(envelope) = value else {
+            panic!("the damaged replica status is an envelope");
+        };
+        let Value::Array(arguments) = &envelope[1] else {
+            panic!("the damaged replica status arguments are an array");
+        };
+        assert_eq!(arguments[4], Value::Bool(false));
     }
 
     #[test]
