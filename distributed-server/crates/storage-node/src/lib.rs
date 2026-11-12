@@ -85,6 +85,10 @@
 //! [`RestoreError`]) refuses an unmarked local copy, replaces it through the
 //! same verified durable write, and keeps the corruption marker when that write
 //! fails.
+//! Bounded replica receiving ([`BlobReplicaReceiver`], [`ReplicaError`])
+//! accumulates exactly the declared transfer-compressed bytes, decodes one
+//! complete Zstandard frame under the declared original-size bound, verifies
+//! SHA-256, and writes through the same direct durable path.
 //! Upload failures map to the published protocol result codes in
 //! [`UploadErrorCode`], covering request, authentication, file, frame-sequence,
 //! upload-id, capacity, and internal error classes (`INT-NET-064 / 1`).
@@ -117,6 +121,7 @@
 
 mod blob_get;
 mod blob_put;
+mod blob_receiver;
 mod blob_restore;
 mod blob_writer;
 mod buffer_pool;
@@ -170,6 +175,7 @@ pub use blob_put::{
     encode_blob_put_begin, encode_blob_put_data_frame, encode_blob_put_result, BlobMetadata,
     BlobPutBegin, BlobPutData, BlobPutError, BlobPutResult,
 };
+pub use blob_receiver::{BlobReplicaReceiver, ReplicaError};
 pub use blob_restore::{restore_blob_direct, RestoreError};
 pub use blob_writer::{write_blob_direct, BlobWriteError, StoredBlob};
 pub use buffer_pool::{
