@@ -65,9 +65,14 @@ fn with_position(value: Value, position: usize, replacement: Value) -> Value {
     Value::Array(items)
 }
 
+/// The contract node row with `label` in its label position.
+fn node_row_with_label(label: &str) -> Value {
+    with_position(node_row_value(), 1, Value::Text(label.to_owned()))
+}
+
 /// Literal bytes of the success envelope around the contract node row.
 fn expected_answer_bytes(host: &str) -> Vec<u8> {
-    let mut bytes = vec![0x82, 0x00, 0x81, 0x86, 0x50];
+    let mut bytes = vec![0x82, 0x00, 0x81, 0x81, 0x86, 0x50];
     bytes.extend_from_slice(&SENDER_ID);
     bytes.push(0x66);
     bytes.extend_from_slice(b"node-1");
@@ -91,7 +96,7 @@ fn ipv4_topology_answer_matches_contract_vector() {
     let envelope = ResultEnvelope { code: 0, args };
     let expected = expected_answer_bytes("192.0.2.10");
 
-    assert_eq!(expected.len(), 110);
+    assert_eq!(expected.len(), 111);
     assert_eq!(envelope.encode(), Ok(expected.clone()));
 
     let decoded = ResultEnvelope::decode(&cbor::decode(&expected).expect("vector is valid CBOR"))
@@ -112,7 +117,7 @@ fn ipv6_topology_host_matches_contract_vector() {
     let envelope = ResultEnvelope { code: 0, args };
     let expected = expected_answer_bytes("2001:db8::1");
 
-    assert_eq!(expected.len() - 3, 108);
+    assert_eq!(expected.len() - 4, 108);
     assert_eq!(envelope.encode(), Ok(expected.clone()));
 
     let decoded = ResultEnvelope::decode(&cbor::decode(&expected).expect("vector is valid CBOR"))
@@ -141,6 +146,25 @@ fn topology_preserves_manifest_order() {
     assert_eq!(TopologyAnswer::from_args(&args, LABEL_LIMIT), Ok(answer));
 }
 
+/// `INT-NET-070/6`: an empty manifest yields the answer `[[]]`.
+#[test]
+fn zero_node_topology_answer_round_trips() {
+    let answer = TopologyAnswer { nodes: vec![] };
+    let args = answer.to_args(LABEL_LIMIT).expect("answer is valid");
+    let envelope = ResultEnvelope { code: 0, args };
+
+    assert_eq!(envelope.encode(), Ok(vec![0x82, 0x00, 0x81, 0x80]));
+
+    let decoded = ResultEnvelope::decode(
+        &cbor::decode(&[0x82, 0x00, 0x81, 0x80]).expect("vector is valid CBOR"),
+    )
+    .expect("envelope is valid");
+    assert_eq!(
+        TopologyAnswer::from_args(&decoded.args, LABEL_LIMIT),
+        Ok(answer)
+    );
+}
+
 /// `CFG-CL-031`, `INT-NET-070/6`, `TST-023/5`, `TST-033/1`: the label limit is
 /// measured in UTF-8 bytes and is inclusive.
 #[test]
@@ -165,6 +189,43 @@ fn topology_label_accepts_exactly_the_configured_limit() {
         too_long.to_args(LABEL_LIMIT),
         Err(TopologyError::LabelTooLong {
             actual: 257,
+            limit: 256,
+        })
+    );
+
+    assert_eq!(
+        TopologyAnswer::from_args(
+            &[Value::Array(vec![node_row_with_label(&"a".repeat(257))])],
+            LABEL_LIMIT
+        ),
+        Err(TopologyError::LabelTooLong {
+            actual: 257,
+            limit: 256,
+        })
+    );
+
+    let two_byte_label = "é".repeat(LABEL_LIMIT / 2);
+    let decoded = TopologyAnswer::from_args(
+        &[Value::Array(vec![node_row_with_label(&two_byte_label)])],
+        LABEL_LIMIT,
+    )
+    .expect("a 256-byte UTF-8 label is allowed");
+    assert_eq!(
+        decoded,
+        TopologyAnswer {
+            nodes: vec![node(&two_byte_label, "192.0.2.10", 443)]
+        }
+    );
+
+    assert_eq!(
+        TopologyAnswer::from_args(
+            &[Value::Array(vec![node_row_with_label(
+                &"é".repeat(LABEL_LIMIT / 2 + 1)
+            )])],
+            LABEL_LIMIT,
+        ),
+        Err(TopologyError::LabelTooLong {
+            actual: 258,
             limit: 256,
         })
     );
@@ -236,6 +297,10 @@ fn non_canonical_ipv6_is_rejected() {
         CanonicalHost::parse("2001:db8:0:0:0:0:0:1"),
         Err(HostError::NonCanonicalIpv6)
     );
+    assert_eq!(
+        CanonicalHost::parse("2001:0db8::1"),
+        Err(HostError::NonCanonicalIpv6)
+    );
 }
 
 /// `INT-NET-070/6`, `TST-023/5`: IPv6 zone identifiers are not permitted in v1.
@@ -252,6 +317,10 @@ fn zone_identifiers_are_rejected() {
 fn malformed_and_empty_hosts_are_rejected() {
     assert_eq!(
         CanonicalHost::parse("999.1.1.1"),
+        Err(HostError::NotAnIpLiteral)
+    );
+    assert_eq!(
+        CanonicalHost::parse("192.000.2.10"),
         Err(HostError::NotAnIpLiteral)
     );
     assert_eq!(CanonicalHost::parse(""), Err(HostError::Empty));
