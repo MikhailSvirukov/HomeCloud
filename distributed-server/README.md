@@ -126,8 +126,8 @@ clients; it does not relay Raft or blob traffic.
   `blob_get_public_api.rs`, `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
-  `raft_cluster_public_api.rs`, `raft_runtime_public_api.rs`,
-  `storage_layout_public_api.rs`,
+  `raft_cluster_public_api.rs`, `raft_multi_node_public_api.rs`,
+  `raft_runtime_public_api.rs`, `storage_layout_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
@@ -178,7 +178,10 @@ set of storage nodes that durably hold the blob. A committed version's blob
 replica set can be replaced through a Raft update, and the new set is applied on
 every node with the catalog. The persisted Raft state file records a format
 version. `raft_cluster_public_api.rs` covers restart recovery, blob replica-set
-updates, and a returning node catching up committed entries. A local committed
+updates, and a returning node catching up committed entries.
+`raft_multi_node_public_api.rs` starts three manifest-derived runtimes on loopback
+TCP, elects a leader through the encrypted signed peer transport, and checks that a
+client write commits and is applied on every node. A local committed
 blob is checked by streaming it, comparing its SHA-256 with the committed hash,
 and creating a `<blob>.corrupt` marker when the hashes differ; a later check
 that matches the committed hash removes the marker. `integrity_public_api.rs`
