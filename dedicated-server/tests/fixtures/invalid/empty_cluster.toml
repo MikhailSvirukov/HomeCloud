@@ -13,7 +13,6 @@ connect_timeout_ms = 5000
 inter_server_timeout_ms = 10000
 
 [identity]
-label = "dedicated-1"
 encryption_private_key = "/etc/homecloud/dedicated/encryption.key"
 signing_private_key = "/etc/homecloud/dedicated/signing.key"
 
@@ -46,3 +45,10 @@ total_deadline_ms = 30000
 attempt_deadline_ms = 10000
 attempts = 5
 retry_interval_ms = 1000
+
+[dedicated]
+sender_id = "00000000000000000000000000000000"
+label = "dedicated-1"
+address = "10.0.0.1:7000"
+encryption_public_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signing_public_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"

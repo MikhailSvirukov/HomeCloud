@@ -232,7 +232,7 @@ for the whole process and flushes buffered records when dropped.
   `max_password_bytes`, `max_source_name_bytes`, `max_file_size_bytes`,
   `connect_timeout_ms`, `inter_server_timeout_ms`, `[registration]`,
   `[identity]`, `[heartbeat]`, `[password]`, `[logging]`, `[metrics]`,
-  `[[cluster.nodes]]`.
+  `[dedicated]`, `[[storage]]`.
 - `max_header_bytes` bounds one encoded logical header (`CFG-CL-046`, range
   `1024..=16777216`); `max_verifier_bytes` bounds a PHC verifier
   (`CFG-CL-047`, range `128..=4096`); the login and password limits are ASCII
@@ -257,13 +257,22 @@ for the whole process and flushes buffered records when dropped.
   answer fit `max_header_bytes`, the generated PHC verifier fits
   `max_verifier_bytes`, and the logical header plus its worst-case outer
   envelope fits the configured frame body.
-- `max_label_bytes`: the maximum length of any node or identity label in UTF-8
-  bytes (`NonZeroUsize`). It has no default.
+- `max_label_bytes`: the maximum length of any manifest label in UTF-8 bytes
+  (`NonZeroUsize`, `CFG-CL-031`). It has no default.
 - `max_frame_bytes`: the largest frame payload the server accepts from a peer,
   in bytes (`NonZeroU32`, no default). The receiver checks the announced
   length against it before allocating the payload, so an oversized frame is
   refused without reading its body.
-- `identity`: `label`, `encryption_private_key`, `signing_private_key` (paths).
+- `identity`: `encryption_private_key` and `signing_private_key` (paths). The
+  server's own manifest entry, including its label, is the `[dedicated]` table.
+- `dedicated` and `storage[]`: the trusted static manifest entry of this server
+  and of every storage node, with the exact fields, canonical forms and
+  validation rules published in
+  [`contracts/manifest-v1.md`](../contracts/manifest-v1.md): `sender_id` (32
+  lowercase hexadecimal characters), `label`, `address` (IP literal and port),
+  `encryption_public_key` and `signing_public_key` (64 lowercase hexadecimal
+  characters). Labels, addresses and identifiers are unique across all entries,
+  the dedicated entry included; `[[storage]]` keeps manifest order.
 - `heartbeat`: `interval_ms` and `timeout_ms` are non-zero milliseconds
   (`NonZeroU64`), `miss_threshold` is a non-zero count (`NonZeroU32`). A zero
   value is rejected while the configuration is parsed, not by a later check.
@@ -295,11 +304,8 @@ for the whole process and flushes buffered records when dropped.
   exist and contain PEM certificates and that the key file contains a PEM
   private key matching the certificate; building a chain from `trust_path` is
   the collecting client's job.
-- `cluster.nodes[]`: `sender_id` (unique 16-byte node identifier), `label`
-  (non-empty, unique), `address` (unique socket address),
-  `encryption_public_key`, `signing_public_key`. Node identifiers and public
-  keys are 16- and 32-byte values written in hexadecimal.
-- Empty `cluster.nodes` is invalid; unknown keys are rejected.
+- `[[storage]]` must name at least one entry; unknown sections and keys are
+  rejected.
 
 Example:
 
@@ -328,9 +334,15 @@ retry_interval_ms = 1000
 bind = "127.0.0.1:9101"
 
 [identity]
-label = "dedicated-1"
 encryption_private_key = "/etc/homecloud/dedicated/encryption.key"
 signing_private_key = "/etc/homecloud/dedicated/signing.key"
+
+[dedicated]
+sender_id = "00000000000000000000000000000000"
+label = "dedicated-1"
+address = "10.0.0.1:7000"
+encryption_public_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signing_public_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 [heartbeat]
 interval_ms = 1000
@@ -350,18 +362,18 @@ max_file_age_ms = 86400000
 max_file_size_bytes = 52428800
 max_total_size_bytes = 536870912
 
-[[cluster.nodes]]
+[[storage]]
 sender_id = "00000000000000000000000000000001"
 label = "storage-1"
 address = "10.0.0.11:7100"
 encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
 signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"
 
-[[cluster.nodes]]
+[[storage]]
 sender_id = "00000000000000000000000000000002"
 label = "storage-2"
 address = "10.0.0.12:7100"
-encryption_public_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+encryption_public_key = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ```
 
@@ -494,8 +506,8 @@ signing role. At most 64 KiB plus one byte of each file is read, so an
 oversized file is rejected without being loaded in full, and the returned
 identity error names the offending key file; log records omit every path and
 file name. The configured
-`identity.label` is bound to the loaded identity and is used as the node's
-sender label. `ServerIdentity`'s `Debug` output deliberately reports only the
+`dedicated.label` is the node's sender label and the loaded identity is bound
+to it: the startup record reports it and the topology uses the manifest labels. `ServerIdentity`'s `Debug` output deliberately reports only the
 label and key lengths, never the key bytes.
 
 ## Heartbeat tracking
