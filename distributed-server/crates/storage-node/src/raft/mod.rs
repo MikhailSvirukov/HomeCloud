@@ -74,8 +74,12 @@ impl fmt::Debug for CommittedVersion {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RaftRequest {
     /// Records a committed upload version with its blob replica set.
+    ///
+    /// This lower-level, unvalidated command remains available for internal
+    /// tests and recovery tooling; it bypasses `validate_publish_version`.
     CommitVersion(CommittedVersion),
-    /// Validates a publish version against the committed membership and catalog before recording it.
+    /// Validates a publish version against the committed membership and catalog
+    /// before applying it to the catalog.
     PublishVersion(PublishVersion),
     /// Replaces the set of storage nodes that durably hold the version's blob; an unknown upload id is a no-op reported as `None`.
     UpdateReplicas {

@@ -359,8 +359,9 @@ impl RaftStorage<RaftConfig> for MemStore {
                             });
                         }
                         Err(_) => {
-                            // The entry stays unapplied; the coordinator maps a
-                            // `None` response to a typed publish rejection.
+                            // The log entry is applied as a no-op: the catalog is
+                            // unchanged and the coordinator maps `None` to a typed
+                            // publish rejection.
                             responses.push(RaftResponse { upload_id: None });
                         }
                     }
