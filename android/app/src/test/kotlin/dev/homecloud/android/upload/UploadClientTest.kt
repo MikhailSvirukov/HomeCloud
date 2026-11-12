@@ -163,6 +163,26 @@ class UploadClientTest {
     }
 
     @Test
+    fun `success response with a short upload id is rejected`() {
+        assertRejectedResponse(
+            ResultEnvelope(
+                ResultCodes.SUCCESS,
+                listOf(CborValue.Bytes(UPLOAD_ID.copyOf(UPLOAD_ID_BYTES - 1))),
+            ),
+        )
+    }
+
+    @Test
+    fun `success response with a non byte string upload id is rejected`() {
+        assertRejectedResponse(
+            ResultEnvelope(
+                ResultCodes.SUCCESS,
+                listOf(CborValue.Text("not-a-byte-string")),
+            ),
+        )
+    }
+
+    @Test
     fun `non zero result code is rejected with the code in hexadecimal`() {
         val channel =
             respondingChannel { writes ->
@@ -274,6 +294,35 @@ class UploadClientTest {
             request = request(metadata = metadata(originalSizeBytes = SMALL_ORIGINAL_LIMIT_BYTES + 1)),
             metadataLimits = UploadMetadataLimits(maxOriginalSizeBytes = SMALL_ORIGINAL_LIMIT_BYTES),
         )
+    }
+
+    @Test
+    fun `original size exactly at the configured metadata limit is accepted`() {
+        val request = request(metadata = metadata(originalSizeBytes = SMALL_ORIGINAL_LIMIT_BYTES))
+        val channel = respondingChannel { writes -> successResponse(writes.first(), request.uploadId) }
+
+        val confirmed =
+            uploadClient(
+                metadataLimits = UploadMetadataLimits(maxOriginalSizeBytes = SMALL_ORIGINAL_LIMIT_BYTES),
+                channelFactory = { _, _ -> channel },
+            ).upload(request)
+
+        assertArrayEquals(request.uploadId, confirmed)
+        assertTrue(channel.closed)
+    }
+
+    @Test
+    fun `a frame limit that cannot carry the logical header is rejected before the channel is opened`() {
+        var channelFactoryCalls = 0
+
+        assertThrows(UploadException::class.java) {
+            uploadClient(maxFrameBytes = SMALLEST_FRAME_BYTES) { _, _ ->
+                channelFactoryCalls += 1
+                unusedChannel()
+            }.upload(request())
+        }
+
+        assertEquals(0, channelFactoryCalls)
     }
 
     private fun assertMetadataArguments(arguments: List<CborValue>) {
@@ -447,6 +496,7 @@ class UploadClientTest {
         const val RESPONSE_FRAME_NUMBER = 0L
         const val MAX_ORIGINAL_SIZE_BYTES = 1_000_000L
         const val SMALL_ORIGINAL_LIMIT_BYTES = 512L
+        const val SMALLEST_FRAME_BYTES = 8
 
         const val LOGIN = "test-login"
         const val PASSWORD = "test-password"

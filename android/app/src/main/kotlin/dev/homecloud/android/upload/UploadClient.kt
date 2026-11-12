@@ -47,7 +47,7 @@ internal data class UploadRequest(
 
 /**
  * Uploads one compressed version directly to one storage node (`FR-UP-003`, `FR-UP-004`,
- * `FR-UP-005`, `FR-UP-006`, `INT-NET-080 / 1`).
+ * `FR-UP-005`, `FR-UP-006`, `FR-DED-015 / 1`, `INT-NET-057 / 1`, `INT-NET-078 / 1`).
  *
  * The request uses operation `4` and the logical header `[4, login, password,
  * [source_name, timestamp_ms, original_size, compressed_size, sha256]]`. Frame zero carries the
