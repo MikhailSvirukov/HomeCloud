@@ -87,6 +87,9 @@ pub enum InterServerClientError {
     /// The response does not belong to the request or the addressed node.
     #[error("the response does not match the request: {0}")]
     Mismatch(&'static str),
+    /// The content tag could not be computed.
+    #[error("the registration content tag could not be computed: {0}")]
+    Tag(#[from] crate::registration_tag::RegistrationSecretError),
     /// The storage node answered with a non-zero result code.
     #[error("the storage node rejected the request with result code {0:#010x}")]
     Rejected(u32),
@@ -219,6 +222,90 @@ fn key_seed(bytes: &[u8], role: &'static str) -> Result<[u8; X25519_KEY_BYTES]> 
     Ok(seed)
 }
 
+/// A registration command committed by a storage node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegistrationCommit {
+    /// Installation identifier committed by the command.
+    pub installation_id: [u8; IDENTIFIER_BYTES],
+    /// Raft index of the commit.
+    pub commit_index: u64,
+}
+
+/// Inputs of one registration propose command.
+pub struct RegistrationProposeRequest<'a> {
+    /// Login being registered.
+    pub login: &'a str,
+    /// Password of the registration.
+    pub password: &'a str,
+    /// Installation identifier assigned by the dedicated server.
+    pub installation_id: [u8; IDENTIFIER_BYTES],
+    /// Logical registration request identifier.
+    pub request_id: [u8; IDENTIFIER_BYTES],
+    /// Open X25519 key of the installation.
+    pub x25519_key: [u8; 32],
+    /// Open Ed25519 key of the installation.
+    pub ed25519_key: [u8; 32],
+    /// Current verifier of an existing account the command must match.
+    pub expected_verifier: Option<&'a str>,
+    /// New verifier of an account created by the command.
+    pub new_verifier: Option<&'a str>,
+}
+
+/// Propose one registration command and return its committed result.
+///
+/// The content tag is computed from the secret, the credentials and the
+/// installation keys (`INT-NET-109 / 1`); the response carries the installation
+/// identifier and the commit index (`INT-NET-092 / 1`).
+pub(crate) fn propose_registration(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    secret: &crate::registration_tag::RegistrationSecret,
+    request: &RegistrationProposeRequest<'_>,
+) -> Result<RegistrationCommit> {
+    let storage = config
+        .storage
+        .first()
+        .ok_or(InterServerClientError::NoStorageNode)?;
+    ensure_login_bounds(
+        request.login,
+        config.min_login_bytes.get(),
+        config.max_login_bytes.get(),
+    )?;
+    let content_tag = crate::registration_tag::content_tag(
+        secret,
+        request.login,
+        request.password,
+        &request.x25519_key,
+        &request.ed25519_key,
+    )?;
+    let message = InterServerMessage::RegistrationPropose {
+        login: request.login.to_owned(),
+        registration_request_id: request.request_id,
+        content_tag,
+        installation_id: request.installation_id,
+        x25519_key: request.x25519_key,
+        ed25519_key: request.ed25519_key,
+        expected_verifier: request.expected_verifier.map(str::to_owned),
+        new_verifier: request.new_verifier.map(str::to_owned),
+    };
+    let exchange_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
+
+    match exchange(config, identity, storage, &message, exchange_id)? {
+        InterServerMessage::RegistrationResult {
+            code: 0,
+            installation_id: Some(installation_id),
+            commit_index: Some(commit_index),
+        } => Ok(RegistrationCommit {
+            installation_id,
+            commit_index,
+        }),
+        InterServerMessage::RegistrationResult { code, .. } => {
+            Err(InterServerClientError::Rejected(code))
+        }
+        _ => Err(InterServerClientError::UnexpectedMessage),
+    }
+}
+
 /// Length of the encoded external header at the start of `body`.
 ///
 /// ciborium consumes exactly one encoded item from the slice, so the remaining
@@ -291,6 +378,7 @@ mod tests {
 
     use super::*;
     use crate::config::ServerConfig;
+    use crate::registration_tag::{content_tag, RegistrationSecret};
 
     const FIXTURE: &str = include_str!("../tests/fixtures/valid_server.toml");
     const DEDICATED_ID: [u8; 16] = [0x00; 16];
@@ -525,6 +613,158 @@ mod tests {
         })
     }
 
+    fn secret(dir: &TempDir) -> RegistrationSecret {
+        let path = dir.file("registration.secret");
+        std::fs::write(&path, [0x24_u8; 32]).expect("the secret must be written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("the secret permissions must be set");
+        }
+        RegistrationSecret::load(&path).expect("the secret must load")
+    }
+
+    fn mock_storage_propose(
+        listener: TcpListener,
+        expected_tag: [u8; 32],
+        installation_id: [u8; 16],
+        code: u32,
+        commit_index: u64,
+        expected_verifier_value: Option<String>,
+        new_verifier_value: Option<String>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("the client must connect");
+            let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+            let body = read_frame(&mut stream, limit).expect("the request must arrive");
+            let header_length =
+                external_header_length(&body).expect("the request header must be found");
+            let request_header =
+                ExternalHeader::decode(&body[..header_length], 64).expect("the header must parse");
+            let mut sealed = Vec::with_capacity(4 + body.len());
+            sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            sealed.extend_from_slice(&body);
+            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
+            let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+            let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                .expect("the request must open");
+            let request =
+                InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+            match request {
+                InterServerMessage::RegistrationPropose {
+                    login,
+                    registration_request_id,
+                    content_tag,
+                    installation_id: sent,
+                    x25519_key,
+                    ed25519_key,
+                    expected_verifier,
+                    new_verifier,
+                } => {
+                    assert_eq!(login, "alice");
+                    assert_eq!(registration_request_id, [0x11; 16]);
+                    assert_eq!(content_tag, expected_tag);
+                    assert_eq!(sent, installation_id);
+                    assert_eq!(x25519_key, [0x44; 32]);
+                    assert_eq!(ed25519_key, [0x55; 32]);
+                    assert_eq!(
+                        expected_verifier.as_deref(),
+                        expected_verifier_value.as_deref()
+                    );
+                    assert_eq!(new_verifier.as_deref(), new_verifier_value.as_deref());
+                }
+                _ => panic!("the request must be a registration propose"),
+            }
+
+            let response = InterServerMessage::RegistrationResult {
+                code,
+                installation_id: (code == 0).then_some(installation_id),
+                commit_index: (code == 0).then_some(commit_index),
+            };
+            let payload = response.encode(512).expect("the response must encode");
+            let header = ExternalHeader {
+                sender_id: Some(STORAGE_ID),
+                request_id: request_header.request_id,
+                frame_number: 0,
+                upload_id: None,
+                responder_label: Some("storage-1".to_owned()),
+                bootstrap_signing_public_key: None,
+            };
+            let header_bytes = header.encode(64).expect("the response header must encode");
+            let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+            let frame = seal_frame(
+                &header_bytes,
+                &payload,
+                &dedicated_x25519,
+                &STORAGE_ED25519_SEED,
+            )
+            .expect("the response must seal");
+            stream
+                .write_all(&frame)
+                .expect("the response must be written");
+        })
+    }
+
+    fn propose_with(
+        expected_tag: [u8; 32],
+        installation_id: [u8; 16],
+        code: u32,
+        commit_index: u64,
+    ) -> Result<RegistrationCommit> {
+        propose_with_verifiers(
+            expected_tag,
+            installation_id,
+            code,
+            commit_index,
+            None,
+            Some("new-phc"),
+        )
+    }
+
+    fn propose_with_verifiers(
+        expected_tag: [u8; 32],
+        installation_id: [u8; 16],
+        code: u32,
+        commit_index: u64,
+        expected_verifier: Option<&str>,
+        new_verifier: Option<&str>,
+    ) -> Result<RegistrationCommit> {
+        let dir = TempDir::new("propose");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config(port);
+        let server = mock_storage_propose(
+            listener,
+            expected_tag,
+            installation_id,
+            code,
+            commit_index,
+            expected_verifier.map(str::to_owned),
+            new_verifier.map(str::to_owned),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id,
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier,
+            new_verifier,
+        };
+        let result = propose_registration(&config, &identity, &secret, &request);
+        server.join().expect("the mock server must finish");
+
+        result
+    }
+
     fn lookup_reply(reply: Reply) -> Result<RegistrySnapshot> {
         lookup_reply_with(reply, None)
     }
@@ -556,6 +796,101 @@ mod tests {
             x25519_key: [0x44; 32],
             ed25519_key: [0x55; 32],
         }
+    }
+
+    #[test]
+    fn a_propose_returns_the_committed_installation() {
+        let dir = TempDir::new("tag");
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let installation_id = [0x66; 16];
+
+        let commit = propose_with(expected_tag, installation_id, 0, 9)
+            .expect("the propose must be committed");
+
+        assert_eq!(
+            commit,
+            RegistrationCommit {
+                installation_id,
+                commit_index: 9
+            }
+        );
+    }
+
+    #[test]
+    fn an_existing_account_propose_carries_the_expected_verifier() {
+        let dir = TempDir::new("tag-existing");
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+
+        let commit = propose_with_verifiers(expected_tag, [0x66; 16], 0, 4, Some("old-phc"), None)
+            .expect("the existing-account propose must be committed");
+
+        assert_eq!(commit.commit_index, 4);
+    }
+
+    #[test]
+    fn a_propose_login_outside_the_configured_range_is_rejected_before_connecting() {
+        let dir = TempDir::new("propose-login");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let config = config(9);
+        let login = "a".repeat(65);
+        let request = RegistrationProposeRequest {
+            login: &login,
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        assert!(matches!(
+            propose_registration(&config, &identity, &secret, &request),
+            Err(InterServerClientError::LoginOutOfBounds {
+                actual: 65,
+                min: 1,
+                max: 64
+            })
+        ));
+    }
+
+    #[test]
+    fn a_rejected_propose_reports_the_storage_result_code() {
+        let dir = TempDir::new("tag-rejected");
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+
+        let error = propose_with(expected_tag, [0x66; 16], 0x0003_0001, 0)
+            .expect_err("a rejected propose must fail");
+
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0003_0001)
+        ));
     }
 
     #[test]

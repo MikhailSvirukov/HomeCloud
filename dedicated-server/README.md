@@ -495,7 +495,10 @@ and reads the response within the configured inter-server timeout. The response
 is checked for the addressed sender, the repeated request identifier, the first
 frame number and the manifest label, the signature is verified with the
 manifest signing key before decryption, and a non-zero result code is reported
-with its value.
+with its value. A registration propose command is sent the same way: the client
+computes the content tag from the registration secret, the credentials and the
+installation keys, carries the expected or the new verifier, and returns the
+committed installation identifier with the commit index.
 
 `src/frame_seal.rs` seals and opens an application frame body (`INT-NET-081`):
 the four-byte big-endian prefix, the encoded external header, the 64-byte
