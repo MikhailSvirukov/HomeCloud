@@ -15,6 +15,10 @@ pub enum MessageType {
     DedicatedHeartbeatResponse = 2,
     /// OpenRaft RPC.
     RaftRpc = 3,
+    /// Publish version command.
+    PublishVersion = 8,
+    /// Publish version result.
+    PublishVersionResult = 9,
     /// Blob put begin.
     BlobPutBegin = 10,
     /// Blob put data.
@@ -27,6 +31,10 @@ pub enum MessageType {
     BlobGetResult = 14,
     /// Blob get data.
     BlobGetData = 15,
+    /// Replica status command.
+    ReplicaStatus = 16,
+    /// Replica status result.
+    ReplicaStatusResult = 17,
 }
 
 impl TryFrom<u32> for MessageType {
@@ -38,12 +46,16 @@ impl TryFrom<u32> for MessageType {
             1 => Ok(Self::DedicatedHeartbeatRequest),
             2 => Ok(Self::DedicatedHeartbeatResponse),
             3 => Ok(Self::RaftRpc),
+            8 => Ok(Self::PublishVersion),
+            9 => Ok(Self::PublishVersionResult),
             10 => Ok(Self::BlobPutBegin),
             11 => Ok(Self::BlobPutData),
             12 => Ok(Self::BlobPutResult),
             13 => Ok(Self::BlobGet),
             14 => Ok(Self::BlobGetResult),
             15 => Ok(Self::BlobGetData),
+            16 => Ok(Self::ReplicaStatus),
+            17 => Ok(Self::ReplicaStatusResult),
             code => Err(MessageError::UnknownMessageType { code }),
         }
     }

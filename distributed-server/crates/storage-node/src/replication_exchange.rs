@@ -21,19 +21,20 @@ use crate::blob_put::{
     BlobMetadata, BlobPutError,
 };
 use crate::client_limits::ClientLimits;
+use crate::message::MessageType;
 use crate::metadata::{ContentHash, UploadId, CONTENT_HASH_LEN, UPLOAD_ID_LEN};
 
 /// Result alias for replication wire message validation.
 type Result<T> = core::result::Result<T, ReplicationExchangeError>;
 
 /// Wire code of the publish-version command.
-const PUBLISH_VERSION_MESSAGE: u32 = 8;
+const PUBLISH_VERSION_MESSAGE: u32 = MessageType::PublishVersion as u32;
 /// Wire code of the publish-version result.
-const PUBLISH_VERSION_RESULT_MESSAGE: u32 = 9;
+const PUBLISH_VERSION_RESULT_MESSAGE: u32 = MessageType::PublishVersionResult as u32;
 /// Wire code of the replica-status command.
-const REPLICA_STATUS_MESSAGE: u32 = 16;
+const REPLICA_STATUS_MESSAGE: u32 = MessageType::ReplicaStatus as u32;
 /// Wire code of the replica-status result.
-const REPLICA_STATUS_RESULT_MESSAGE: u32 = 17;
+const REPLICA_STATUS_RESULT_MESSAGE: u32 = MessageType::ReplicaStatusResult as u32;
 /// Length of a wire node identifier UUID in bytes.
 const NODE_ID_LEN: usize = 16;
 /// Success result code.
