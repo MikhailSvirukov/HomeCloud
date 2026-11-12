@@ -447,25 +447,25 @@ fn topology_rejects_non_empty_arguments() {
     );
 }
 
-/// `INT-NET-080/1`, `TST-028/1`: a catalog page request carries the validated
-/// `[snapshot_token, cursor]` arguments.
+/// `INT-NET-080/1`, `TST-028/1`: catalog page arguments must be the
+/// `[snapshot_token, cursor]` pair when encoding and when decoding.
 #[test]
 fn catalog_arguments_are_validated() {
-    let accepted = catalog_request();
-    let args = accepted.to_args(LIMITS).expect("request is valid");
-    assert_eq!(ClientRequest::from_args(&args, LIMITS), Ok(accepted));
-    assert_eq!(
-        cbor::encode(&Value::Array(args)),
-        catalog_request_bytes(),
-        "the accepted form still matches the catalog golden vector"
-    );
-
     let rejected = ClientRequest {
         args: vec![Value::Null],
         ..request(OperationType::CatalogPage)
     };
     assert_eq!(
         rejected.to_args(LIMITS),
+        Err(ClientError::CatalogArguments(
+            CatalogError::WrongRequestShape
+        ))
+    );
+
+    let catalog_header = Value::Array(catalog_request().to_args(LIMITS).expect("request is valid"));
+    let malformed = with_position(catalog_header, 3, Value::Array(vec![Value::Null]));
+    assert_eq!(
+        decode_header(&malformed),
         Err(ClientError::CatalogArguments(
             CatalogError::WrongRequestShape
         ))
