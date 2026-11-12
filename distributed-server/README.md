@@ -390,9 +390,11 @@ resolved manifest entry.
 locally applied committed catalog of a publish version, then submits it to the
 local OpenRaft instance; an identical replay returns the committed version
 without a second log entry. The pre-check reads local applied state and does not
-forward a follower request; concurrent/apply-time enforcement remains a separate
-state-machine step. The pure `validate_publish_version` check remains available for callers
-that validate a command without committing it.
+forward a follower request. The state machine also validates a publish entry
+against the committed membership and catalog when it is applied; an invalid
+entry is ignored without mutating the catalog, and the runtime maps the missing
+upload id to a typed rejection. The pure `validate_publish_version` check remains
+available for callers that validate a command without committing it.
 
 ## Publish version and replica status
 

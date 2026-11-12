@@ -180,7 +180,7 @@ impl RaftRuntime {
         }
         let response = self
             .node
-            .client_write(RaftRequest::CommitVersion(version.clone()))
+            .client_write(RaftRequest::PublishVersion(command))
             .await
             .map_err(|error| RuntimeError::Raft(Box::new(error)))?;
         if response.upload_id != Some(version.record.upload_id) {

@@ -38,6 +38,7 @@ use openraft::Config;
 use openraft::Raft;
 
 use crate::metadata::UploadId;
+use crate::replication::PublishVersion;
 
 /// Node identifier used by the storage-cluster Raft instance.
 pub type NodeId = u64;
@@ -74,6 +75,8 @@ impl fmt::Debug for CommittedVersion {
 pub enum RaftRequest {
     /// Records a committed upload version with its blob replica set.
     CommitVersion(CommittedVersion),
+    /// Validates a publish version against the committed membership and catalog before recording it.
+    PublishVersion(PublishVersion),
     /// Replaces the set of storage nodes that durably hold the version's blob; an unknown upload id is a no-op reported as `None`.
     UpdateReplicas {
         upload_id: UploadId,

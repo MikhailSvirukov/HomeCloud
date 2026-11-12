@@ -20,6 +20,7 @@ use crate::raft::{CommittedVersion, NodeId};
 type Result<T> = core::result::Result<T, ReplicationError>;
 
 /// A publish-version request with its coordinator and durable blob replicas.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct PublishVersion {
     pub record: UploadRecord,
     pub coordinator: NodeId,

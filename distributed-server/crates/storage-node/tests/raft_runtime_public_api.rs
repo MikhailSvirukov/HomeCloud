@@ -18,8 +18,9 @@
 //! configured storage connect timeout), `CFG-CL-029 / 1` and `CFG-CL-031 / 1`
 //! (the local responder label must fit the configured byte limit),
 //! `INT-NET-071 / 1` (the local sender id is the manifest entry's stable
-//! identifier), `INT-NET-113 / 1` (a committed publish version validates the
-//! fixed-voter quorum and committed metadata before it reaches Raft),
+//! identifier), `INT-NET-113 / 1` (a publish version validates the fixed-voter
+//! quorum and committed metadata before it reaches Raft and again when the
+//! entry is applied),
 //! `NFR-SEC-009 / 1` (local identity keys must match the
 //! trusted manifest before peer exchange), and `NFR-OBS-005 / 3` (the node
 //! exposes its Raft leader, term, last applied index, and voter count).
@@ -88,6 +89,8 @@ const PUBLISH_UPLOAD_ID: [u8; UPLOAD_ID_LEN] = [0x5A; UPLOAD_ID_LEN];
 const PUBLISH_LOGIN: &str = "alice";
 /// Original file name stored with the fixed publish record.
 const PUBLISH_ORIGINAL_NAME: &str = "photo.jpg";
+/// A different original file name for the conflicting publish record.
+const CONFLICTING_ORIGINAL_NAME: &str = "other.jpg";
 /// Fixed payload whose digest is stored as the publish content hash.
 const PUBLISH_PAYLOAD: &[u8] = b"runtime publish version";
 /// Coordinator id that does not belong to the manifest voter set.
@@ -184,6 +187,21 @@ fn publish_record() -> UploadRecord {
         1_700_000_000_000,
     )
     .expect("the fixed publish record is valid")
+}
+
+/// Builds the fixed structural upload record with a different original file name.
+fn conflicting_publish_record() -> UploadRecord {
+    UploadRecord::new(
+        UploadId::from_bytes(PUBLISH_UPLOAD_ID),
+        PUBLISH_LOGIN,
+        CONFLICTING_ORIGINAL_NAME,
+        PUBLISH_PAYLOAD.len() as u64,
+        PUBLISH_PAYLOAD.len() as u64 / 2,
+        ContentHash::digest(PUBLISH_PAYLOAD),
+        1_690_000_000_000,
+        1_700_000_000_000,
+    )
+    .expect("the conflicting publish record is valid")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -361,6 +379,117 @@ async fn rejects_an_unknown_publish_coordinator_before_raft() {
     assert!(
         runtime.node().committed_versions().await.is_empty(),
         "a publish version rejected before Raft commits nothing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejects_an_invalid_publish_entry_at_apply_time() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-apply-rejected"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let response = runtime
+        .node()
+        .client_write(RaftRequest::PublishVersion(PublishVersion {
+            record: publish_record(),
+            coordinator: UNKNOWN_COORDINATOR,
+            replicas: vec![UNKNOWN_COORDINATOR],
+        }))
+        .await
+        .expect("the invalid publish entry also reaches the state machine as a log entry");
+
+    assert_eq!(
+        response,
+        RaftResponse { upload_id: None },
+        "the state machine rejects the invalid publish entry instead of committing it"
+    );
+    assert!(
+        runtime.node().committed_versions().await.is_empty(),
+        "a publish entry rejected at apply time does not mutate the catalog"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejects_conflicting_metadata_at_apply_time() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-apply-conflict"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    let leader = runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let record = publish_record();
+    let committed = runtime
+        .publish_version(PublishVersion {
+            record: record.clone(),
+            coordinator: leader,
+            replicas: vec![leader],
+        })
+        .await
+        .expect("the runtime validates and commits the publish version");
+
+    let response = runtime
+        .node()
+        .client_write(RaftRequest::PublishVersion(PublishVersion {
+            record: conflicting_publish_record(),
+            coordinator: leader,
+            replicas: vec![leader],
+        }))
+        .await
+        .expect("the conflicting publish entry also reaches the state machine as a log entry");
+
+    assert_eq!(
+        response,
+        RaftResponse { upload_id: None },
+        "the state machine rejects metadata that differs from the committed version"
+    );
+    let versions = runtime.node().committed_versions().await;
+    assert_eq!(
+        versions.len(),
+        1,
+        "a conflicting publish entry does not add or replace a catalog version"
+    );
+    assert_eq!(
+        versions.get(&record.upload_id),
+        Some(&committed),
+        "the catalog still holds the originally committed version"
     );
 }
 
