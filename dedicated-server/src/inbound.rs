@@ -20,7 +20,7 @@ use crate::wire::{ClientHeader, ExternalHeader, WireError};
 #[derive(Clone, Copy)]
 pub struct PeerKeys {
     /// Ed25519 key that signed the request.
-    pub signing_public_key: [u8; X25519_KEY_BYTES],
+    pub signing_public_key: [u8; crate::frame_seal::ED25519_KEY_BYTES],
 }
 
 /// Errors produced while reading one inbound request.
@@ -41,6 +41,9 @@ pub enum InboundError {
     /// The payload could not be decrypted.
     #[error("the request payload could not be decrypted")]
     Payload,
+    /// The sealed frame could not be opened for another reason.
+    #[error("the request frame could not be opened: {0}")]
+    Seal(FrameSealError),
     /// The decrypted logical header exceeds the configured limit.
     #[error("the logical header is {actual} bytes, above max_header_bytes ({max})")]
     LogicalHeaderTooLarge {
@@ -61,6 +64,10 @@ pub enum InboundError {
 /// for an established one. The frame is read within `max_frame_bytes`, the
 /// signature is verified before any decryption, and the logical header and its
 /// credentials are bounded before they are decoded.
+///
+/// The decrypted payload of every client request this server accepts is exactly
+/// the client logical header: upload data frames are addressed to a storage
+/// node, so the whole plaintext is the encoded header bounded by `INT-NET-085`.
 pub fn read_request<R: Read>(
     stream: &mut R,
     config: &ServerConfig,
@@ -82,7 +89,8 @@ pub fn read_request<R: Read>(
     )
     .map_err(|error| match error {
         FrameSealError::Signature => InboundError::Signature,
-        _ => InboundError::Payload,
+        FrameSealError::Payload => InboundError::Payload,
+        other => InboundError::Seal(other),
     })?;
     if plaintext.len() > config.max_header_bytes.get() {
         return Err(InboundError::LogicalHeaderTooLarge {
@@ -92,7 +100,7 @@ pub fn read_request<R: Read>(
     }
 
     let limits = config.header_limits();
-    let client = ClientHeader::decode(&plaintext, &limits)?;
+    let client = ClientHeader::decode(&plaintext, &limits).map_err(InboundError::Client)?;
 
     Ok((header, client))
 }
@@ -121,6 +129,7 @@ mod tests {
 
     const FIXTURE: &str = include_str!("../tests/fixtures/valid_server.toml");
     const SERVER_X25519_SEED: [u8; 32] = [0x31; 32];
+    const DEDICATED_ED25519_SEED: [u8; 32] = [0x41; 32];
     const CLIENT_ED25519_SEED: [u8; 32] = [0x61; 32];
 
     fn array<const N: usize>(bytes: &[u8]) -> [u8; N] {
@@ -154,7 +163,7 @@ mod tests {
             )
             .replace(
                 "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-                &ed25519(&CLIENT_ED25519_SEED)
+                &ed25519(&DEDICATED_ED25519_SEED)
                     .iter()
                     .map(|byte| format!("{byte:02x}"))
                     .collect::<String>(),
@@ -244,6 +253,40 @@ mod tests {
             .expect_err("a foreign signature must fail");
 
         assert!(matches!(error, InboundError::Signature));
+    }
+
+    #[test]
+    fn a_valid_signature_with_another_recipient_fails_to_decrypt() {
+        let config = config();
+        let header = ExternalHeader {
+            sender_id: Some([0x01; 16]),
+            request_id: [0x11; 16],
+            frame_number: 0,
+            upload_id: None,
+            responder_label: None,
+            bootstrap_signing_public_key: None,
+        };
+        let client = ClientHeader::Topology {
+            credentials: Credentials {
+                login: "alice".to_owned(),
+                password: "secret-password".to_owned(),
+            },
+        };
+        let header_bytes = header.encode(64).expect("the header must encode");
+        let payload = client.encode().expect("the payload must encode");
+        let frame = seal_frame(
+            &header_bytes,
+            &payload,
+            &x25519(&[0x77; 32]).1,
+            &CLIENT_ED25519_SEED,
+        )
+        .expect("the frame must seal");
+        let mut cursor = Cursor::new(frame);
+
+        let error = read_request(&mut cursor, &config, &x25519(&SERVER_X25519_SEED).0, peer())
+            .expect_err("another recipient must not decrypt");
+
+        assert!(matches!(error, InboundError::Payload));
     }
 
     #[test]
