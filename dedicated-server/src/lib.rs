@@ -13,6 +13,7 @@ mod frame;
 mod frame_seal;
 mod heartbeat;
 mod identity;
+mod inbound;
 mod inter_server_client;
 mod log_file;
 mod logging;
@@ -42,6 +43,7 @@ pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
 pub use frame_seal::{open_frame, seal_frame, FrameSealError};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
+pub use inbound::{read_request, InboundError, PeerKeys};
 pub use inter_server_client::{
     InterServerClientError, RegistrationCommit, RegistrationProposeRequest,
 };
