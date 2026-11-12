@@ -470,6 +470,91 @@ mod tests {
     }
 
     #[test]
+    fn publish_version_encodes_the_exact_message_8_shape() {
+        let bytes = encode_publish(&publish_version());
+        let value = decode_value(&bytes).expect("the encoded publish version is canonical");
+        let Value::Array(envelope) = value else {
+            panic!("the publish version is an envelope");
+        };
+        assert_eq!(envelope.len(), 2, "the envelope has exactly two elements");
+        assert_eq!(envelope[0], Value::Integer(8.into()));
+        let Value::Array(arguments) = &envelope[1] else {
+            panic!("the publish version arguments are an array");
+        };
+        assert_eq!(arguments.len(), 5, "publish version has five arguments");
+        assert_eq!(arguments[0], Value::Text("alice".to_owned()));
+        assert_eq!(arguments[1], Value::Bytes(vec![1; UPLOAD_ID_LEN]));
+        let Value::Array(metadata) = &arguments[2] else {
+            panic!("metadata is an array");
+        };
+        assert_eq!(metadata.len(), 5, "metadata has five fields");
+        assert_eq!(metadata[0], Value::Text("report.txt".to_owned()));
+        assert_eq!(metadata[1], Value::Integer(1_700_000_000_000_i64.into()));
+        assert_eq!(metadata[2], Value::Integer(10_u64.into()));
+        assert_eq!(metadata[3], Value::Integer(4_u64.into()));
+        assert_eq!(metadata[4], Value::Bytes(vec![0xab; CONTENT_HASH_LEN]));
+        assert_eq!(arguments[3], Value::Bytes(vec![2; NODE_ID_LEN]));
+        assert_eq!(
+            arguments[4],
+            Value::Array(vec![
+                Value::Bytes(vec![2; NODE_ID_LEN]),
+                Value::Bytes(vec![3; NODE_ID_LEN]),
+            ])
+        );
+    }
+
+    #[test]
+    fn replica_status_encodes_the_exact_message_16_shape() {
+        let bytes = encode_replica_status(&replica_status(), &limits())
+            .expect("the replica status encodes");
+        let value = decode_value(&bytes).expect("the encoded replica status is canonical");
+        let Value::Array(envelope) = value else {
+            panic!("the replica status is an envelope");
+        };
+        assert_eq!(envelope.len(), 2, "the envelope has exactly two elements");
+        assert_eq!(envelope[0], Value::Integer(16.into()));
+        let Value::Array(arguments) = &envelope[1] else {
+            panic!("the replica status arguments are an array");
+        };
+        assert_eq!(arguments.len(), 5, "replica status has five arguments");
+        assert_eq!(arguments[0], Value::Text("alice".to_owned()));
+        assert_eq!(arguments[1], Value::Bytes(vec![4; UPLOAD_ID_LEN]));
+        assert_eq!(arguments[2], Value::Bytes(vec![5; NODE_ID_LEN]));
+        assert_eq!(arguments[3], Value::Bytes(vec![6; CONTENT_HASH_LEN]));
+        assert_eq!(arguments[4], Value::Bool(true));
+
+        let mut damaged = replica_status();
+        damaged.available = false;
+        let bytes =
+            encode_replica_status(&damaged, &limits()).expect("the damaged replica status encodes");
+        let value = decode_value(&bytes).expect("the damaged status is canonical");
+        let Value::Array(envelope) = value else {
+            panic!("the damaged replica status is an envelope");
+        };
+        let Value::Array(arguments) = &envelope[1] else {
+            panic!("the damaged replica status arguments are an array");
+        };
+        assert_eq!(arguments[4], Value::Bool(false));
+    }
+
+    #[test]
+    fn result_commit_index_boundaries_round_trip() {
+        for commit_index in [0, u64::MAX] {
+            let result = ReplicationResult {
+                result_code: 0,
+                upload_id: Some(UploadId::from_bytes([7; UPLOAD_ID_LEN])),
+                commit_index: Some(commit_index),
+            };
+            let bytes = encode_publish_version_result(&result)
+                .expect("the result encodes at the commit-index boundary");
+            assert_eq!(
+                decode_publish_version_result(&bytes).expect("the result decodes"),
+                result
+            );
+        }
+    }
+
+    #[test]
     fn messages_round_trip() {
         let publish = publish_version();
         let bytes = encode_publish(&publish);
