@@ -181,7 +181,9 @@ version. `raft_cluster_public_api.rs` covers restart recovery, blob replica-set
 updates, and a returning node catching up committed entries.
 `raft_multi_node_public_api.rs` starts three manifest-derived runtimes on loopback
 TCP, elects a leader through the encrypted signed peer transport, and checks that a
-client write commits and is applied on every node. A local committed
+client write commits and is applied on every node. It then stops the leader, waits
+for the two surviving voters to elect a replacement, and checks that a second client
+write commits and leaves both surviving catalogs equal. A local committed
 blob is checked by streaming it, comparing its SHA-256 with the committed hash,
 and creating a `<blob>.corrupt` marker when the hashes differ; a later check
 that matches the committed hash removes the marker. `integrity_public_api.rs`
