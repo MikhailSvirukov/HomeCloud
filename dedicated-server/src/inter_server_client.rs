@@ -357,6 +357,9 @@ fn with_registration_budget<T>(
         let remaining = deadline.saturating_duration_since(Instant::now());
         let attempt_budget = configured_attempt.min(remaining);
         if attempt_budget.is_zero() {
+            if matches!(last, InterServerClientError::Rejected(code) if is_temporary_code(code)) {
+                return Err(last);
+            }
             return Err(InterServerClientError::Deadline {
                 millis: total.as_millis() as u64,
             });
@@ -621,14 +624,27 @@ mod tests {
     }
 
     /// Two storage entries: an unreachable first node and the mock on the second.
+    /// Reserve and release a loopback port so a connection to it is refused.
+    fn closed_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port()
+    }
+
     fn config_with_failover(
+        first_port: u16,
         mock_port: u16,
         attempts: u32,
         retry_ms: u64,
         total_ms: u64,
     ) -> ServerConfig {
         let document = FIXTURE
-            .replace("address = \"10.0.0.11:7100\"", "address = \"127.0.0.1:1\"")
+            .replace(
+                "address = \"10.0.0.11:7100\"",
+                &format!("address = \"127.0.0.1:{first_port}\""),
+            )
             .replace(
                 "address = \"10.0.0.12:7100\"",
                 &format!("address = \"127.0.0.1:{mock_port}\""),
@@ -848,14 +864,19 @@ mod tests {
         RegistrationSecret::load(&path).expect("the secret must load")
     }
 
-    fn mock_storage_propose(
-        listener: TcpListener,
+    struct ProposeReply {
         expected_tag: [u8; 32],
         installation_id: [u8; 16],
         code: u32,
         commit_index: u64,
-        expected_verifier_value: Option<String>,
-        new_verifier_value: Option<String>,
+        expected_verifier: Option<String>,
+        new_verifier: Option<String>,
+    }
+
+    fn mock_storage_propose(
+        listener: TcpListener,
+        node: MockNode,
+        reply: ProposeReply,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("the client must connect");
@@ -868,7 +889,7 @@ mod tests {
             let mut sealed = Vec::with_capacity(4 + body.len());
             sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
             sealed.extend_from_slice(&body);
-            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
+            let (storage_x25519, _) = x25519(&node.x25519_secret);
             let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
             let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
                 .expect("the request must open");
@@ -887,31 +908,31 @@ mod tests {
                 } => {
                     assert_eq!(login, "alice");
                     assert_eq!(registration_request_id, [0x11; 16]);
-                    assert_eq!(content_tag, expected_tag);
-                    assert_eq!(sent, installation_id);
+                    assert_eq!(content_tag, reply.expected_tag);
+                    assert_eq!(sent, reply.installation_id);
                     assert_eq!(x25519_key, [0x44; 32]);
                     assert_eq!(ed25519_key, [0x55; 32]);
                     assert_eq!(
                         expected_verifier.as_deref(),
-                        expected_verifier_value.as_deref()
+                        reply.expected_verifier.as_deref()
                     );
-                    assert_eq!(new_verifier.as_deref(), new_verifier_value.as_deref());
+                    assert_eq!(new_verifier.as_deref(), reply.new_verifier.as_deref());
                 }
                 _ => panic!("the request must be a registration propose"),
             }
 
             let response = InterServerMessage::RegistrationResult {
-                code,
-                installation_id: (code == 0).then_some(installation_id),
-                commit_index: (code == 0).then_some(commit_index),
+                code: reply.code,
+                installation_id: (reply.code == 0).then_some(reply.installation_id),
+                commit_index: (reply.code == 0).then_some(reply.commit_index),
             };
             let payload = response.encode(512).expect("the response must encode");
             let header = ExternalHeader {
-                sender_id: Some(STORAGE_ID),
+                sender_id: Some(node.sender_id),
                 request_id: request_header.request_id,
                 frame_number: 0,
                 upload_id: None,
-                responder_label: Some("storage-1".to_owned()),
+                responder_label: Some(node.label.to_owned()),
                 bootstrap_signing_public_key: None,
             };
             let header_bytes = header.encode(64).expect("the response header must encode");
@@ -920,7 +941,7 @@ mod tests {
                 &header_bytes,
                 &payload,
                 &dedicated_x25519,
-                &STORAGE_ED25519_SEED,
+                &node.ed25519_seed,
             )
             .expect("the response must seal");
             stream
@@ -964,12 +985,15 @@ mod tests {
         let config = config(port);
         let server = mock_storage_propose(
             listener,
-            expected_tag,
-            installation_id,
-            code,
-            commit_index,
-            expected_verifier.map(str::to_owned),
-            new_verifier.map(str::to_owned),
+            node_one(),
+            ProposeReply {
+                expected_tag,
+                installation_id,
+                code,
+                commit_index,
+                expected_verifier: expected_verifier.map(str::to_owned),
+                new_verifier: new_verifier.map(str::to_owned),
+            },
         );
         let request = RegistrationProposeRequest {
             login: "alice",
@@ -1094,6 +1118,55 @@ mod tests {
     }
 
     #[test]
+    fn a_propose_fails_over_to_the_next_storage_node() {
+        let dir = TempDir::new("propose-failover");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(closed_port(), port, 3, 1, 5_000);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let server = mock_storage_propose(
+            listener,
+            node_two(),
+            ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0,
+                commit_index: 11,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            },
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the second storage node must commit");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(commit.commit_index, 11);
+    }
+
+    #[test]
     fn a_rejected_propose_reports_the_storage_result_code() {
         let dir = TempDir::new("tag-rejected");
         let secret = secret(&dir);
@@ -1124,7 +1197,7 @@ mod tests {
             .local_addr()
             .expect("the listener must have an address")
             .port();
-        let config = config_with_failover(port, 3, 1, 5_000);
+        let config = config_with_failover(closed_port(), port, 3, 1, 5_000);
         let response = MockResponse {
             sender_id: Some(node_two().sender_id),
             responder_label: Some(node_two().label.to_owned()),
@@ -1159,7 +1232,7 @@ mod tests {
             .local_addr()
             .expect("the listener must have an address")
             .port();
-        let config = config_with_failover(port, 4, 1, 5_000);
+        let config = config_with_failover(closed_port(), port, 4, 1, 5_000);
         let temporary = MockResponse {
             sender_id: Some(node_two().sender_id),
             responder_label: Some(node_two().label.to_owned()),
@@ -1217,7 +1290,7 @@ mod tests {
             ..MockResponse::snapshot(snapshot.clone())
         };
         let server = mock_storage(listener, Reply::Message(response), node_two());
-        let config = config_with_failover(port, 2, 1, 5_000);
+        let config = config_with_failover(closed_port(), port, 2, 1, 5_000);
 
         let found = lookup_registry(&config, &identity, Some("alice"), None, None)
             .expect("the second storage node must answer");
@@ -1230,7 +1303,7 @@ mod tests {
     fn a_lookup_gives_up_after_the_configured_attempts() {
         let dir = TempDir::new("give-up");
         let identity = identity(&dir);
-        let config = config_with_failover(2, 2, 1, 5_000);
+        let config = config_with_failover(closed_port(), closed_port(), 2, 1, 5_000);
 
         assert!(matches!(
             lookup_registry(&config, &identity, Some("alice"), None, None),
@@ -1242,7 +1315,7 @@ mod tests {
     fn a_lookup_stops_at_the_total_deadline() {
         let dir = TempDir::new("deadline");
         let identity = identity(&dir);
-        let config = config_with_failover(2, 10, 400, 1_000);
+        let config = config_with_failover(closed_port(), closed_port(), 10, 400, 1_000);
 
         assert!(matches!(
             lookup_registry(&config, &identity, Some("alice"), None, None),
@@ -1418,7 +1491,7 @@ mod tests {
 
     #[test]
     fn the_attempt_budget_never_exceeds_the_total_deadline() {
-        let config = config_with_failover(2, 1, 1, 1_000);
+        let config = config_with_failover(closed_port(), closed_port(), 1, 1, 1_000);
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(40);
         let mut seen = None;
 
@@ -1433,7 +1506,7 @@ mod tests {
 
     #[test]
     fn an_attempt_after_the_deadline_is_not_started() {
-        let config = config_with_failover(2, 2, 1, 1_000);
+        let config = config_with_failover(closed_port(), closed_port(), 2, 1, 1_000);
         let deadline = std::time::Instant::now();
         let mut ran = false;
 
