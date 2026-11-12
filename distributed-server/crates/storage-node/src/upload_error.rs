@@ -1,13 +1,14 @@
 //! Protocol result codes for upload failures.
 //!
-//! SRS: `INT-NET-064 / 1`, supporting `INT-NET-065 / 1`,
-//! `FR-UP-012 / 1`, `FR-UP-013 / 1`, `FR-UP-023 / 1`.
+//! SRS: `INT-NET-064 / 1`, `INT-NET-123 / 1`, `INT-NET-124 / 1`, supporting
+//! `INT-NET-065 / 1`, `FR-UP-012 / 1`, `FR-UP-013 / 1`, `FR-UP-023 / 1`.
 
 use std::io;
 
 use crate::blob_writer::BlobWriteError;
 use crate::frame_sequence::FrameSequenceError;
 use crate::integrity::IntegrityError;
+use crate::replication::ReplicationError;
 use crate::upload_exchange::UploadExchangeError;
 
 /// Protocol result code for a failed upload request.
@@ -86,6 +87,25 @@ impl From<IntegrityError> for UploadErrorCode {
             | IntegrityError::Missing(_)
             | IntegrityError::Read(_)
             | IntegrityError::Marker(_) => Self::Internal,
+        }
+    }
+}
+
+/// Maps replication status/publish validation failures to the protocol code sent
+/// to the client.
+impl From<ReplicationError> for UploadErrorCode {
+    fn from(error: ReplicationError) -> Self {
+        match error {
+            ReplicationError::LoginMismatch
+            | ReplicationError::HashMismatch
+            | ReplicationError::UnknownUpload
+            | ReplicationError::ReplicaUnknown
+            | ReplicationError::EmptyVoterSet
+            | ReplicationError::CoordinatorUnknown
+            | ReplicationError::CoordinatorNotReplica
+            | ReplicationError::DuplicateReplica
+            | ReplicationError::QuorumNotReached => Self::SizeMetadataHashMismatch,
+            ReplicationError::MetadataConflict => Self::UploadIdConflict,
         }
     }
 }

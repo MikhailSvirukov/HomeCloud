@@ -170,8 +170,8 @@ and service failures to the `0x0004_0001`, `0x0004_0002`, and `0x0008_0001`
 protocol table entries, the upload request codec for operation `4` with its five
 argument positions, exact source-name preservation, and name/size limits, the typed
 upload outcomes (status codes), the typed upload protocol error codes that map
-upload request, blob-write, integrity, and frame-sequence failures to their
-`INT-NET-064` table entries (disk-full writes map to storage-capacity
+upload request, blob-write, integrity, frame-sequence, and replication failures to
+their `INT-NET-064` table entries (disk-full writes map to storage-capacity
 exhaustion), and the TCP
 listener that binds the node's listen address and hands back frame reader/writer
 halves for each accepted connection, the bounded CPU pool that runs
@@ -399,8 +399,10 @@ entry is ignored without mutating the catalog, and the runtime maps the missing
 upload id to a typed rejection. The pure `validate_publish_version` check remains
 available for callers that validate a command without committing it.
 `RaftRuntime::replica_status` pre-checks and submits a validated status; the state
-machine checks fixed membership, committed upload, login, and SHA-256; invalid entries
-are no-ops.
+machine checks fixed membership, committed upload, login, and SHA-256. Accepted
+statuses are persisted in the replicated state machine and snapshots, and their
+`available` flag adds or removes the replica in the catalog replica set; invalid
+entries are no-ops.
 
 ## Publish version and replica status
 
@@ -417,11 +419,11 @@ replica set.
 
 `validate_replica_status` accepts a status only for a fixed voter and an already
 committed upload whose login and SHA-256 match the committed record. The
-`available` flag is validated as part of the same status and carried through
-without changing the outcome, so a repeated status is idempotent. An unknown
-replica, an unknown upload, a login mismatch, and a hash mismatch are reported as
-distinct errors. Both validators are pure checks over their inputs; they do not
-perform the commit themselves.
+`available` flag is part of the accepted status and is applied to the catalog
+replica set on commit: `false` removes the replica and `true` adds it, so a
+repeated status is idempotent. An unknown replica, an unknown upload, a login
+mismatch, and a hash mismatch are reported as distinct errors. Both validators
+are pure checks over their inputs; they do not perform the commit themselves.
 
 ## Catalog page exchange
 

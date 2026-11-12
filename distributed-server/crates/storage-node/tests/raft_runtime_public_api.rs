@@ -20,9 +20,12 @@
 //! `INT-NET-071 / 1` (the local sender id is the manifest entry's stable
 //! identifier), `INT-NET-113 / 1` (a publish version validates the fixed-voter
 //! quorum and committed metadata before it reaches Raft and again when the
-//! entry is applied), `INT-NET-124 / 1` (a replica status is pre-checked and
-//! validated again at apply time against fixed membership and committed upload
-//! metadata),
+//! entry is applied), `INT-NET-123 / 1` (a validated replica status is persisted
+//! through Raft and its availability updates the committed catalog replica set),
+//! `INT-NET-124 / 1` (a replica status is pre-checked and validated again at
+//! apply time against fixed membership and committed upload metadata, and
+//! invalid metadata maps to the protocol error code) and `INT-NET-064 / 1`
+//! (replication validation failures map to the protocol error table),
 //! `NFR-SEC-009 / 1` (local identity keys must match the
 //! trusted manifest before peer exchange), and `NFR-OBS-005 / 3` (the node
 //! exposes its Raft leader, term, last applied index, and voter count).
@@ -37,7 +40,7 @@ use std::time::Duration;
 use storage_node::{
     ClientLimits, ContentHash, ManifestError, MessageSigningKey, PrivateKey, PublishVersion,
     RaftRequest, RaftResponse, RaftRuntime, RecipientPrivateKey, ReplicaStatus, ReplicationError,
-    RuntimeError, StaticManifest, UploadId, UploadRecord, KEY_LEN, UPLOAD_ID_LEN,
+    RuntimeError, StaticManifest, UploadErrorCode, UploadId, UploadRecord, KEY_LEN, UPLOAD_ID_LEN,
 };
 use tempfile::TempDir;
 
@@ -99,6 +102,10 @@ const CONFLICTING_ORIGINAL_NAME: &str = "other.jpg";
 const PUBLISH_PAYLOAD: &[u8] = b"runtime publish version";
 /// Coordinator id that does not belong to the manifest voter set.
 const UNKNOWN_COORDINATOR: u64 = 999;
+/// Protocol code for a size, metadata, or hash mismatch.
+const REPLICATION_REJECTION_CODE: u32 = 0x0005_0002;
+/// Protocol code for an upload id conflict.
+const UPLOAD_ID_CONFLICT_CODE: u32 = 0x0005_0004;
 
 /// Temporary manifest and key directory shared by one test.
 struct Fixture {
@@ -674,6 +681,180 @@ async fn rejects_invalid_replica_status_at_apply_time() {
         versions.get(&record.upload_id),
         Some(&committed),
         "the catalog still holds the published version"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn persists_replica_availability_and_updates_catalog_replicas() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-replica-availability"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    let leader = runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let record = publish_record();
+    runtime
+        .publish_version(PublishVersion {
+            record: record.clone(),
+            coordinator: leader,
+            replicas: vec![leader],
+        })
+        .await
+        .expect("the runtime validates and commits the publish version");
+
+    let unavailable = publish_replica_status(leader, record.upload_id, record.content_hash, false);
+    runtime
+        .replica_status(unavailable)
+        .await
+        .expect("a fixed voter reports an unavailable committed upload");
+    let statuses = runtime.node().replica_statuses().await;
+    assert_eq!(
+        statuses
+            .get(&(record.upload_id, leader))
+            .map(|status| status.available),
+        Some(false),
+        "the accepted status is persisted under the upload and replica id"
+    );
+    let versions = runtime.node().committed_versions().await;
+    assert!(
+        !versions
+            .get(&record.upload_id)
+            .expect("the published version is still committed")
+            .replicas
+            .contains(&leader),
+        "an unavailable status removes the replica from the catalog replica set"
+    );
+
+    let available = publish_replica_status(leader, record.upload_id, record.content_hash, true);
+    runtime
+        .replica_status(available)
+        .await
+        .expect("a fixed voter reports an available committed upload");
+    let statuses = runtime.node().replica_statuses().await;
+    assert_eq!(
+        statuses
+            .get(&(record.upload_id, leader))
+            .map(|status| status.available),
+        Some(true),
+        "the persisted status is updated to the latest availability"
+    );
+    let versions = runtime.node().committed_versions().await;
+    assert!(
+        versions
+            .get(&record.upload_id)
+            .expect("the published version is still committed")
+            .replicas
+            .contains(&leader),
+        "an available status adds the replica back to the catalog replica set"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejects_invalid_replica_status_without_state_mutation() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-replica-status-no-mutation"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    let leader = runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let record = publish_record();
+    let committed = runtime
+        .publish_version(PublishVersion {
+            record: record.clone(),
+            coordinator: leader,
+            replicas: vec![leader],
+        })
+        .await
+        .expect("the runtime validates and commits the publish version");
+
+    let invalid = publish_replica_status(
+        leader,
+        record.upload_id,
+        ContentHash::digest(b"other runtime payload"),
+        true,
+    );
+    let response = runtime
+        .node()
+        .client_write(RaftRequest::ReplicaStatus(invalid))
+        .await
+        .expect("the invalid replica status also reaches the state machine as a log entry");
+
+    assert_eq!(
+        response,
+        RaftResponse { upload_id: None },
+        "the state machine rejects a status whose SHA-256 differs from the committed upload"
+    );
+    assert!(
+        runtime.node().replica_statuses().await.is_empty(),
+        "an invalid replica status is not persisted"
+    );
+    let versions = runtime.node().committed_versions().await;
+    assert_eq!(
+        versions.len(),
+        1,
+        "an invalid replica status does not add or replace a catalog version"
+    );
+    assert_eq!(
+        versions.get(&record.upload_id),
+        Some(&committed),
+        "the catalog still holds exactly the published version"
+    );
+}
+
+#[test]
+fn maps_replication_errors_to_protocol_codes() {
+    for error in [
+        ReplicationError::LoginMismatch,
+        ReplicationError::HashMismatch,
+        ReplicationError::UnknownUpload,
+        ReplicationError::QuorumNotReached,
+    ] {
+        assert_eq!(
+            u32::from(UploadErrorCode::from(error)),
+            REPLICATION_REJECTION_CODE,
+            "{error} maps to the size, metadata, or hash mismatch protocol code"
+        );
+    }
+    assert_eq!(
+        u32::from(UploadErrorCode::from(ReplicationError::MetadataConflict)),
+        UPLOAD_ID_CONFLICT_CODE,
+        "a metadata conflict maps to the upload id conflict protocol code"
     );
 }
 

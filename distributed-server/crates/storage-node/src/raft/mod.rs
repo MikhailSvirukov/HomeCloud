@@ -13,12 +13,16 @@
 //! carry that whole value, so every node reconstructs the same metadata and
 //! replica state. A separate [`RaftRequest::UpdateReplicas`] entry replaces the
 //! replica set in the log once blob replication changes which nodes durably hold
-//! the version. The capture/creation time is required by `FR-NODE-008 / 1`.
+//! the version. Validated [`RaftRequest::ReplicaStatus`] entries are persisted in
+//! the state machine and snapshot, and their `available` flag updates the
+//! upload's catalog replica set. The capture/creation time is required by
+//! `FR-NODE-008 / 1`.
 //!
 //! SRS: `FR-CL-009 / 1`, `FR-CL-010 / 1`, `FR-CL-016 / 1`, `FR-CL-020 / 1`,
 //! `FR-CL-028 / 1`, `FR-CL-029 / 1`, `FR-CL-031 / 1`, `FR-NODE-005 / 1`–
-//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`,
-//! `NFR-OBS-005 / 3`, `NFR-OBS-008 / 1`.
+//! `FR-NODE-008 / 1`, `INT-NET-074 / 2`, `INT-NET-123 / 1`, `INT-NET-124 / 1`,
+//! `NFR-MAINT-001 / 1`–`NFR-MAINT-006 / 1`, `NFR-OBS-005 / 3`,
+//! `NFR-OBS-008 / 1`.
 
 mod network;
 mod store;
@@ -309,6 +313,11 @@ impl RaftNode {
     /// Returns the number of applied catalog versions without copying them.
     pub async fn committed_version_count(&self) -> usize {
         self.store.committed_version_count().await
+    }
+
+    /// Returns the replica statuses applied on this node, keyed by upload and replica id.
+    pub async fn replica_statuses(&self) -> BTreeMap<(UploadId, NodeId), ReplicaStatus> {
+        self.store.replica_statuses().await
     }
 
     /// Handles one encoded Raft RPC by passing it to the local OpenRaft instance and returns the encoded reply.

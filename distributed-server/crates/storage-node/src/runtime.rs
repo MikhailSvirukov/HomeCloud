@@ -197,21 +197,20 @@ impl RaftRuntime {
 
     /// Validates a replica status against the fixed manifest voters and the local
     /// committed catalog, then submits it to OpenRaft. An accepted status is
-    /// acknowledged by the committed log entry; the catalog is not changed.
+    /// persisted in the replicated state machine and snapshot, and its
+    /// `available` flag adds or removes the replica in the upload's catalog
+    /// replica set.
     pub async fn replica_status(&self, status: ReplicaStatus) -> Result<(), RuntimeError> {
-        let existing = self
-            .node
-            .committed_versions()
-            .await
-            .remove(&status.upload_id);
+        let upload_id = status.upload_id;
+        let existing = self.node.committed_versions().await.remove(&upload_id);
         let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
         validate_replica_status(&status, &voters, existing.as_ref())?;
         let response = self
             .node
-            .client_write(RaftRequest::ReplicaStatus(status.clone()))
+            .client_write(RaftRequest::ReplicaStatus(status))
             .await
             .map_err(|error| RuntimeError::Raft(Box::new(error)))?;
-        if response.upload_id != Some(status.upload_id) {
+        if response.upload_id != Some(upload_id) {
             return Err(RuntimeError::ReplicaRejected);
         }
         Ok(())

@@ -29,12 +29,15 @@ use openraft::Vote;
 use tokio::sync::RwLock;
 
 use crate::metadata::UploadId;
-use crate::replication::{validate_publish_version, validate_replica_status};
+use crate::replication::{validate_publish_version, validate_replica_status, ReplicaStatus};
 
 use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
 
 /// Version of the persisted `state.cbor` layout, written before the CBOR payload.
-const STATE_FORMAT_VERSION: u8 = 3;
+///
+/// Version `4` adds the replica status map; a file written by an older layout is
+/// rejected instead of being restored with incomplete replica state.
+const STATE_FORMAT_VERSION: u8 = 4;
 
 /// Cloneable handle to the Raft storage shared by the log and state machine.
 ///
@@ -55,6 +58,7 @@ struct StoreInner {
     last_applied_log: Option<LogId<NodeId>>,
     last_membership: StoredMembership<NodeId, BasicNode>,
     catalog: BTreeMap<UploadId, CommittedVersion>,
+    replica_statuses: BTreeMap<(UploadId, NodeId), ReplicaStatus>,
     snapshot: Option<StoredSnapshot>,
     snapshot_idx: u64,
 }
@@ -70,6 +74,7 @@ struct StateMachineState {
     last_applied_log: Option<LogId<NodeId>>,
     last_membership: StoredMembership<NodeId, BasicNode>,
     catalog: BTreeMap<UploadId, CommittedVersion>,
+    replica_statuses: BTreeMap<(UploadId, NodeId), ReplicaStatus>,
 }
 
 /// The persisted state file has an unsupported or missing format version.
@@ -145,6 +150,11 @@ impl MemStore {
     pub(super) async fn committed_version_count(&self) -> usize {
         self.inner.read().await.catalog.len()
     }
+
+    /// Returns the applied replica statuses on this node.
+    pub(super) async fn replica_statuses(&self) -> BTreeMap<(UploadId, NodeId), ReplicaStatus> {
+        self.inner.read().await.replica_statuses.clone()
+    }
 }
 
 /// Syncs the directory that contains `path` so a rename survives a crash.
@@ -171,6 +181,7 @@ impl fmt::Debug for StoreInner {
             .debug_struct("StoreInner")
             .field("log_entries", &self.log.len())
             .field("catalog_versions", &self.catalog.len())
+            .field("replica_status_count", &self.replica_statuses.len())
             .field("has_vote", &self.vote.is_some())
             .field("has_snapshot", &self.snapshot.is_some())
             .finish()
@@ -201,6 +212,7 @@ impl RaftSnapshotBuilder<RaftConfig> for MemStore {
             last_applied_log: inner.last_applied_log,
             last_membership: inner.last_membership.clone(),
             catalog: inner.catalog.clone(),
+            replica_statuses: inner.replica_statuses.clone(),
         };
         let mut data = Vec::new();
         ciborium::ser::into_writer(&state, &mut data)
@@ -372,9 +384,18 @@ impl RaftStorage<RaftConfig> for MemStore {
                         let existing = inner.catalog.get(&status.upload_id);
                         validate_replica_status(status, &voters, existing).is_ok()
                     };
-                    // No separate durable status table exists in this increment:
-                    // the catalog is unchanged and a non-`None` reply acknowledges
-                    // that the status entry itself was accepted.
+                    if accepted {
+                        inner
+                            .replica_statuses
+                            .insert((status.upload_id, status.replica_id), status.clone());
+                        if let Some(version) = inner.catalog.get_mut(&status.upload_id) {
+                            if status.available {
+                                version.replicas.insert(status.replica_id);
+                            } else {
+                                version.replicas.remove(&status.replica_id);
+                            }
+                        }
+                    }
                     responses.push(RaftResponse {
                         upload_id: accepted.then_some(status.upload_id),
                     });
@@ -428,6 +449,7 @@ impl RaftStorage<RaftConfig> for MemStore {
         inner.last_applied_log = state.last_applied_log;
         inner.last_membership = state.last_membership;
         inner.catalog = state.catalog;
+        inner.replica_statuses = state.replica_statuses;
         inner.snapshot = Some(StoredSnapshot {
             meta: meta.clone(),
             data,
