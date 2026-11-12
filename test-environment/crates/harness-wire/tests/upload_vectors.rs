@@ -242,6 +242,34 @@ fn sizes_respect_the_configured_limit() {
         })
     );
 
+    let Value::Array(oversized_original_args) =
+        with_position(Value::Array(metadata_args()), 2, Value::Uint(1025))
+    else {
+        panic!("metadata is an array");
+    };
+    assert_eq!(
+        UploadMetadata::from_args(&oversized_original_args, SOURCE_NAME_LIMIT, limit),
+        Err(UploadError::SizeOutOfRange {
+            field: "original_size",
+            value: 1025,
+            limit,
+        })
+    );
+
+    let Value::Array(oversized_compressed_args) =
+        with_position(Value::Array(metadata_args()), 3, Value::Uint(1025))
+    else {
+        panic!("metadata is an array");
+    };
+    assert_eq!(
+        UploadMetadata::from_args(&oversized_compressed_args, SOURCE_NAME_LIMIT, limit),
+        Err(UploadError::SizeOutOfRange {
+            field: "compressed_size",
+            value: 1025,
+            limit,
+        })
+    );
+
     let args = metadata_args();
     let text_original = with_position(
         Value::Array(args.clone()),
