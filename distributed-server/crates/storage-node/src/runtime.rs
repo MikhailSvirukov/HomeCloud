@@ -187,11 +187,7 @@ impl RaftRuntime {
         &self,
         command: PublishVersion,
     ) -> Result<CommittedVersion, RuntimeError> {
-        let existing = self
-            .node
-            .committed_versions()
-            .await
-            .remove(&command.record.upload_id);
+        let existing = self.node.committed_version(command.record.upload_id).await;
         let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
         let version = validate_publish_version(&command, &voters, existing.as_ref())?;
         if existing.as_ref() == Some(&version) {
@@ -216,11 +212,11 @@ impl RaftRuntime {
     /// appending another log entry.
     pub async fn replica_status(&self, status: ReplicaStatus) -> Result<(), RuntimeError> {
         let upload_id = status.upload_id;
-        let existing = self.node.committed_versions().await.remove(&upload_id);
+        let existing = self.node.committed_version(upload_id).await;
         let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
         validate_replica_status(&status, &voters, existing.as_ref())?;
         let key = (upload_id, status.replica_id);
-        if self.node.replica_statuses().await.get(&key) == Some(&status) {
+        if self.node.replica_status(key.0, key.1).await.as_ref() == Some(&status) {
             return Ok(());
         }
         let response = self

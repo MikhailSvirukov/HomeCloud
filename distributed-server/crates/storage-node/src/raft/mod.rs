@@ -310,6 +310,11 @@ impl RaftNode {
         self.store.committed_versions().await
     }
 
+    /// Returns one applied catalog version without copying the catalog.
+    pub async fn committed_version(&self, upload_id: UploadId) -> Option<CommittedVersion> {
+        self.store.committed_version(upload_id).await
+    }
+
     /// Returns the number of applied catalog versions without copying them.
     pub async fn committed_version_count(&self) -> usize {
         self.store.committed_version_count().await
@@ -318,6 +323,15 @@ impl RaftNode {
     /// Returns the replica statuses applied on this node, keyed by upload and replica id.
     pub async fn replica_statuses(&self) -> BTreeMap<(UploadId, NodeId), ReplicaStatus> {
         self.store.replica_statuses().await
+    }
+
+    /// Returns one applied replica status without copying the status map.
+    pub async fn replica_status(
+        &self,
+        upload_id: UploadId,
+        replica_id: NodeId,
+    ) -> Option<ReplicaStatus> {
+        self.store.replica_status(upload_id, replica_id).await
     }
 
     /// Handles one encoded Raft RPC by passing it to the local OpenRaft instance and returns the encoded reply.
