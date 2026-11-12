@@ -17,6 +17,12 @@ import dev.homecloud.android.protocol.ResultCodes
 import dev.homecloud.android.protocol.ResultEnvelope
 import dev.homecloud.android.protocol.ResultEnvelopeCodec
 import dev.homecloud.android.protocol.TopologyNode
+import dev.homecloud.android.testsupport.FailingReadFrameChannel
+import dev.homecloud.android.testsupport.FixedIdentityStore
+import dev.homecloud.android.testsupport.RespondingFrameChannel
+import dev.homecloud.android.testsupport.requireValue
+import dev.homecloud.android.testsupport.unusedChannel
+import dev.homecloud.android.testsupport.uuidBytes
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -24,8 +30,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.util.UUID
 
 /**
  * Asserts the direct catalog-page exchange of `INT-NET-080`, `INT-NET-084`, `FR-CAT-012`,
@@ -359,7 +363,8 @@ class CatalogClientTest {
         channelFactory: (String, Int) -> FrameChannel,
     ): CatalogClient = CatalogClient(store, channelFactory, MAX_FRAME_BYTES)
 
-    private fun respondingChannel(respond: (request: ByteArray) -> ByteArray): RespondingFrameChannel = RespondingFrameChannel(respond)
+    private fun respondingChannel(respond: (request: ByteArray) -> ByteArray): RespondingFrameChannel =
+        RespondingFrameChannel { writes -> respond(writes.last()) }
 
     private fun decodeWrittenRequest(request: ByteArray): DecodedRequest {
         val decoded =
@@ -450,8 +455,6 @@ class CatalogClientTest {
         }
     }
 
-    private fun unusedChannel(): FrameChannel = RespondingFrameChannel { throw AssertionError("the channel must not be opened") }
-
     private fun successPage(
         snapshotToken: CborValue = CborValue.Bytes(SNAPSHOT_TOKEN),
         nextCursor: CborValue = CborValue.Null,
@@ -481,11 +484,6 @@ class CatalogClientTest {
                 CborValue.UInt(FIRST_COMPRESSED_SIZE),
             ),
         )
-
-    private fun <T : Any> requireValue(
-        value: T?,
-        message: String,
-    ): T = value ?: throw AssertionError(message)
 
     private data class DecodedRequest(
         val header: ExternalFrameHeader,
@@ -529,64 +527,3 @@ class CatalogClientTest {
         val SECOND_SHA256 = ByteArray(SHA256_BYTES) { index -> (index + 101).toByte() }
     }
 }
-
-/** In-memory identity store that always produces the same identity. */
-private class FixedIdentityStore(
-    private val stored: InstallationIdentity,
-) : InstallationIdentityStore {
-    override fun load(): InstallationIdentity = stored
-
-    override fun save(identity: InstallationIdentity) = Unit
-}
-
-/** Frame channel that builds its response from the frame just written and records every write. */
-private class RespondingFrameChannel(
-    private val respond: (request: ByteArray) -> ByteArray,
-) : FrameChannel {
-    val writes = mutableListOf<ByteArray>()
-    var closed = false
-        private set
-    private var response: ByteArray? = null
-
-    override fun write(frame: ByteArray) {
-        writes += frame.copyOf()
-        response = respond(frame)
-    }
-
-    override fun read(): ByteArray = response ?: throw AssertionError(NO_RESPONSE_MESSAGE)
-
-    override fun close() {
-        closed = true
-    }
-
-    private companion object {
-        const val NO_RESPONSE_MESSAGE = "no response was scripted"
-    }
-}
-
-/** Frame channel that records its close flag while every read fails with the scripted failure. */
-private class FailingReadFrameChannel(
-    private val failure: IOException,
-) : FrameChannel {
-    var closed = false
-        private set
-
-    override fun write(frame: ByteArray) = Unit
-
-    override fun read(): ByteArray = throw failure
-
-    override fun close() {
-        closed = true
-    }
-}
-
-private fun uuidBytes(value: String): ByteArray {
-    val uuid = UUID.fromString(value)
-    return ByteBuffer
-        .allocate(UUID_BYTES)
-        .putLong(uuid.mostSignificantBits)
-        .putLong(uuid.leastSignificantBits)
-        .array()
-}
-
-private const val UUID_BYTES = 16

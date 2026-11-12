@@ -19,6 +19,12 @@ import dev.homecloud.android.protocol.ResultCodes
 import dev.homecloud.android.protocol.ResultEnvelope
 import dev.homecloud.android.protocol.ResultEnvelopeCodec
 import dev.homecloud.android.protocol.TopologyNode
+import dev.homecloud.android.testsupport.AbsentIdentityStore
+import dev.homecloud.android.testsupport.FailingReadFrameChannel
+import dev.homecloud.android.testsupport.FixedIdentityStore
+import dev.homecloud.android.testsupport.RespondingFrameChannel
+import dev.homecloud.android.testsupport.requireValue
+import dev.homecloud.android.testsupport.unusedChannel
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -473,13 +479,6 @@ class UploadClientTest {
         return length
     }
 
-    private fun unusedChannel(): FrameChannel = RespondingFrameChannel { throw AssertionError(CHANNEL_MUST_NOT_OPEN_MESSAGE) }
-
-    private fun <T : Any> requireValue(
-        value: T?,
-        message: String,
-    ): T = value ?: throw AssertionError(message)
-
     private companion object {
         const val MAX_FRAME_BYTES = 4_096
         const val PLAN_MAX_FRAME_BYTES = 512
@@ -507,7 +506,6 @@ class UploadClientTest {
         const val TIMESTAMP_MILLIS = 1_700_000_000_123L
         const val ORIGINAL_SIZE_BYTES = 12_345L
         const val READ_FAILURE_MESSAGE = "scripted read failure"
-        const val CHANNEL_MUST_NOT_OPEN_MESSAGE = "the channel must not be opened"
 
         val LIMITS = UploadMetadataLimits(maxOriginalSizeBytes = MAX_ORIGINAL_SIZE_BYTES)
         val INSTALLATION_SENDER_ID = bytes(UPLOAD_ID_BYTES, 1)
@@ -523,54 +521,3 @@ private fun bytes(
     size: Int,
     start: Int,
 ): ByteArray = ByteArray(size) { index -> (start + index).toByte() }
-
-/** In-memory identity store that always produces the same identity. */
-private class FixedIdentityStore(
-    private val stored: InstallationIdentity,
-) : InstallationIdentityStore {
-    override fun load(): InstallationIdentity = stored
-
-    override fun save(identity: InstallationIdentity) = Unit
-}
-
-/** Identity store without a stored identity. */
-private class AbsentIdentityStore : InstallationIdentityStore {
-    override fun load(): InstallationIdentity? = null
-
-    override fun save(identity: InstallationIdentity) = Unit
-}
-
-/** Frame channel that records every write and builds its response at read time. */
-private class RespondingFrameChannel(
-    private val respond: (writes: List<ByteArray>) -> ByteArray,
-) : FrameChannel {
-    val writes = mutableListOf<ByteArray>()
-    var closed = false
-        private set
-
-    override fun write(frame: ByteArray) {
-        writes += frame.copyOf()
-    }
-
-    override fun read(): ByteArray = respond(writes)
-
-    override fun close() {
-        closed = true
-    }
-}
-
-/** Frame channel that records its close flag while every read fails with the scripted failure. */
-private class FailingReadFrameChannel(
-    private val failure: IOException,
-) : FrameChannel {
-    var closed = false
-        private set
-
-    override fun write(frame: ByteArray) = Unit
-
-    override fun read(): ByteArray = throw failure
-
-    override fun close() {
-        closed = true
-    }
-}
