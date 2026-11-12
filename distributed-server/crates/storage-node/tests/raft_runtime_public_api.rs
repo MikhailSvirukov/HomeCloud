@@ -57,9 +57,9 @@ const LOCAL_ADDRESS: &str = "127.0.0.1:9001";
 /// A different concrete local IP used to check address validation.
 const OTHER_HOST: &str = "127.0.0.2";
 /// Dedicated-server sender identifier from the manifest.
-const DEDICATED_SENDER_ID: &str = "33333333-3333-4333-8333-333333333333";
+const DEDICATED_SENDER_ID: &str = "33333333333343338333333333333333";
 /// Storage sender identifier from the manifest.
-const LOCAL_SENDER_ID: &str = "11111111-1111-4111-8111-111111111111";
+const LOCAL_SENDER_ID: &str = "11111111111141118111111111111111";
 /// Fixed X25519 private key used by the test node.
 const ENCRYPTION_KEY: [u8; KEY_LEN] = [9; KEY_LEN];
 /// Fixed Ed25519 private key used by the test node.
@@ -1047,18 +1047,16 @@ fn manifest_text(host: &str, port: u16) -> String {
         "[dedicated]\n\
          sender_id = \"{DEDICATED_SENDER_ID}\"\n\
          label = \"{DEDICATED_LABEL}\"\n\
-         host = \"127.0.0.3\"\n\
-         port = 7000\n\
-         x25519_public_key = \"{}\"\n\
-         ed25519_public_key = \"{}\"\n\
+         address = \"127.0.0.3:7000\"\n\
+         encryption_public_key = \"{}\"\n\
+         signing_public_key = \"{}\"\n\
          \n\
          [[storage]]\n\
          sender_id = \"{LOCAL_SENDER_ID}\"\n\
          label = \"{LOCAL_LABEL}\"\n\
-         host = \"{host}\"\n\
-         port = {port}\n\
-         x25519_public_key = \"{}\"\n\
-         ed25519_public_key = \"{}\"\n",
+         address = \"{host}:{port}\"\n\
+         encryption_public_key = \"{}\"\n\
+         signing_public_key = \"{}\"\n",
         recipient_public_key_hex(&DEDICATED_X25519_KEY),
         verifying_key_hex(&DEDICATED_ED25519_KEY),
         recipient_public_key_hex(&ENCRYPTION_KEY),

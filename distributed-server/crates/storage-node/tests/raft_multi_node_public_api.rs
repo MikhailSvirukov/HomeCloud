@@ -535,10 +535,9 @@ fn manifest_text(addresses: &[SocketAddr; NODE_COUNT]) -> String {
         "[dedicated]\n\
          sender_id = \"{DEDICATED_SENDER_ID}\"\n\
          label = \"{DEDICATED_LABEL}\"\n\
-         host = \"{LOOPBACK_HOST}\"\n\
-         port = {DEDICATED_PORT}\n\
-         x25519_public_key = \"{}\"\n\
-         ed25519_public_key = \"{}\"\n",
+         address = \"{LOOPBACK_HOST}:{DEDICATED_PORT}\"\n\
+         encryption_public_key = \"{}\"\n\
+         signing_public_key = \"{}\"\n",
         recipient_public_key_hex(&DEDICATED_ENCRYPTION_SEED),
         verifying_key_hex(&DEDICATED_SIGNING_SEED),
     );
@@ -550,12 +549,11 @@ fn manifest_text(addresses: &[SocketAddr; NODE_COUNT]) -> String {
                 "\n[[storage]]\n\
                  sender_id = \"{}\"\n\
                  label = \"{label}\"\n\
-                 host = \"{LOOPBACK_HOST}\"\n\
-                 port = {}\n\
-                 x25519_public_key = \"{}\"\n\
-                 ed25519_public_key = \"{}\"\n",
+                 address = \"{}\"\n\
+                 encryption_public_key = \"{}\"\n\
+                 signing_public_key = \"{}\"\n",
                 SENDER_IDS[index],
-                addresses[index].port(),
+                addresses[index],
                 recipient_public_key_hex(&ENCRYPTION_SEEDS[index]),
                 verifying_key_hex(&SIGNING_SEEDS[index]),
             )
