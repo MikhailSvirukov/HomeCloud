@@ -84,6 +84,11 @@ test-environment/
   scenarios (TST-021) — sends raw bytes, reads one frame within a configured
   body limit, and asserts close-without-response; loopback-tested in PR CI with
   no Docker required.
+- `harness-scenario::identity`: node identity consistency check (TST-024) —
+  parses the storage UUID/label pairs from the published manifest and verifies
+  uniqueness plus consistency with the topology answer and a node message's
+  external `sender_id`; the end-to-end restart/label-stability run still needs
+  the cluster scenario.
 
 ## Gates
 
