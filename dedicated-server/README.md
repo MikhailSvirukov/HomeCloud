@@ -486,6 +486,17 @@ every poll and every recorded response logs the transitions and republishes
 each node gauge and the quorum gauge, so the next scrape reflects the
 availability the monitor observed.
 
+`src/inter_server_client.rs` performs the outbound registry lookup against a
+storage node of the static manifest (`INT-NET-089`, `INT-NET-090`): it connects
+with the configured connect timeout, builds the external header for a
+dedicated-originated frame, seals the inter-server envelope to the storage
+node's X25519 key and signs it with the dedicated signing key, writes the frame,
+and reads the response within the configured inter-server timeout. The response
+is checked for the addressed sender, the repeated request identifier, the first
+frame number and the manifest label, the signature is verified with the
+manifest signing key before decryption, and a non-zero result code is reported
+with its value.
+
 `src/frame_seal.rs` seals and opens an application frame body (`INT-NET-081`):
 the four-byte big-endian prefix, the encoded external header, the 64-byte
 Ed25519 signature over the prefix, the header and the payload, and the payload
