@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
 import dev.homecloud.android.backup.BackupCycleComposition
 import dev.homecloud.android.backup.BackupWorkScheduler
+import dev.homecloud.android.credentials.CredentialComposition
 import dev.homecloud.android.media.MediaDiscovery
 import dev.homecloud.android.media.MediaLibrarySummaryContent
 import dev.homecloud.android.media.MediaStoreMediaRowSource
@@ -36,6 +37,7 @@ import dev.homecloud.android.setup.FileSetupConfigStore
 import dev.homecloud.android.setup.RegistrationStatus
 import dev.homecloud.android.setup.SetupConfigStore
 import dev.homecloud.android.setup.SetupContent
+import dev.homecloud.android.setup.SetupCredentialRecorder
 import dev.homecloud.android.setup.SetupPrerequisites
 import dev.homecloud.android.setup.SetupStateMachine
 import dev.homecloud.android.setup.SetupSubmission
@@ -171,9 +173,10 @@ private fun readQueueSnapshot(filesDir: File): List<UploadQueueEntry> =
  * the main thread (`FR-AND-042 / 1`, `CFG-CL-029 / 1`) and then runs one registration attempt off
  * the main thread (`FR-AND-042 / 1`, `FR-AND-053 / 1`). A failed save is reported on the setup
  * surface instead of being swallowed, and a failed save stops the submission before registration
- * starts. The credentials of a submission stay in the submission object only: the configuration is
- * saved and the password is never stored or logged (`FR-AND-041 / 2`). The registration controller is
- * built on the first submission that reaches registration and reused afterwards.
+ * starts. The configuration is saved without the password, and after a successful registration the
+ * submitted password is stored only in the encrypted credential envelope for background requests
+ * (`FR-AND-022 / 1`); it is never logged (`FR-AND-023 / 2`). The registration controller is built on
+ * the first submission that reaches registration and reused afterwards.
  */
 @Composable
 private fun SetupSection(
@@ -190,6 +193,7 @@ private fun SetupSection(
     }
     var registrationController by remember(store) { mutableStateOf<RegistrationController?>(null) }
     val context = LocalContext.current
+    val credentialRecorder = remember(context) { SetupCredentialRecorder(CredentialComposition.store(context)) }
     val scope = rememberCoroutineScope()
     val current =
         state.copy(
@@ -221,8 +225,11 @@ private fun SetupSection(
                             }
                         state =
                             when (outcome) {
-                                is RegistrationOutcome.Registered ->
+                                is RegistrationOutcome.Registered -> {
+                                    // The registration already succeeded, so a store failure must not change its outcome.
+                                    withContext(Dispatchers.IO) { credentialRecorder.record(submission) }
                                     SetupStateMachine.registered(state, submission.configuration)
+                                }
                                 RegistrationOutcome.Pending -> SetupStateMachine.registrationPending(state)
                                 RegistrationOutcome.StorageFailed,
                                 RegistrationOutcome.NoIdentity,
