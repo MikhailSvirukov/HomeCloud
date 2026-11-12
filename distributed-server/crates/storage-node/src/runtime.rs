@@ -3,7 +3,8 @@
 //! SRS: `FR-CL-001 / 1`, `FR-CL-015 / 1`, `FR-CL-017 / 1`, `FR-CL-027 / 1`,
 //! `FR-CL-030 / 1`, `FR-CL-031 / 1`, `CFG-CL-003 / 1`, `CFG-CL-007 / 1`,
 //! `CFG-CL-021 / 1`, `CFG-CL-029 / 1`, `CFG-CL-031 / 1`, `CFG-CL-039 / 1`,
-//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `INT-NET-113 / 1`, `NFR-SEC-009 / 1`.
+//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `INT-NET-113 / 1`, `INT-NET-123 / 1`,
+//! `INT-NET-124 / 1`, `NFR-SEC-009 / 1`.
 
 use core::fmt;
 use core::num::NonZeroU32;
@@ -22,11 +23,15 @@ use crate::keys::PrivateKey;
 use crate::listener::{Listener, ListenerError};
 use crate::manifest::{ManifestEntry, ManifestError, StaticManifest};
 use crate::raft::{CommittedVersion, NodeId, RaftError, RaftNode, RaftRequest, RaftTiming};
-use crate::replication::{validate_publish_version, PublishVersion, ReplicationError};
+use crate::replication::{
+    validate_publish_version, validate_replica_status, PublishVersion, ReplicaStatus,
+    ReplicationError,
+};
 use crate::sealing::{RecipientPrivateKey, SealingError};
 use crate::server_session::serve_peer_connection;
 use crate::server_transport::{PeerDirectory, ServerTransport};
 use crate::signing::MessageSigningKey;
+use crate::upload_error::UploadErrorCode;
 
 /// Failure modes when starting or serving the node runtime.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +66,20 @@ pub enum RuntimeError {
     /// The Raft commit replied with a different upload id than the published version.
     #[error("the committed publish version does not match the requested upload")]
     PublishRejected,
+    /// The Raft commit did not accept the replica status for its upload.
+    #[error("the committed replica status does not match the requested upload")]
+    ReplicaRejected,
+}
+
+impl RuntimeError {
+    /// Returns the protocol upload code for replication validation failures.
+    pub fn upload_error_code(&self) -> Option<UploadErrorCode> {
+        match self {
+            Self::Replication(error) => Some((*error).into()),
+            Self::ReplicaRejected => Some(UploadErrorCode::SizeMetadataHashMismatch),
+            _ => None,
+        }
+    }
 }
 
 /// Manifest-validated node runtime that owns the local OpenRaft instance and
@@ -187,6 +206,27 @@ impl RaftRuntime {
             return Err(RuntimeError::PublishRejected);
         }
         Ok(version)
+    }
+
+    /// Validates a replica status against the fixed manifest voters and the local
+    /// committed catalog, then submits it to OpenRaft. An accepted status is
+    /// persisted in the replicated state machine and snapshot, and its
+    /// `available` flag adds or removes the replica in the upload's catalog
+    /// replica set.
+    pub async fn replica_status(&self, status: ReplicaStatus) -> Result<(), RuntimeError> {
+        let upload_id = status.upload_id;
+        let existing = self.node.committed_versions().await.remove(&upload_id);
+        let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
+        validate_replica_status(&status, &voters, existing.as_ref())?;
+        let response = self
+            .node
+            .client_write(RaftRequest::ReplicaStatus(status))
+            .await
+            .map_err(|error| RuntimeError::Raft(Box::new(error)))?;
+        if response.upload_id != Some(upload_id) {
+            return Err(RuntimeError::ReplicaRejected);
+        }
+        Ok(())
     }
 
     /// Returns the shared local OpenRaft instance.

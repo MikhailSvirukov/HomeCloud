@@ -39,6 +39,7 @@ impl fmt::Debug for PublishVersion {
 }
 
 /// Replica status reported for one committed upload.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
 pub struct ReplicaStatus {
     pub login: String,
     pub upload_id: UploadId,
