@@ -10,7 +10,7 @@
 
 use std::io::Write;
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ciborium::Value;
 use thiserror::Error;
@@ -87,6 +87,12 @@ pub enum InterServerClientError {
     /// The response does not belong to the request or the addressed node.
     #[error("the response does not match the request: {0}")]
     Mismatch(&'static str),
+    /// The total registration deadline passed.
+    #[error("the registration deadline of {millis} ms passed before an exchange succeeded")]
+    Deadline {
+        /// Configured total deadline in milliseconds.
+        millis: u64,
+    },
     /// The content tag could not be computed.
     #[error("the registration content tag could not be computed: {0}")]
     Tag(#[from] crate::registration_tag::RegistrationSecretError),
@@ -104,8 +110,10 @@ fn exchange(
     identity: &ServerIdentity,
     storage: &ManifestEntry,
     request: &InterServerMessage,
-    request_id: [u8; IDENTIFIER_BYTES],
+    attempt_budget: Duration,
 ) -> Result<InterServerMessage> {
+    let started = Instant::now();
+    let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
     let signing_seed = key_seed(identity.signing_private_key(), "signing")?;
     let header = ExternalHeader {
         sender_id: Some(*config.dedicated.sender_id.as_bytes()),
@@ -124,7 +132,8 @@ fn exchange(
         &signing_seed,
     )?;
 
-    let connect_timeout = Duration::from_millis(config.connect_timeout_ms.get());
+    let connect_timeout =
+        Duration::from_millis(config.connect_timeout_ms.get()).min(attempt_budget);
     let mut stream =
         TcpStream::connect_timeout(&storage.address, connect_timeout).map_err(|source| {
             InterServerClientError::Connect {
@@ -132,7 +141,9 @@ fn exchange(
                 source,
             }
         })?;
-    let exchange_timeout = Duration::from_millis(config.inter_server_timeout_ms.get());
+    let remaining = attempt_budget.saturating_sub(started.elapsed());
+    let exchange_timeout =
+        Duration::from_millis(config.inter_server_timeout_ms.get()).min(remaining);
     stream.set_read_timeout(Some(exchange_timeout))?;
     stream.set_write_timeout(Some(exchange_timeout))?;
     stream.write_all(&frame)?;
@@ -262,10 +273,22 @@ pub(crate) fn propose_registration(
     secret: &crate::registration_tag::RegistrationSecret,
     request: &RegistrationProposeRequest<'_>,
 ) -> Result<RegistrationCommit> {
-    let storage = config
-        .storage
-        .first()
-        .ok_or(InterServerClientError::NoStorageNode)?;
+    let deadline =
+        Instant::now() + Duration::from_millis(config.registration.total_deadline_ms.get());
+    propose_registration_until(config, identity, secret, request, deadline)
+}
+
+/// Propose one registration command within an existing registration deadline.
+pub(crate) fn propose_registration_until(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    secret: &crate::registration_tag::RegistrationSecret,
+    request: &RegistrationProposeRequest<'_>,
+    deadline: Instant,
+) -> Result<RegistrationCommit> {
+    if config.storage.is_empty() {
+        return Err(InterServerClientError::NoStorageNode);
+    }
     ensure_login_bounds(
         request.login,
         config.min_login_bytes.get(),
@@ -288,9 +311,17 @@ pub(crate) fn propose_registration(
         expected_verifier: request.expected_verifier.map(str::to_owned),
         new_verifier: request.new_verifier.map(str::to_owned),
     };
-    let exchange_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
+    let response = with_registration_budget(config, deadline, |storage, budget| {
+        let response = exchange(config, identity, storage, &message, budget)?;
+        match &response {
+            InterServerMessage::RegistrationResult { code, .. } if is_temporary_code(*code) => {
+                Err(InterServerClientError::Rejected(*code))
+            }
+            _ => Ok(response),
+        }
+    })?;
 
-    match exchange(config, identity, storage, &message, exchange_id)? {
+    match response {
         InterServerMessage::RegistrationResult {
             code: 0,
             installation_id: Some(installation_id),
@@ -304,6 +335,67 @@ pub(crate) fn propose_registration(
         }
         _ => Err(InterServerClientError::UnexpectedMessage),
     }
+}
+
+/// Run one attempt per configured attempt, rotating through the storage nodes.
+///
+/// Each attempt is bounded by the per-attempt deadline, the pause between
+/// attempts comes from the configuration, and the loop stops at the attempt
+/// count or the total registration deadline (`CFG-CL-042`-`CFG-CL-045`).
+fn with_registration_budget<T>(
+    config: &ServerConfig,
+    deadline: Instant,
+    mut attempt: impl FnMut(&ManifestEntry, Duration) -> Result<T>,
+) -> Result<T> {
+    let attempts = config.registration.attempts.get();
+    let retry = Duration::from_millis(config.registration.retry_interval_ms.get());
+    let configured_attempt = Duration::from_millis(config.registration.attempt_deadline_ms.get());
+    let total = Duration::from_millis(config.registration.total_deadline_ms.get());
+    let mut last = InterServerClientError::NoStorageNode;
+
+    for index in 0..attempts {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let attempt_budget = configured_attempt.min(remaining);
+        if attempt_budget.is_zero() {
+            if matches!(last, InterServerClientError::Rejected(code) if is_temporary_code(code)) {
+                return Err(last);
+            }
+            return Err(InterServerClientError::Deadline {
+                millis: total.as_millis() as u64,
+            });
+        }
+        let storage = &config.storage[(index as usize) % config.storage.len()];
+        match attempt(storage, attempt_budget) {
+            Ok(value) => return Ok(value),
+            Err(error) if is_transient(&error) => last = error,
+            Err(error) => return Err(error),
+        }
+        if index + 1 < attempts {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            std::thread::sleep(retry.min(remaining));
+        }
+    }
+
+    Err(last)
+}
+
+/// Whether a failed exchange may succeed against another attempt.
+///
+/// Only a transport failure is retried; a protocol rejection, a malformed
+/// frame or an invalid signature is final (`INT-NET-065 / 1`).
+fn is_transient(error: &InterServerClientError) -> bool {
+    match error {
+        InterServerClientError::Connect { .. } | InterServerClientError::Io(_) => true,
+        InterServerClientError::Frame(FrameError::Io(_)) => true,
+        InterServerClientError::Rejected(code) => is_temporary_code(*code),
+        _ => false,
+    }
+}
+
+/// Whether a storage result code asks for a later attempt (`INT-NET-066 / 1`).
+fn is_temporary_code(code: u32) -> bool {
+    code == crate::result_code::ResultCode::QuorumUnavailable.as_u32()
+        || code == crate::result_code::ResultCode::TemporaryUnavailable.as_u32()
 }
 
 /// Length of the encoded external header at the start of `body`.
@@ -320,8 +412,9 @@ fn external_header_length(body: &[u8]) -> Result<usize> {
 
 /// Look up the registry of a storage node.
 ///
-/// The first storage entry of the static manifest is used; failover across
-/// storage nodes is a separate step (`FR-DED-046`).
+/// The attempt count, the per-attempt deadline, the retry pause and the total
+/// deadline come from the configuration, and the attempts rotate through the
+/// storage entries of the static manifest in order (`FR-DED-046`-`FR-DED-053`).
 pub(crate) fn lookup_registry(
     config: &ServerConfig,
     identity: &ServerIdentity,
@@ -329,10 +422,30 @@ pub(crate) fn lookup_registry(
     registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
     installation_id: Option<[u8; IDENTIFIER_BYTES]>,
 ) -> Result<RegistrySnapshot> {
-    let storage = config
-        .storage
-        .first()
-        .ok_or(InterServerClientError::NoStorageNode)?;
+    let deadline =
+        Instant::now() + Duration::from_millis(config.registration.total_deadline_ms.get());
+    lookup_registry_until(
+        config,
+        identity,
+        login,
+        registration_request_id,
+        installation_id,
+        deadline,
+    )
+}
+
+/// Look the registry up within an existing registration deadline.
+pub(crate) fn lookup_registry_until(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    login: Option<&str>,
+    registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
+    installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+    deadline: Instant,
+) -> Result<RegistrySnapshot> {
+    if config.storage.is_empty() {
+        return Err(InterServerClientError::NoStorageNode);
+    }
     if let Some(login) = login {
         ensure_login_bounds(
             login,
@@ -340,14 +453,23 @@ pub(crate) fn lookup_registry(
             config.max_login_bytes.get(),
         )?;
     }
-    let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
     let request = InterServerMessage::RegistryLookup {
         login: login.map(str::to_owned),
         registration_request_id,
         installation_id,
     };
 
-    match exchange(config, identity, storage, &request, request_id)? {
+    let response = with_registration_budget(config, deadline, |storage, budget| {
+        let message = exchange(config, identity, storage, &request, budget)?;
+        match &message {
+            InterServerMessage::RegistryLookupResult { code, .. } if is_temporary_code(*code) => {
+                Err(InterServerClientError::Rejected(*code))
+            }
+            _ => Ok(message),
+        }
+    })?;
+
+    match response {
         InterServerMessage::RegistryLookupResult { code: 0, snapshot } => {
             let snapshot = snapshot.ok_or(InterServerClientError::UnexpectedMessage)?;
             if let Some(installation) = &snapshot.installation {
@@ -370,6 +492,8 @@ pub(crate) fn lookup_registry(
 mod tests {
     use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
     use std::thread;
 
     use hpke::kem::X25519HkdfSha256;
@@ -391,6 +515,8 @@ mod tests {
     const DEDICATED_ED25519_SEED: [u8; 32] = [0x41; 32];
     const STORAGE_X25519_SEED: [u8; 32] = [0x51; 32];
     const STORAGE_ED25519_SEED: [u8; 32] = [0x61; 32];
+    const STORAGE2_X25519_SEED: [u8; 32] = [0x53; 32];
+    const STORAGE2_ED25519_SEED: [u8; 32] = [0x63; 32];
     const FOREIGN_ED25519_SEED: [u8; 32] = [0x71; 32];
 
     fn hex(bytes: &[u8]) -> String {
@@ -495,6 +621,115 @@ mod tests {
         config_with(port, None)
     }
 
+    /// Two storage entries: an unreachable first node and the mock on the second.
+    /// Reserve and release a loopback port so a connection to it is refused.
+    fn closed_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port()
+    }
+
+    fn config_with_two_nodes(first_port: u16, second_port: u16, attempts: u32) -> ServerConfig {
+        let document = FIXTURE
+            .replace(
+                "address = \"10.0.0.11:7100\"",
+                &format!("address = \"127.0.0.1:{first_port}\""),
+            )
+            .replace(
+                "address = \"10.0.0.12:7100\"",
+                &format!("address = \"127.0.0.1:{second_port}\""),
+            )
+            .replace("attempt_deadline_ms = 10000", "attempt_deadline_ms = 1000")
+            .replace("attempts = 5", &format!("attempts = {attempts}"))
+            .replace("retry_interval_ms = 1000", "retry_interval_ms = 1")
+            .replace("total_deadline_ms = 30000", "total_deadline_ms = 5000")
+            .replace(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                &hex(&x25519(&DEDICATED_X25519_SEED).1),
+            )
+            .replace(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &hex(&ed25519(&DEDICATED_ED25519_SEED)),
+            )
+            .replace(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                &hex(&x25519(&STORAGE_X25519_SEED).1),
+            )
+            .replace(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                &hex(&ed25519(&STORAGE_ED25519_SEED)),
+            )
+            .replace(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &hex(&x25519(&STORAGE2_X25519_SEED).1),
+            )
+            .replace(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                &hex(&ed25519(&STORAGE2_ED25519_SEED)),
+            );
+
+        ServerConfig::from_toml_str(&document).expect("the two-node configuration must parse")
+    }
+
+    fn config_with_failover(
+        first_port: u16,
+        mock_port: u16,
+        attempts: u32,
+        retry_ms: u64,
+        total_ms: u64,
+    ) -> ServerConfig {
+        let document = FIXTURE
+            .replace(
+                "address = \"10.0.0.11:7100\"",
+                &format!("address = \"127.0.0.1:{first_port}\""),
+            )
+            .replace(
+                "address = \"10.0.0.12:7100\"",
+                &format!("address = \"127.0.0.1:{mock_port}\""),
+            )
+            .replace(
+                "attempt_deadline_ms = 10000",
+                &format!("attempt_deadline_ms = {total_ms}"),
+            )
+            .replace("attempts = 5", &format!("attempts = {attempts}"))
+            .replace(
+                "retry_interval_ms = 1000",
+                &format!("retry_interval_ms = {retry_ms}"),
+            )
+            .replace(
+                "total_deadline_ms = 30000",
+                &format!("total_deadline_ms = {total_ms}"),
+            )
+            .replace(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                &hex(&x25519(&DEDICATED_X25519_SEED).1),
+            )
+            .replace(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &hex(&ed25519(&DEDICATED_ED25519_SEED)),
+            )
+            .replace(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                &hex(&x25519(&STORAGE_X25519_SEED).1),
+            )
+            .replace(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                &hex(&ed25519(&STORAGE_ED25519_SEED)),
+            )
+            .replace(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &hex(&x25519(&STORAGE2_X25519_SEED).1),
+            )
+            .replace(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                &hex(&ed25519(&STORAGE2_ED25519_SEED)),
+            );
+
+        ServerConfig::from_toml_str(&document).expect("the failover configuration must parse")
+    }
+
     struct MockResponse {
         sender_id: Option<[u8; 16]>,
         request_id: Option<[u8; 16]>,
@@ -541,76 +776,119 @@ mod tests {
         MalformedHeader,
     }
 
-    fn mock_storage(listener: TcpListener, reply: Reply) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("the client must connect");
-            let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
-            let body = read_frame(&mut stream, limit).expect("the request must arrive");
-            let header_length =
-                external_header_length(&body).expect("the request header must be found");
-            let request_header =
-                ExternalHeader::decode(&body[..header_length], 64).expect("the header must parse");
-            assert_eq!(request_header.sender_id, Some(DEDICATED_ID));
-            assert_eq!(request_header.frame_number, 0);
-            assert_eq!(request_header.upload_id, None);
-            assert_eq!(request_header.responder_label, None);
-            assert_eq!(request_header.bootstrap_signing_public_key, None);
-            let mut sealed = Vec::with_capacity(4 + body.len());
-            sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
-            sealed.extend_from_slice(&body);
-            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
-            let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
-            let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
-                .expect("the request must open");
-            let request =
-                InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
-            match request {
-                InterServerMessage::RegistryLookup { login, .. } => {
-                    assert_eq!(login.as_deref(), Some("alice"));
-                }
-                _ => panic!("the request must be a registry lookup"),
-            }
+    /// Keys and identity a mock storage node presents.
+    #[derive(Clone, Copy)]
+    struct MockNode {
+        x25519_secret: [u8; 32],
+        ed25519_seed: [u8; 32],
+        sender_id: [u8; 16],
+        label: &'static str,
+    }
 
-            let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
-            let (response, signing_seed) = match reply {
-                Reply::Message(response) => (response, STORAGE_ED25519_SEED),
-                Reply::ForeignSignature(response) => (response, FOREIGN_ED25519_SEED),
-                Reply::MalformedHeader => {
-                    let frame = seal_frame(
-                        &[0xFF; 4],
-                        &[0x80],
-                        &dedicated_x25519,
-                        &STORAGE_ED25519_SEED,
-                    )
-                    .expect("the malformed response must seal");
-                    stream
-                        .write_all(&frame)
-                        .expect("the malformed response must be written");
-                    return;
+    fn node_two() -> MockNode {
+        MockNode {
+            x25519_secret: STORAGE2_X25519_SEED,
+            ed25519_seed: STORAGE2_ED25519_SEED,
+            sender_id: {
+                let mut id = [0x00; 16];
+                id[15] = 0x02;
+                id
+            },
+            label: "storage-2",
+        }
+    }
+
+    fn node_one() -> MockNode {
+        MockNode {
+            x25519_secret: STORAGE_X25519_SEED,
+            ed25519_seed: STORAGE_ED25519_SEED,
+            sender_id: STORAGE_ID,
+            label: "storage-1",
+        }
+    }
+
+    fn mock_storage(listener: TcpListener, reply: Reply, node: MockNode) -> thread::JoinHandle<()> {
+        mock_storage_sequence(listener, vec![reply], node).0
+    }
+
+    fn mock_storage_sequence(
+        listener: TcpListener,
+        replies: Vec<Reply>,
+        node: MockNode,
+    ) -> (thread::JoinHandle<()>, Arc<AtomicU32>) {
+        let accepted = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&accepted);
+        let handle = thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().expect("the client must connect");
+                counter.fetch_add(1, Ordering::Relaxed);
+                let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+                let body = read_frame(&mut stream, limit).expect("the request must arrive");
+                let header_length =
+                    external_header_length(&body).expect("the request header must be found");
+                let request_header = ExternalHeader::decode(&body[..header_length], 64)
+                    .expect("the header must parse");
+                assert_eq!(request_header.sender_id, Some(DEDICATED_ID));
+                assert_eq!(request_header.frame_number, 0);
+                assert_eq!(request_header.upload_id, None);
+                assert_eq!(request_header.responder_label, None);
+                assert_eq!(request_header.bootstrap_signing_public_key, None);
+                let mut sealed = Vec::with_capacity(4 + body.len());
+                sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                sealed.extend_from_slice(&body);
+                let (storage_x25519, _) = x25519(&node.x25519_secret);
+                let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+                let plaintext =
+                    open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                        .expect("the request must open");
+                let request =
+                    InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+                match request {
+                    InterServerMessage::RegistryLookup { login, .. } => {
+                        assert_eq!(login.as_deref(), Some("alice"));
+                    }
+                    _ => panic!("the request must be a registry lookup"),
                 }
-            };
-            let response_message = InterServerMessage::RegistryLookupResult {
-                code: response.code,
-                snapshot: response.snapshot,
-            };
-            let payload = response_message
-                .encode(512)
-                .expect("the response must encode");
-            let header = ExternalHeader {
-                sender_id: response.sender_id,
-                request_id: response.request_id.unwrap_or(request_header.request_id),
-                frame_number: response.frame_number,
-                upload_id: response.upload_id,
-                responder_label: response.responder_label,
-                bootstrap_signing_public_key: None,
-            };
-            let header_bytes = header.encode(64).expect("the response header must encode");
-            let frame = seal_frame(&header_bytes, &payload, &dedicated_x25519, &signing_seed)
-                .expect("the response must seal");
-            stream
-                .write_all(&frame)
-                .expect("the response must be written");
-        })
+
+                let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+                let (response, signing_seed) = match reply {
+                    Reply::Message(response) => (response, node.ed25519_seed),
+                    Reply::ForeignSignature(response) => (response, FOREIGN_ED25519_SEED),
+                    Reply::MalformedHeader => {
+                        let frame =
+                            seal_frame(&[0xFF; 4], &[0x80], &dedicated_x25519, &node.ed25519_seed)
+                                .expect("the malformed response must seal");
+                        stream
+                            .write_all(&frame)
+                            .expect("the malformed response must be written");
+                        continue;
+                    }
+                };
+                let response_message = InterServerMessage::RegistryLookupResult {
+                    code: response.code,
+                    snapshot: response.snapshot,
+                };
+                let payload = response_message
+                    .encode(512)
+                    .expect("the response must encode");
+                let header = ExternalHeader {
+                    sender_id: response.sender_id,
+                    request_id: response.request_id.unwrap_or(request_header.request_id),
+                    frame_number: response.frame_number,
+                    upload_id: response.upload_id,
+                    responder_label: response.responder_label,
+                    bootstrap_signing_public_key: None,
+                };
+                let header_bytes = header.encode(64).expect("the response header must encode");
+                let frame = seal_frame(&header_bytes, &payload, &dedicated_x25519, &signing_seed)
+                    .expect("the response must seal");
+                stream
+                    .write_all(&frame)
+                    .expect("the response must be written");
+            }
+        });
+
+        (handle, accepted)
     }
 
     fn secret(dir: &TempDir) -> RegistrationSecret {
@@ -626,14 +904,104 @@ mod tests {
         RegistrationSecret::load(&path).expect("the secret must load")
     }
 
-    fn mock_storage_propose(
-        listener: TcpListener,
+    #[derive(Clone)]
+    struct ProposeReply {
         expected_tag: [u8; 32],
         installation_id: [u8; 16],
         code: u32,
         commit_index: u64,
-        expected_verifier_value: Option<String>,
-        new_verifier_value: Option<String>,
+        expected_verifier: Option<String>,
+        new_verifier: Option<String>,
+    }
+
+    fn mock_storage_propose_sequence(
+        listener: TcpListener,
+        node: MockNode,
+        replies: Vec<ProposeReply>,
+        request_ids: Arc<std::sync::Mutex<Vec<[u8; 16]>>>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().expect("the client must connect");
+                let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+                let body = read_frame(&mut stream, limit).expect("the request must arrive");
+                let header_length =
+                    external_header_length(&body).expect("the request header must be found");
+                let request_header = ExternalHeader::decode(&body[..header_length], 64)
+                    .expect("the header must parse");
+                request_ids
+                    .lock()
+                    .expect("the request ids must lock")
+                    .push(request_header.request_id);
+                let mut sealed = Vec::with_capacity(4 + body.len());
+                sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                sealed.extend_from_slice(&body);
+                let (storage_x25519, _) = x25519(&node.x25519_secret);
+                let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+                let plaintext =
+                    open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                        .expect("the request must open");
+                let request =
+                    InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+                match request {
+                    InterServerMessage::RegistrationPropose {
+                        login,
+                        registration_request_id,
+                        content_tag,
+                        installation_id: sent,
+                        x25519_key,
+                        ed25519_key,
+                        expected_verifier,
+                        new_verifier,
+                    } => {
+                        assert_eq!(login, "alice");
+                        assert_eq!(registration_request_id, [0x11; 16]);
+                        assert_eq!(content_tag, reply.expected_tag);
+                        assert_eq!(sent, reply.installation_id);
+                        assert_eq!(x25519_key, [0x44; 32]);
+                        assert_eq!(ed25519_key, [0x55; 32]);
+                        assert_eq!(
+                            expected_verifier.as_deref(),
+                            reply.expected_verifier.as_deref()
+                        );
+                        assert_eq!(new_verifier.as_deref(), reply.new_verifier.as_deref());
+                    }
+                    _ => panic!("the request must be a propose"),
+                }
+                let response = InterServerMessage::RegistrationResult {
+                    code: reply.code,
+                    installation_id: (reply.code == 0).then_some(reply.installation_id),
+                    commit_index: (reply.code == 0).then_some(reply.commit_index),
+                };
+                let payload = response.encode(512).expect("the response must encode");
+                let header = ExternalHeader {
+                    sender_id: Some(node.sender_id),
+                    request_id: request_header.request_id,
+                    frame_number: 0,
+                    upload_id: None,
+                    responder_label: Some(node.label.to_owned()),
+                    bootstrap_signing_public_key: None,
+                };
+                let header_bytes = header.encode(64).expect("the response header must encode");
+                let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+                let frame = seal_frame(
+                    &header_bytes,
+                    &payload,
+                    &dedicated_x25519,
+                    &node.ed25519_seed,
+                )
+                .expect("the response must seal");
+                stream
+                    .write_all(&frame)
+                    .expect("the response must be written");
+            }
+        })
+    }
+
+    fn mock_storage_propose(
+        listener: TcpListener,
+        node: MockNode,
+        reply: ProposeReply,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("the client must connect");
@@ -646,7 +1014,7 @@ mod tests {
             let mut sealed = Vec::with_capacity(4 + body.len());
             sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
             sealed.extend_from_slice(&body);
-            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
+            let (storage_x25519, _) = x25519(&node.x25519_secret);
             let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
             let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
                 .expect("the request must open");
@@ -665,31 +1033,31 @@ mod tests {
                 } => {
                     assert_eq!(login, "alice");
                     assert_eq!(registration_request_id, [0x11; 16]);
-                    assert_eq!(content_tag, expected_tag);
-                    assert_eq!(sent, installation_id);
+                    assert_eq!(content_tag, reply.expected_tag);
+                    assert_eq!(sent, reply.installation_id);
                     assert_eq!(x25519_key, [0x44; 32]);
                     assert_eq!(ed25519_key, [0x55; 32]);
                     assert_eq!(
                         expected_verifier.as_deref(),
-                        expected_verifier_value.as_deref()
+                        reply.expected_verifier.as_deref()
                     );
-                    assert_eq!(new_verifier.as_deref(), new_verifier_value.as_deref());
+                    assert_eq!(new_verifier.as_deref(), reply.new_verifier.as_deref());
                 }
                 _ => panic!("the request must be a registration propose"),
             }
 
             let response = InterServerMessage::RegistrationResult {
-                code,
-                installation_id: (code == 0).then_some(installation_id),
-                commit_index: (code == 0).then_some(commit_index),
+                code: reply.code,
+                installation_id: (reply.code == 0).then_some(reply.installation_id),
+                commit_index: (reply.code == 0).then_some(reply.commit_index),
             };
             let payload = response.encode(512).expect("the response must encode");
             let header = ExternalHeader {
-                sender_id: Some(STORAGE_ID),
+                sender_id: Some(node.sender_id),
                 request_id: request_header.request_id,
                 frame_number: 0,
                 upload_id: None,
-                responder_label: Some("storage-1".to_owned()),
+                responder_label: Some(node.label.to_owned()),
                 bootstrap_signing_public_key: None,
             };
             let header_bytes = header.encode(64).expect("the response header must encode");
@@ -698,7 +1066,7 @@ mod tests {
                 &header_bytes,
                 &payload,
                 &dedicated_x25519,
-                &STORAGE_ED25519_SEED,
+                &node.ed25519_seed,
             )
             .expect("the response must seal");
             stream
@@ -742,12 +1110,15 @@ mod tests {
         let config = config(port);
         let server = mock_storage_propose(
             listener,
-            expected_tag,
-            installation_id,
-            code,
-            commit_index,
-            expected_verifier.map(str::to_owned),
-            new_verifier.map(str::to_owned),
+            node_one(),
+            ProposeReply {
+                expected_tag,
+                installation_id,
+                code,
+                commit_index,
+                expected_verifier: expected_verifier.map(str::to_owned),
+                new_verifier: new_verifier.map(str::to_owned),
+            },
         );
         let request = RegistrationProposeRequest {
             login: "alice",
@@ -782,7 +1153,7 @@ mod tests {
             .expect("the listener must have an address")
             .port();
         let config = config_with(port, header_limit);
-        let server = mock_storage(listener, reply);
+        let server = mock_storage(listener, reply, node_one());
         let result = lookup_registry(&config, &identity, Some("alice"), None, None);
         server.join().expect("the mock server must finish");
 
@@ -872,6 +1243,389 @@ mod tests {
     }
 
     #[test]
+    fn a_propose_fails_over_to_the_next_storage_node() {
+        let dir = TempDir::new("propose-failover");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(closed_port(), port, 3, 1, 5_000);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let server = mock_storage_propose(
+            listener,
+            node_two(),
+            ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0,
+                commit_index: 11,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            },
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the second storage node must commit");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(commit.commit_index, 11);
+    }
+
+    #[test]
+    fn a_temporary_propose_rejection_retries_the_same_command_on_the_next_node() {
+        let dir = TempDir::new("propose-temporary");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let reply = ProposeReply {
+            expected_tag,
+            installation_id: [0x66; 16],
+            code: 0,
+            commit_index: 12,
+            expected_verifier: None,
+            new_verifier: Some("new-phc".to_owned()),
+        };
+        let request_ids = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                code: 0x0007_0001,
+                ..reply.clone()
+            }],
+            Arc::clone(&request_ids),
+        );
+        let node_b = mock_storage_propose_sequence(
+            second,
+            node_two(),
+            vec![reply],
+            Arc::clone(&request_ids),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the second node must commit the same command");
+
+        node_a.join().expect("the first mock must finish");
+        node_b.join().expect("the second mock must finish");
+        assert_eq!(commit.commit_index, 12);
+        let ids = request_ids.lock().expect("the request ids must lock");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "each attempt must carry its own request id");
+    }
+
+    #[test]
+    fn a_quorum_rejection_retries_the_same_command_on_the_next_node() {
+        let dir = TempDir::new("propose-quorum");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let reply = ProposeReply {
+            expected_tag,
+            installation_id: [0x66; 16],
+            code: 0,
+            commit_index: 13,
+            expected_verifier: None,
+            new_verifier: Some("new-phc".to_owned()),
+        };
+        let request_ids = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                code: 0x0006_0001,
+                ..reply.clone()
+            }],
+            Arc::clone(&request_ids),
+        );
+        let node_b = mock_storage_propose_sequence(
+            second,
+            node_two(),
+            vec![reply],
+            Arc::clone(&request_ids),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the quorum rejection must be retried");
+
+        node_a.join().expect("the first mock must finish");
+        node_b.join().expect("the second mock must finish");
+        assert_eq!(commit.commit_index, 13);
+        let ids = request_ids.lock().expect("the request ids must lock");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "each attempt must carry its own request id");
+    }
+
+    #[test]
+    fn a_permanent_propose_rejection_does_not_reach_the_next_node() {
+        let dir = TempDir::new("propose-permanent");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        second
+            .set_nonblocking(true)
+            .expect("the second listener must be non-blocking");
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0x0003_0001,
+                commit_index: 0,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            }],
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let error = propose_registration(&config, &identity, &secret, &request)
+            .expect_err("a permanent rejection must fail");
+
+        node_a.join().expect("the first mock must finish");
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0003_0001)
+        ));
+        assert!(
+            matches!(second.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "the second node must not receive a retried command"
+        );
+    }
+
+    #[test]
+    fn the_configured_attempt_count_is_exact() {
+        let config = config_with_failover(closed_port(), closed_port(), 3, 1, 5_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_000);
+        let mut calls = 0;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            calls += 1;
+            Err(InterServerClientError::Rejected(0x0007_0001))
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Rejected(0x0007_0001))
+        ));
+        assert_eq!(calls, 3, "the attempt count must be exact");
+    }
+
+    #[test]
+    fn exactly_one_attempt_is_made_when_the_budget_allows_one() {
+        let dir = TempDir::new("one-attempt");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        second
+            .set_nonblocking(true)
+            .expect("the second listener must be non-blocking");
+        let config = config_with_two_nodes(first_port, second_port, 1);
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0x0007_0001,
+                commit_index: 0,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            }],
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        assert!(matches!(
+            propose_registration(&config, &identity, &secret, &request),
+            Err(InterServerClientError::Rejected(0x0007_0001))
+        ));
+
+        node_a.join().expect("the first mock must finish");
+        assert!(
+            matches!(second.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "one attempt must not reach the second node"
+        );
+    }
+
+    #[test]
+    fn a_stalling_node_is_bounded_by_the_attempt_deadline() {
+        let dir = TempDir::new("stalling");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(port, closed_port(), 1);
+        let staller = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("the client must connect");
+            thread::sleep(std::time::Duration::from_millis(3_000));
+            drop(stream);
+        });
+        let started = std::time::Instant::now();
+
+        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect_err("a stalling node must time out");
+
+        let elapsed = started.elapsed();
+        staller.join().expect("the stalling node must finish");
+        assert!(
+            matches!(error, InterServerClientError::Frame(_)),
+            "the read must time out before an attempt deadline"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "the attempt must be bounded, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn a_temporary_rejection_survives_an_expired_budget() {
+        let config = config_with_failover(closed_port(), closed_port(), 100, 1, 1_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(30);
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Err(InterServerClientError::Rejected(0x0006_0001))
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Rejected(0x0006_0001))
+        ));
+    }
+
+    #[test]
     fn a_rejected_propose_reports_the_storage_result_code() {
         let dir = TempDir::new("tag-rejected");
         let secret = secret(&dir);
@@ -890,6 +1644,141 @@ mod tests {
         assert!(matches!(
             error,
             InterServerClientError::Rejected(0x0003_0001)
+        ));
+    }
+
+    #[test]
+    fn a_permanent_rejection_is_not_retried() {
+        let dir = TempDir::new("permanent");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(closed_port(), port, 3, 1, 5_000);
+        let response = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            code: 0x0001_0002,
+            snapshot: None,
+            ..MockResponse::empty()
+        };
+        let (server, accepted) =
+            mock_storage_sequence(listener, vec![Reply::Message(response)], node_two());
+
+        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect_err("a permanent rejection must fail");
+
+        server.join().expect("the mock server must finish");
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0001_0002)
+        ));
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            1,
+            "a permanent rejection must not be retried"
+        );
+    }
+
+    #[test]
+    fn a_temporary_rejection_is_retried() {
+        let dir = TempDir::new("temporary");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_failover(closed_port(), port, 4, 1, 5_000);
+        let temporary = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            code: 0x0007_0001,
+            snapshot: None,
+            ..MockResponse::empty()
+        };
+        let snapshot = RegistrySnapshot {
+            read_index: 9,
+            account: None,
+            registration: None,
+            installation: None,
+        };
+        let recovery = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            ..MockResponse::snapshot(snapshot.clone())
+        };
+        let (server, accepted) = mock_storage_sequence(
+            listener,
+            vec![Reply::Message(temporary), Reply::Message(recovery)],
+            node_two(),
+        );
+
+        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect("the temporary rejection must be retried");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(found, snapshot);
+        assert_eq!(
+            accepted.load(Ordering::Relaxed),
+            2,
+            "the temporary rejection must be retried once"
+        );
+    }
+
+    #[test]
+    fn a_lookup_fails_over_to_the_next_storage_node() {
+        let dir = TempDir::new("failover");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let snapshot = RegistrySnapshot {
+            read_index: 7,
+            account: None,
+            registration: None,
+            installation: None,
+        };
+        let response = MockResponse {
+            sender_id: Some(node_two().sender_id),
+            responder_label: Some(node_two().label.to_owned()),
+            ..MockResponse::snapshot(snapshot.clone())
+        };
+        let server = mock_storage(listener, Reply::Message(response), node_two());
+        let config = config_with_failover(closed_port(), port, 2, 1, 5_000);
+
+        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect("the second storage node must answer");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(found, snapshot);
+    }
+
+    #[test]
+    fn a_lookup_gives_up_after_the_configured_attempts() {
+        let dir = TempDir::new("give-up");
+        let identity = identity(&dir);
+        let config = config_with_failover(closed_port(), closed_port(), 2, 1, 5_000);
+
+        assert!(matches!(
+            lookup_registry(&config, &identity, Some("alice"), None, None),
+            Err(InterServerClientError::Connect { .. })
+        ));
+    }
+
+    #[test]
+    fn a_lookup_stops_at_the_total_deadline() {
+        let dir = TempDir::new("deadline");
+        let identity = identity(&dir);
+        let config = config_with_failover(closed_port(), closed_port(), 10, 400, 1_000);
+
+        assert!(matches!(
+            lookup_registry(&config, &identity, Some("alice"), None, None),
+            Err(InterServerClientError::Deadline { millis: 1_000 })
         ));
     }
 
@@ -1057,6 +1946,39 @@ mod tests {
                 max: 64
             })
         ));
+    }
+
+    #[test]
+    fn the_attempt_budget_never_exceeds_the_total_deadline() {
+        let config = config_with_failover(closed_port(), closed_port(), 1, 1, 1_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(40);
+        let mut seen = None;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, budget| {
+            seen = Some(budget);
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(seen.expect("the attempt must run") <= std::time::Duration::from_millis(40));
+    }
+
+    #[test]
+    fn an_attempt_after_the_deadline_is_not_started() {
+        let config = config_with_failover(closed_port(), closed_port(), 2, 1, 1_000);
+        let deadline = std::time::Instant::now();
+        let mut ran = false;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            ran = true;
+            Ok(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Deadline { .. })
+        ));
+        assert!(!ran);
     }
 
     #[test]

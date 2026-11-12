@@ -82,7 +82,7 @@ impl Startup {
         )
     }
 
-    /// Propose one registration command to the first storage node in the manifest.
+    /// Propose one registration command to the storage cluster within the configured budgets.
     pub fn propose_registration(
         &self,
         request: crate::inter_server_client::RegistrationProposeRequest<'_>,
@@ -96,7 +96,7 @@ impl Startup {
         )
     }
 
-    /// Look up the registry of the first storage node in the static manifest.
+    /// Look up the registry of the storage cluster within the configured budgets.
     pub fn lookup_registry(
         &self,
         login: Option<&str>,
