@@ -477,6 +477,7 @@ mod tests {
 
     use super::*;
     use crate::metadata::{ContentHash, UploadRecord, CONTENT_HASH_LEN, UPLOAD_ID_LEN};
+    use crate::replication::ReplicaStatus;
 
     static NEXT_STATE_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -511,7 +512,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_installed_snapshot_restores_the_catalog() {
+    async fn an_installed_snapshot_restores_the_catalog_and_replica_status() {
         let source_path = temp_state_path("source");
         let target_path = temp_state_path("target");
         let mut source = MemStore::open(source_path.clone()).expect("the source store opens");
@@ -538,6 +539,19 @@ mod tests {
             }])
             .await
             .expect("the committed version applies");
+        let status = ReplicaStatus {
+            login: "alice".to_owned(),
+            upload_id,
+            replica_id: 2,
+            sha256: ContentHash::from_bytes([9; CONTENT_HASH_LEN]),
+            available: true,
+        };
+        source
+            .inner
+            .write()
+            .await
+            .replica_statuses
+            .insert((upload_id, 2), status.clone());
         let snapshot = source
             .build_snapshot()
             .await
@@ -553,12 +567,20 @@ mod tests {
             target.committed_versions().await.get(&upload_id),
             Some(&version)
         );
+        assert_eq!(
+            target.replica_statuses().await.get(&(upload_id, 2)),
+            Some(&status)
+        );
 
         drop(target);
         let reopened = MemStore::open(target_path.clone()).expect("the installed state reopens");
         assert_eq!(
             reopened.committed_versions().await,
             BTreeMap::from([(upload_id, version)])
+        );
+        assert_eq!(
+            reopened.replica_statuses().await.get(&(upload_id, 2)),
+            Some(&status)
         );
 
         std::fs::remove_file(source_path).expect("the source state file can be removed");
