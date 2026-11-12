@@ -1,0 +1,441 @@
+//! Outbound inter-server exchange with a storage node.
+//!
+//! The dedicated server talks to a storage node from its static manifest over
+//! one sealed frame per exchange (`INT-NET-089 / 1`, `INT-NET-090 / 1`): the
+//! request carries the inter-server envelope `[message_type, args]` inside a
+//! frame signed with the dedicated signing key and encrypted to the storage
+//! node, and the response is verified with the manifest signing key before it
+//! is decrypted (`INT-NET-020 / 1`). The external header of the response must
+//! repeat the request identifier and come from the addressed node.
+
+use std::io::Write;
+use std::net::TcpStream;
+use std::time::Duration;
+
+use ciborium::Value;
+use thiserror::Error;
+
+use crate::config::{ManifestEntry, ServerConfig};
+use crate::frame::{read_frame, FrameError};
+use crate::frame_seal::{open_frame, seal_frame, FrameSealError, X25519_KEY_BYTES};
+use crate::identity::ServerIdentity;
+use crate::wire::{
+    ExternalHeader, InterServerMessage, RegistrySnapshot, WireError, IDENTIFIER_BYTES,
+};
+
+/// Result of one outbound exchange.
+type Result<T> = core::result::Result<T, InterServerClientError>;
+
+/// Errors produced while exchanging one inter-server message.
+#[derive(Debug, Error)]
+pub enum InterServerClientError {
+    /// The static manifest names no storage node.
+    #[error("the static manifest names no storage node")]
+    NoStorageNode,
+    /// A key file does not hold a 32-byte key.
+    #[error("the {role} key is {actual} bytes, expected {expected}")]
+    KeyLength {
+        /// Key role that was read.
+        role: &'static str,
+        /// Observed length.
+        actual: usize,
+        /// Expected length.
+        expected: usize,
+    },
+    /// The connection attempt failed.
+    #[error("connecting to {address} failed: {source}")]
+    Connect {
+        /// Address the client tried to reach.
+        address: std::net::SocketAddr,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Writing the request or reading the response failed.
+    #[error("the inter-server exchange failed: {0}")]
+    Io(#[from] std::io::Error),
+    /// The response frame is malformed.
+    #[error("the response frame is invalid: {0}")]
+    Frame(#[from] FrameError),
+    /// The response frame could not be sealed or opened.
+    #[error("the response frame could not be sealed or opened: {0}")]
+    Seal(#[from] FrameSealError),
+    /// The response header is invalid.
+    #[error("the response header is invalid: {0}")]
+    Wire(#[from] WireError),
+    /// The encoded external header boundary could not be found.
+    #[error("the response header boundary could not be found: {0}")]
+    HeaderBoundary(String),
+    /// The response does not belong to the request or the addressed node.
+    #[error("the response does not match the request: {0}")]
+    Mismatch(&'static str),
+    /// The storage node answered with a non-zero result code.
+    #[error("the storage node rejected the request with result code {0:#010x}")]
+    Rejected(u32),
+    /// The storage node answered with an unexpected message type.
+    #[error("the storage node answered with an unexpected message type")]
+    UnexpectedMessage,
+}
+
+/// Exchange one message with `storage` and return the response message.
+fn exchange(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    storage: &ManifestEntry,
+    request: &InterServerMessage,
+    request_id: [u8; IDENTIFIER_BYTES],
+) -> Result<InterServerMessage> {
+    let signing_seed = key_seed(identity.signing_private_key(), "signing")?;
+    let header = ExternalHeader {
+        sender_id: Some(*config.dedicated.sender_id.as_bytes()),
+        request_id,
+        frame_number: 0,
+        upload_id: None,
+        responder_label: None,
+        bootstrap_signing_public_key: None,
+    };
+    let header_bytes = header.encode(config.max_label_bytes.get())?;
+    let payload = request.encode(config.max_verifier_bytes.get())?;
+    let frame = seal_frame(
+        &header_bytes,
+        &payload,
+        storage.encryption_public_key.as_bytes(),
+        &signing_seed,
+    )?;
+
+    let connect_timeout = Duration::from_millis(config.connect_timeout_ms.get());
+    let mut stream =
+        TcpStream::connect_timeout(&storage.address, connect_timeout).map_err(|source| {
+            InterServerClientError::Connect {
+                address: storage.address,
+                source,
+            }
+        })?;
+    let exchange_timeout = Duration::from_millis(config.inter_server_timeout_ms.get());
+    stream.set_read_timeout(Some(exchange_timeout))?;
+    stream.set_write_timeout(Some(exchange_timeout))?;
+    stream.write_all(&frame)?;
+
+    let body = read_frame(&mut stream, config.max_frame_bytes())?;
+    let header_length = external_header_length(&body)?;
+    let response_header =
+        ExternalHeader::decode(&body[..header_length], config.max_label_bytes.get())?;
+    if response_header.sender_id != Some(*storage.sender_id.as_bytes()) {
+        return Err(InterServerClientError::Mismatch(
+            "the response sender is not the addressed node",
+        ));
+    }
+    if response_header.request_id != request_id {
+        return Err(InterServerClientError::Mismatch(
+            "the response does not repeat the request identifier",
+        ));
+    }
+    if response_header.frame_number != 0 {
+        return Err(InterServerClientError::Mismatch(
+            "the response does not carry the first frame",
+        ));
+    }
+    if response_header.responder_label.as_deref() != Some(storage.label.as_str()) {
+        return Err(InterServerClientError::Mismatch(
+            "the response label is not the addressed node label",
+        ));
+    }
+
+    let mut sealed = Vec::with_capacity(4 + body.len());
+    sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    sealed.extend_from_slice(&body);
+    let recipient_secret = key_seed(identity.encryption_private_key(), "encryption")?;
+    let plaintext = open_frame(
+        &sealed,
+        header_length,
+        &recipient_secret,
+        storage.signing_public_key.as_bytes(),
+    )?;
+
+    InterServerMessage::decode(&plaintext, config.max_verifier_bytes.get())
+        .map_err(InterServerClientError::Wire)
+}
+
+/// Read the 32-byte key out of `bytes`.
+fn key_seed(bytes: &[u8], role: &'static str) -> Result<[u8; X25519_KEY_BYTES]> {
+    let seed: [u8; X25519_KEY_BYTES] =
+        bytes
+            .try_into()
+            .map_err(|_| InterServerClientError::KeyLength {
+                role,
+                actual: bytes.len(),
+                expected: X25519_KEY_BYTES,
+            })?;
+
+    Ok(seed)
+}
+
+/// Length of the encoded external header at the start of `body`.
+///
+/// ciborium consumes exactly one encoded item from the slice, so the remaining
+/// suffix length yields the header length.
+fn external_header_length(body: &[u8]) -> Result<usize> {
+    let mut cursor = body;
+    let _header: Value = ciborium::de::from_reader(&mut cursor)
+        .map_err(|error| InterServerClientError::HeaderBoundary(error.to_string()))?;
+
+    Ok(body.len() - cursor.len())
+}
+
+/// Look up the registry of a storage node.
+///
+/// The first storage entry of the static manifest is used; failover across
+/// storage nodes is a separate step (`FR-DED-046`).
+pub(crate) fn lookup_registry(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    login: Option<&str>,
+    registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
+    installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+) -> Result<RegistrySnapshot> {
+    let storage = config
+        .storage
+        .first()
+        .ok_or(InterServerClientError::NoStorageNode)?;
+    let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
+    let request = InterServerMessage::RegistryLookup {
+        login: login.map(str::to_owned),
+        registration_request_id,
+        installation_id,
+    };
+
+    match exchange(config, identity, storage, &request, request_id)? {
+        InterServerMessage::RegistryLookupResult { code: 0, snapshot } => {
+            snapshot.ok_or(InterServerClientError::UnexpectedMessage)
+        }
+        InterServerMessage::RegistryLookupResult { code, .. } => {
+            Err(InterServerClientError::Rejected(code))
+        }
+        _ => Err(InterServerClientError::UnexpectedMessage),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::thread;
+
+    use hpke::kem::X25519HkdfSha256;
+    use hpke::Serializable;
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+
+    use super::*;
+    use crate::config::ServerConfig;
+
+    const FIXTURE: &str = include_str!("../tests/fixtures/valid_server.toml");
+    const STORAGE_ID: [u8; 16] = {
+        let mut id = [0x00; 16];
+        id[15] = 0x01;
+        id
+    };
+    const DEDICATED_X25519_SEED: [u8; 32] = [0x31; 32];
+    const DEDICATED_ED25519_SEED: [u8; 32] = [0x41; 32];
+    const STORAGE_X25519_SEED: [u8; 32] = [0x51; 32];
+    const STORAGE_ED25519_SEED: [u8; 32] = [0x61; 32];
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn x25519(seed: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
+        let (secret, public) = <X25519HkdfSha256 as hpke::Kem>::derive_keypair(seed);
+        let mut secret_bytes = [0_u8; 32];
+        secret_bytes.copy_from_slice(secret.to_bytes().as_slice());
+        let mut public_bytes = [0_u8; 32];
+        public_bytes.copy_from_slice(public.to_bytes().as_slice());
+
+        (secret_bytes, public_bytes)
+    }
+
+    fn ed25519(seed: &[u8; 32]) -> [u8; 32] {
+        let pair = Ed25519KeyPair::from_seed_unchecked(seed).expect("a valid seed");
+        let mut public = [0_u8; 32];
+        public.copy_from_slice(pair.public_key().as_ref());
+
+        public
+    }
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("homecloud-lookup-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("the test directory must be created");
+            Self(path)
+        }
+
+        fn file(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn identity(dir: &TempDir) -> ServerIdentity {
+        let encryption = dir.file("encryption.key");
+        let signing = dir.file("signing.key");
+        let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+        std::fs::write(&encryption, DEDICATED_X25519_SEED).expect("the encryption key must exist");
+        std::fs::write(&signing, DEDICATED_ED25519_SEED).expect("the signing key must exist");
+        let _ = dedicated_x25519;
+        ServerIdentity::load("dedicated-1", &encryption, &signing).expect("the identity must load")
+    }
+
+    fn config(port: u16) -> ServerConfig {
+        let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+        let dedicated_ed25519 = ed25519(&DEDICATED_ED25519_SEED);
+        let (_, storage_x25519) = x25519(&STORAGE_X25519_SEED);
+        let storage_ed25519 = ed25519(&STORAGE_ED25519_SEED);
+        let document = FIXTURE
+            .replace(
+                "address = \"10.0.0.11:7100\"",
+                &format!("address = \"127.0.0.1:{port}\""),
+            )
+            .replace(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                &hex(&dedicated_x25519),
+            )
+            .replace(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &hex(&dedicated_ed25519),
+            )
+            .replace(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                &hex(&storage_x25519),
+            )
+            .replace(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                &hex(&storage_ed25519),
+            );
+
+        ServerConfig::from_toml_str(&document).expect("the test configuration must parse")
+    }
+
+    fn mock_storage(
+        listener: TcpListener,
+        code: u32,
+        snapshot: Option<RegistrySnapshot>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("the client must connect");
+            let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+            let body = read_frame(&mut stream, limit).expect("the request must arrive");
+            let header_length =
+                external_header_length(&body).expect("the request header must be found");
+            let request_header =
+                ExternalHeader::decode(&body[..header_length], 64).expect("the header must parse");
+            let mut sealed = Vec::with_capacity(4 + body.len());
+            sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            sealed.extend_from_slice(&body);
+            let (storage_x25519, _) = x25519(&STORAGE_X25519_SEED);
+            let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+            let plaintext = open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                .expect("the request must open");
+            let request =
+                InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+            assert!(matches!(request, InterServerMessage::RegistryLookup { .. }));
+
+            let response = InterServerMessage::RegistryLookupResult { code, snapshot };
+            let payload = response.encode(512).expect("the response must encode");
+            let header = ExternalHeader {
+                sender_id: Some(STORAGE_ID),
+                request_id: request_header.request_id,
+                frame_number: 0,
+                upload_id: None,
+                responder_label: Some("storage-1".to_owned()),
+                bootstrap_signing_public_key: None,
+            };
+            let header_bytes = header.encode(64).expect("the response header must encode");
+            let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+            let frame = seal_frame(
+                &header_bytes,
+                &payload,
+                &dedicated_x25519,
+                &STORAGE_ED25519_SEED,
+            )
+            .expect("the response must seal");
+            stream
+                .write_all(&frame)
+                .expect("the response must be written");
+        })
+    }
+
+    #[test]
+    fn a_lookup_returns_the_storage_snapshot() {
+        let dir = TempDir::new("lookup");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config(port);
+        let snapshot = RegistrySnapshot {
+            read_index: 7,
+            account: None,
+            registration: None,
+            installation: None,
+        };
+        let server = mock_storage(listener, 0, Some(snapshot.clone()));
+
+        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect("the lookup must succeed");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(found, snapshot);
+    }
+
+    #[test]
+    fn a_rejected_lookup_reports_the_storage_result_code() {
+        let dir = TempDir::new("rejected");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config(port);
+        let server = mock_storage(listener, 0x0001_0002, None);
+
+        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect_err("a rejected lookup must fail");
+
+        server.join().expect("the mock server must finish");
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0001_0002)
+        ));
+    }
+
+    #[test]
+    fn the_header_boundary_is_the_encoded_header_only() {
+        let header = ExternalHeader {
+            sender_id: None,
+            request_id: [0x11; 16],
+            frame_number: 0,
+            upload_id: None,
+            responder_label: None,
+            bootstrap_signing_public_key: None,
+        };
+        let mut body = header.encode(64).expect("the header must encode");
+        let length = body.len();
+        body.extend_from_slice(&[0xAA; 96]);
+
+        assert_eq!(
+            external_header_length(&body).expect("the boundary must be found"),
+            length
+        );
+    }
+}

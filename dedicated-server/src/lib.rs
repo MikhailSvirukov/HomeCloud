@@ -13,6 +13,7 @@ mod frame;
 mod frame_seal;
 mod heartbeat;
 mod identity;
+mod inter_server_client;
 mod log_file;
 mod logging;
 mod metrics;
@@ -39,6 +40,7 @@ pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
 pub use frame_seal::{open_frame, seal_frame, FrameSealError};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
+pub use inter_server_client::InterServerClientError;
 pub use logging::{
     init, logging_failed_to_stderr, metrics_failed, runtime_failed, shutdown, startup,
     startup_failed, startup_failed_to_stderr, LogError, LogGuard,

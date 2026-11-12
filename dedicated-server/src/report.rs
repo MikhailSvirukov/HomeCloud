@@ -13,6 +13,7 @@ use thiserror::Error;
 
 use crate::config::{ConfigError, ServerConfig};
 use crate::identity::{IdentityError, ServerIdentity};
+use crate::inter_server_client::InterServerClientError;
 use crate::registration::{
     AccountRegistry, RegistrationError, RegistrationOutcome, RegistrationRequest,
 };
@@ -60,6 +61,22 @@ impl Startup {
             accounts,
             registration_secret,
         })
+    }
+
+    /// Look up the registry of the first storage node in the static manifest.
+    pub fn lookup_registry(
+        &self,
+        login: Option<&str>,
+        registration_request_id: Option<[u8; crate::wire::IDENTIFIER_BYTES]>,
+        installation_id: Option<[u8; crate::wire::IDENTIFIER_BYTES]>,
+    ) -> core::result::Result<crate::wire::RegistrySnapshot, InterServerClientError> {
+        crate::inter_server_client::lookup_registry(
+            &self.config,
+            &self.identity,
+            login,
+            registration_request_id,
+            installation_id,
+        )
     }
 
     /// The registration secret `K` loaded at startup.
