@@ -20,6 +20,9 @@ cryptographic, or configuration work.
 - `INT-NET-070/6`, `TST-023/5`, `TST-033/1`, `CFG-CL-031` — the topology
   answer, its per-node rows, manifest order, byte-bounded labels, and canonical
   host literals.
+- `FR-CAT-012/3`, `FR-CAT-013/2`, `INT-NET-080/1` and `TST-025/2`, `TST-026/2`,
+  `TST-028/1`, `TST-034/1`, `CFG-CL-032` — the catalog entry row, page answer,
+  first and continuation page requests, and byte-bounded source names.
 
 ## API
 
@@ -42,6 +45,19 @@ cryptographic, or configuration work.
   literal validation for the topology `host` position.
 - `harness_wire::topology` — `TopologyAnswer`, `NodeEntry`, `TopologyError`;
   the `[nodes]` result arguments and the six-position per-node row.
+- `harness_wire::catalog` — `CatalogEntry`, `CatalogPage`, `CatalogPageRequest`,
+  `CatalogError`; the six-position entry row, the
+  `[snapshot_token, next_cursor, entries]` page answer, and the
+  `[snapshot_token, cursor]` page request.
+
+## Catalog page requests
+
+The first page request argument array is `[null, null]`. A continuation page
+repeats `[snapshot_token, cursor]` exactly as received from the previous answer.
+The token and cursor are independent 16-byte byte strings and must both be
+present or both be `null`; the last page answer carries a `null` next cursor.
+Source names are UTF-8 text limited in bytes by `CFG-CL-032` and are not
+normalized.
 
 ## Canonical topology hosts
 
@@ -60,6 +76,8 @@ Callers pass the limits; the crate holds no configuration of its own.
 - `CFG-CL-031` label limit in UTF-8 bytes — passed to
   `ExternalFrameHeader::encode` and `ExternalFrameHeader::decode`, and to
   `TopologyAnswer`/`NodeEntry` encoding and decoding.
+- `CFG-CL-032` source-name limit in UTF-8 bytes — passed to
+  `CatalogEntry::to_value`/`from_value` and `CatalogPage::to_args`/`from_args`.
 
 ## Scope
 
@@ -73,7 +91,8 @@ component concerns.
 primary-registration headers, the frame body and signed range, and every
 published result code; `tests/inter_server_vectors.rs` pins the envelope,
 heartbeat, and RPC vectors and the registry table; `tests/topology_vectors.rs`
-pins the topology answer, node rows, and canonical host rules. Component
-implementations (Android, dedicated server, distributed storage) can consume the
-same vectors as external conformance tests so that one encoding is proven
-across languages.
+pins the topology answer, node rows, and canonical host rules;
+`tests/catalog_vectors.rs` pins the catalog entry row, page answers, and page
+requests. Component implementations (Android, dedicated server, distributed
+storage) can consume the same vectors as external conformance tests so that one
+encoding is proven across languages.
