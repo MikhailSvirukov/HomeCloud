@@ -20,6 +20,7 @@ mod metrics;
 mod metrics_server;
 mod password;
 mod registration;
+mod registration_failure;
 mod registration_flow;
 mod registration_tag;
 mod report;
@@ -55,6 +56,7 @@ pub use registration::{
     Account, AccountRegistry, CredentialLimits, Installation, InstallationId, InstallationKeys,
     Login, LoginError, RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
 };
+pub use registration_failure::registration_failure;
 pub use registration_flow::{CommittedRegistration, RegistrationFlowError, RegistrationInput};
 pub use registration_tag::{
     content_tag, RegistrationSecret, RegistrationSecretError, REGISTRATION_SECRET_BYTES,
