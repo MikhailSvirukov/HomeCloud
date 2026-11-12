@@ -63,6 +63,25 @@ impl Startup {
         })
     }
 
+    /// Register a login or an additional installation through the storage cluster.
+    ///
+    /// The registry is read first, so a recorded replay returns the recorded
+    /// installation and a reused identifier with other content is a conflict.
+    pub fn register_over_network(
+        &self,
+        input: crate::registration_flow::RegistrationInput<'_>,
+    ) -> core::result::Result<
+        crate::registration_flow::CommittedRegistration,
+        crate::registration_flow::RegistrationFlowError,
+    > {
+        crate::registration_flow::register(
+            &self.config,
+            &self.identity,
+            &self.registration_secret,
+            &input,
+        )
+    }
+
     /// Propose one registration command to the first storage node in the manifest.
     pub fn propose_registration(
         &self,
