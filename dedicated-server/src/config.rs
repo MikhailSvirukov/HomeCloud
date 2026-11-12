@@ -450,6 +450,14 @@ pub enum ConfigError {
         /// Configured verifier limit.
         max_verifier_bytes: u64,
     },
+    /// The configured Argon2id salt cannot be encoded in a PHC record.
+    #[error(
+        "a {actual}-byte Argon2id salt cannot be encoded in a PHC salt field, which carries at most 48 bytes"
+    )]
+    SaltNotRepresentable {
+        /// Configured salt length in bytes.
+        actual: usize,
+    },
     /// The TOML input could not be parsed into the configuration schema.
     #[error("failed to parse configuration: {source}")]
     Parse {
@@ -690,7 +698,7 @@ fn validate_profile(config: &ServerConfig) -> Result<()> {
             "password.salt_length_bytes",
             config.password.salt_length_bytes.get() as u64,
             16,
-            48,
+            64,
         ),
         (
             "logging.retention_ms",
@@ -763,8 +771,16 @@ fn validate_profile(config: &ServerConfig) -> Result<()> {
         });
     }
 
+    let salt = config.password.salt_length_bytes.get();
+    if salt > MAX_PHC_SALT_BYTES {
+        return Err(ConfigError::SaltNotRepresentable { actual: salt });
+    }
+
     Ok(())
 }
+
+/// Largest raw salt a PHC salt field can carry: 64 unpadded base64 characters.
+const MAX_PHC_SALT_BYTES: usize = 48;
 
 /// Worst-case size of the registration logical header (`CFG-CL-046`).
 fn maximum_registration_header_bytes(config: &ServerConfig) -> u64 {
@@ -1433,14 +1449,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_salt_that_the_phc_record_cannot_carry() {
+    fn rejects_a_salt_the_phc_record_cannot_carry() {
         let document = VALID_SERVER.replace("salt_length_bytes = 16", "salt_length_bytes = 49");
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::SaltNotRepresentable { actual: 49 })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_salt_above_the_profile_maximum() {
+        let document = VALID_SERVER.replace("salt_length_bytes = 16", "salt_length_bytes = 65");
+
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
             Err(ConfigError::OutOfRange {
                 field: "password.salt_length_bytes",
-                value: 49,
-                max: 48,
+                value: 65,
+                max: 64,
                 ..
             })
         ));
