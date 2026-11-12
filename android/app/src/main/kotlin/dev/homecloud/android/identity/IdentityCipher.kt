@@ -142,15 +142,18 @@ internal class KeystoreIdentityCipher(
 }
 
 /**
- * The Android KeyStore key that protects the installation identity (`FR-AND-026 / 2`).
+ * A non-exportable Android KeyStore AES-256-GCM key under one alias (`FR-AND-026 / 2`).
  *
- * The key lives under the installation-identity alias as a non-exportable AES-256 key usable for
- * GCM encryption and decryption without user authentication and with randomised encryption
- * required. Encryption may create the key on first use, while decryption uses only an existing key,
- * and any retrieval or generation failure is reported as [IdentityStorageException] without
- * exposing key material or plaintext.
+ * The key is usable for GCM encryption and decryption without user authentication and with
+ * randomised encryption required. Encryption may create the key on first use, while decryption
+ * uses only an existing key, and any retrieval or generation failure is reported as
+ * [IdentityStorageException] with the caller-supplied message without exposing key material or
+ * plaintext.
  */
-internal object AndroidKeystoreKeyProvider : IdentityKeyProvider {
+internal class KeystoreAesKeyProvider(
+    private val alias: String,
+    private val failedMessage: String,
+) : IdentityKeyProvider {
     override fun key(create: Boolean): SecretKey =
         try {
             val existing = existingKey()
@@ -159,23 +162,23 @@ internal object AndroidKeystoreKeyProvider : IdentityKeyProvider {
             } else if (create) {
                 generateKey()
             } else {
-                throw IdentityStorageException(KEY_FAILED_MESSAGE)
+                throw IdentityStorageException(failedMessage)
             }
         } catch (exception: GeneralSecurityException) {
-            throw IdentityStorageException(KEY_FAILED_MESSAGE, exception)
+            throw IdentityStorageException(failedMessage, exception)
         } catch (exception: ProviderException) {
-            throw IdentityStorageException(KEY_FAILED_MESSAGE, exception)
+            throw IdentityStorageException(failedMessage, exception)
         } catch (exception: IOException) {
-            throw IdentityStorageException(KEY_FAILED_MESSAGE, exception)
+            throw IdentityStorageException(failedMessage, exception)
         }
 
-    private fun existingKey(): SecretKey? = keyStore().getKey(KEY_ALIAS, null) as? SecretKey
+    private fun existingKey(): SecretKey? = keyStore().getKey(alias, null) as? SecretKey
 
     private fun generateKey(): SecretKey {
         val generator = KeyGenerator.getInstance(KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec
-                .Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(KEY_SIZE_BITS)
@@ -188,10 +191,27 @@ internal object AndroidKeystoreKeyProvider : IdentityKeyProvider {
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null, null) }
 
-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val KEY_ALIAS = "homecloud-installation-identity"
-    private const val KEY_ALGORITHM_AES = KeyProperties.KEY_ALGORITHM_AES
-    private const val KEY_SIZE_BITS = 256
+    private companion object {
+        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val KEY_ALGORITHM_AES = KeyProperties.KEY_ALGORITHM_AES
+        const val KEY_SIZE_BITS = 256
+    }
+}
 
+/**
+ * The Android KeyStore key that protects the installation identity (`FR-AND-026 / 2`).
+ *
+ * The key lives under the installation-identity alias as a non-exportable AES-256 key usable for
+ * GCM encryption and decryption without user authentication and with randomised encryption
+ * required. Encryption may create the key on first use, while decryption uses only an existing key,
+ * and any retrieval or generation failure is reported as [IdentityStorageException] without
+ * exposing key material or plaintext.
+ */
+internal object AndroidKeystoreKeyProvider : IdentityKeyProvider {
+    private val keyProvider = KeystoreAesKeyProvider(KEY_ALIAS, KEY_FAILED_MESSAGE)
+
+    override fun key(create: Boolean): SecretKey = keyProvider.key(create)
+
+    private const val KEY_ALIAS = "homecloud-installation-identity"
     private const val KEY_FAILED_MESSAGE = "Could not read the installation identity key"
 }
