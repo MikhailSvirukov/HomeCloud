@@ -601,6 +601,14 @@ mod tests {
             .replace(
                 "2222222222222222222222222222222222222222222222222222222222222222",
                 &hex(&ed25519(&STORAGE_ED25519_SEED)),
+            )
+            .replace(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &hex(&x25519(&STORAGE_X25519_SEED).1),
+            )
+            .replace(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                &hex(&ed25519(&STORAGE_ED25519_SEED)),
             );
 
         ServerConfig::from_toml_str(&document).expect("the failover configuration must parse")
@@ -1019,10 +1027,17 @@ mod tests {
             registration: None,
             installation: None,
         };
-        let server = mock_storage(
-            listener,
-            Reply::Message(MockResponse::snapshot(snapshot.clone())),
-        );
+        let second_node = {
+            let mut id = [0x00; 16];
+            id[15] = 0x02;
+            id
+        };
+        let response = MockResponse {
+            sender_id: Some(second_node),
+            responder_label: Some("storage-2".to_owned()),
+            ..MockResponse::snapshot(snapshot.clone())
+        };
+        let server = mock_storage(listener, Reply::Message(response));
         let config = config_with_failover(port, 2, 1, 5_000);
 
         let found = lookup_registry(&config, &identity, Some("alice"), None, None)
@@ -1048,11 +1063,11 @@ mod tests {
     fn a_lookup_stops_at_the_total_deadline() {
         let dir = TempDir::new("deadline");
         let identity = identity(&dir);
-        let config = config_with_failover(2, 10, 100, 250);
+        let config = config_with_failover(2, 10, 400, 1_000);
 
         assert!(matches!(
             lookup_registry(&config, &identity, Some("alice"), None, None),
-            Err(InterServerClientError::Deadline { millis: 250 })
+            Err(InterServerClientError::Deadline { millis: 1_000 })
         ));
     }
 
