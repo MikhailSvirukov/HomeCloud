@@ -5,6 +5,7 @@ members = [
     "crates/harness-docker",
     "crates/harness-scenario",
     "crates/harness-test-support",
+    "crates/harness-wire",
 ]
 
 [workspace.package]
