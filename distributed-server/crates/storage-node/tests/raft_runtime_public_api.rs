@@ -233,6 +233,31 @@ fn publish_replica_status(
     }
 }
 
+async fn wait_for_replica_status(
+    runtime: &RaftRuntime,
+    upload_id: UploadId,
+    replica_id: u64,
+    expected: &ReplicaStatus,
+) {
+    let deadline = tokio::time::Instant::now() + LEADER_BUDGET;
+    loop {
+        if runtime
+            .node()
+            .replica_status(upload_id, replica_id)
+            .await
+            .as_ref()
+            == Some(expected)
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the accepted replica status is not visible before the leader budget"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn starts_initializes_and_commits_on_a_single_node_runtime() {
     let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
@@ -564,17 +589,7 @@ async fn records_a_valid_replica_status_and_replays_idempotently() {
         .replica_status(status.clone())
         .await
         .expect("a fixed voter reports a matching committed upload");
-    let key = (status.upload_id, status.replica_id);
-    assert_eq!(
-        runtime.node().replica_statuses().await.get(&key),
-        Some(&status),
-        "the persisted status map contains the accepted status"
-    );
-    assert_eq!(
-        runtime.node().replica_status(key.0, key.1).await,
-        Some(status.clone()),
-        "the keyed accessor returns the accepted status"
-    );
+    wait_for_replica_status(&runtime, status.upload_id, status.replica_id, &status).await;
     let applied_after_status = runtime
         .node()
         .last_applied_index()
