@@ -918,6 +918,7 @@ mod tests {
         listener: TcpListener,
         node: MockNode,
         replies: Vec<ProposeReply>,
+        request_ids: Arc<std::sync::Mutex<Vec<[u8; 16]>>>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             for reply in replies {
@@ -928,6 +929,10 @@ mod tests {
                     external_header_length(&body).expect("the request header must be found");
                 let request_header = ExternalHeader::decode(&body[..header_length], 64)
                     .expect("the header must parse");
+                request_ids
+                    .lock()
+                    .expect("the request ids must lock")
+                    .push(request_header.request_id);
                 let mut sealed = Vec::with_capacity(4 + body.len());
                 sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
                 sealed.extend_from_slice(&body);
@@ -946,7 +951,8 @@ mod tests {
                         installation_id: sent,
                         x25519_key,
                         ed25519_key,
-                        ..
+                        expected_verifier,
+                        new_verifier,
                     } => {
                         assert_eq!(login, "alice");
                         assert_eq!(registration_request_id, [0x11; 16]);
@@ -954,6 +960,11 @@ mod tests {
                         assert_eq!(sent, reply.installation_id);
                         assert_eq!(x25519_key, [0x44; 32]);
                         assert_eq!(ed25519_key, [0x55; 32]);
+                        assert_eq!(
+                            expected_verifier.as_deref(),
+                            reply.expected_verifier.as_deref()
+                        );
+                        assert_eq!(new_verifier.as_deref(), reply.new_verifier.as_deref());
                     }
                     _ => panic!("the request must be a propose"),
                 }
@@ -1312,6 +1323,7 @@ mod tests {
             expected_verifier: None,
             new_verifier: Some("new-phc".to_owned()),
         };
+        let request_ids = Arc::new(std::sync::Mutex::new(Vec::new()));
         let node_a = mock_storage_propose_sequence(
             first,
             node_one(),
@@ -1319,8 +1331,14 @@ mod tests {
                 code: 0x0007_0001,
                 ..reply.clone()
             }],
+            Arc::clone(&request_ids),
         );
-        let node_b = mock_storage_propose_sequence(second, node_two(), vec![reply]);
+        let node_b = mock_storage_propose_sequence(
+            second,
+            node_two(),
+            vec![reply],
+            Arc::clone(&request_ids),
+        );
         let request = RegistrationProposeRequest {
             login: "alice",
             password: "secret-password",
@@ -1338,6 +1356,9 @@ mod tests {
         node_a.join().expect("the first mock must finish");
         node_b.join().expect("the second mock must finish");
         assert_eq!(commit.commit_index, 12);
+        let ids = request_ids.lock().expect("the request ids must lock");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "each attempt must carry its own request id");
     }
 
     #[test]
@@ -1372,6 +1393,7 @@ mod tests {
             expected_verifier: None,
             new_verifier: Some("new-phc".to_owned()),
         };
+        let request_ids = Arc::new(std::sync::Mutex::new(Vec::new()));
         let node_a = mock_storage_propose_sequence(
             first,
             node_one(),
@@ -1379,8 +1401,14 @@ mod tests {
                 code: 0x0006_0001,
                 ..reply.clone()
             }],
+            Arc::clone(&request_ids),
         );
-        let node_b = mock_storage_propose_sequence(second, node_two(), vec![reply]);
+        let node_b = mock_storage_propose_sequence(
+            second,
+            node_two(),
+            vec![reply],
+            Arc::clone(&request_ids),
+        );
         let request = RegistrationProposeRequest {
             login: "alice",
             password: "secret-password",
@@ -1398,6 +1426,9 @@ mod tests {
         node_a.join().expect("the first mock must finish");
         node_b.join().expect("the second mock must finish");
         assert_eq!(commit.commit_index, 13);
+        let ids = request_ids.lock().expect("the request ids must lock");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "each attempt must carry its own request id");
     }
 
     #[test]
@@ -1438,6 +1469,7 @@ mod tests {
                 expected_verifier: None,
                 new_verifier: Some("new-phc".to_owned()),
             }],
+            Arc::new(std::sync::Mutex::new(Vec::new())),
         );
         let request = RegistrationProposeRequest {
             login: "alice",
@@ -1461,6 +1493,101 @@ mod tests {
         assert!(
             matches!(second.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
             "the second node must not receive a retried command"
+        );
+    }
+
+    #[test]
+    fn exactly_one_attempt_is_made_when_the_budget_allows_one() {
+        let dir = TempDir::new("one-attempt");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        second
+            .set_nonblocking(true)
+            .expect("the second listener must be non-blocking");
+        let config = config_with_two_nodes(first_port, second_port, 1);
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0x0003_0001,
+                commit_index: 0,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            }],
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        assert!(matches!(
+            propose_registration(&config, &identity, &secret, &request),
+            Err(InterServerClientError::Rejected(0x0003_0001))
+        ));
+
+        node_a.join().expect("the first mock must finish");
+        assert!(
+            matches!(second.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "one attempt must not reach the second node"
+        );
+    }
+
+    #[test]
+    fn a_stalling_node_is_bounded_by_the_attempt_deadline() {
+        let dir = TempDir::new("stalling");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(port, closed_port(), 1);
+        let staller = thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("the client must connect");
+            thread::sleep(std::time::Duration::from_millis(3_000));
+            drop(stream);
+        });
+        let started = std::time::Instant::now();
+
+        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect_err("a stalling node must time out");
+
+        let elapsed = started.elapsed();
+        staller.join().expect("the stalling node must finish");
+        assert!(
+            matches!(error, InterServerClientError::Frame(_)),
+            "the read must time out before an attempt deadline"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "the attempt must be bounded, took {elapsed:?}"
         );
     }
 
