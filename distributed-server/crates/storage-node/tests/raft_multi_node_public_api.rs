@@ -5,6 +5,8 @@
 //! RPCs through the encrypted and signed inter-server transport. One runtime is
 //! bootstrapped with the manifest voter set, the cluster elects a leader, a
 //! client write commits through a majority, and every node applies the entry.
+//! The leader is then stopped, the two surviving voters elect a replacement,
+//! and a second client write commits and applies on both of them.
 //!
 //! SRS: `FR-CL-001 / 1` (storage nodes exchange Raft messages directly, with no
 //! dedicated-server relay), `FR-CL-006 / 1` (the metadata commit needs a
@@ -149,7 +151,7 @@ impl Drop for ServerTask {
 /// Three started runtimes and the server tasks that accept peer RPCs.
 struct Cluster {
     nodes: BTreeMap<u64, Arc<RaftNode>>,
-    servers: Vec<ServerTask>,
+    servers: BTreeMap<u64, ServerTask>,
 }
 
 impl Cluster {
@@ -205,14 +207,15 @@ impl Cluster {
         }
 
         let mut nodes = BTreeMap::new();
-        let mut servers = Vec::with_capacity(NODE_COUNT);
+        let mut servers = BTreeMap::new();
         for (index, runtime) in runtimes.iter_mut().enumerate().skip(1) {
             let runtime = runtime.take().expect("the follower runtime is present");
             let listener = listeners[index]
                 .take()
                 .expect("the follower listener is present");
-            nodes.insert(fixture.node_id(NODE_LABELS[index]), runtime.node());
-            servers.push(spawn_server(runtime, listener));
+            let node_id = fixture.node_id(NODE_LABELS[index]);
+            nodes.insert(node_id, runtime.node());
+            servers.insert(node_id, spawn_server(runtime, listener));
         }
 
         let bootstrap = runtimes[0]
@@ -225,8 +228,9 @@ impl Cluster {
         let listener = listeners[0]
             .take()
             .expect("the bootstrap listener is present");
-        nodes.insert(fixture.node_id(NODE_LABELS[0]), bootstrap.node());
-        servers.push(spawn_server(bootstrap, listener));
+        let node_id = fixture.node_id(NODE_LABELS[0]);
+        nodes.insert(node_id, bootstrap.node());
+        servers.insert(node_id, spawn_server(bootstrap, listener));
 
         Self { nodes, servers }
     }
@@ -263,14 +267,64 @@ impl Cluster {
         }
     }
 
+    /// Waits for a leader different from `previous` and for every surviving node to report it.
+    async fn wait_for_replacement_leader(&self, previous: u64) -> u64 {
+        let deadline = tokio::time::Instant::now() + LEADER_BUDGET;
+        loop {
+            let leaders = self
+                .nodes
+                .values()
+                .map(|node| node.status().current_leader)
+                .collect::<BTreeSet<_>>();
+            if let Some(Some(leader)) = leaders.iter().next().copied() {
+                if leaders.len() == 1 && leader != previous {
+                    return leader;
+                }
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the surviving nodes did not elect a replacement for leader {previous} within the leader budget"
+            );
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
+
+    /// Stops one node's peer server and its local OpenRaft instance.
+    async fn stop_node(&mut self, node_id: u64) {
+        let mut server = self
+            .servers
+            .remove(&node_id)
+            .expect("the stopped node serves peer RPCs");
+        if let Some(shutdown) = server.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(task) = server.task.take() {
+            let outcome = task.await.expect("the stopped server task does not panic");
+            assert!(
+                outcome.is_ok(),
+                "the stopped server task returns Ok when shutdown resolves"
+            );
+        }
+        let node = self
+            .nodes
+            .remove(&node_id)
+            .expect("the stopped node has a local Raft instance");
+        let Ok(node) = Arc::try_unwrap(node) else {
+            panic!("the stopped node still holds another Arc reference to its local Raft instance");
+        };
+        node.shutdown()
+            .await
+            .expect("the stopped node shuts down its local OpenRaft instance");
+    }
+
     /// Sends shutdown to every server task and awaits its clean exit.
     async fn shutdown(mut self) {
-        for server in &mut self.servers {
+        for server in self.servers.values_mut() {
             if let Some(shutdown) = server.shutdown.take() {
                 let _ = shutdown.send(());
             }
         }
-        for server in &mut self.servers {
+        for server in self.servers.values_mut() {
             if let Some(task) = server.task.take() {
                 let outcome = task.await.expect("the server task does not panic");
                 assert!(
@@ -283,9 +337,9 @@ impl Cluster {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn three_loopback_nodes_elect_a_leader_and_commit_through_the_peer_transport() {
+async fn three_loopback_nodes_elect_a_replacement_leader_and_commit_through_the_peer_transport() {
     let fixture = Fixture::new();
-    let cluster = Cluster::start(&fixture).await;
+    let mut cluster = Cluster::start(&fixture).await;
     let leader = cluster.wait_for_leader().await;
     let leader_node = Arc::clone(
         cluster
@@ -321,6 +375,54 @@ async fn three_loopback_nodes_elect_a_leader_and_commit_through_the_peer_transpo
         assert!(
             status.last_applied.is_some(),
             "node {node_id} has applied the committed entry"
+        );
+    }
+
+    drop(leader_node);
+    let previous_leader = leader;
+    cluster.stop_node(previous_leader).await;
+
+    let replacement = cluster.wait_for_replacement_leader(previous_leader).await;
+    assert_ne!(
+        replacement, previous_leader,
+        "the replacement leader differs from the stopped leader"
+    );
+
+    let replacement_node = Arc::clone(
+        cluster
+            .nodes
+            .get(&replacement)
+            .expect("the replacement leader belongs to the surviving nodes"),
+    );
+    let second_upload_id = UploadId::from_bytes([0x45; UPLOAD_ID_LEN]);
+    let second_version = committed_version(second_upload_id, replacement);
+    let response = tokio::time::timeout(
+        APPLY_BUDGET,
+        replacement_node.client_write(RaftRequest::CommitVersion(second_version.clone())),
+    )
+    .await
+    .expect("the second client write completes within the apply budget")
+    .expect("the replacement leader commits the second client write through a majority");
+    assert_eq!(
+        response.upload_id,
+        Some(second_upload_id),
+        "the second committed version is reported by the replacement leader"
+    );
+
+    let expected_catalog =
+        BTreeMap::from([(upload_id, version), (second_upload_id, second_version)]);
+    wait_for_catalog(&cluster.nodes, &expected_catalog).await;
+
+    for (node_id, node) in &cluster.nodes {
+        let status = node.status();
+        assert_eq!(
+            status.current_leader,
+            Some(replacement),
+            "node {node_id} reports the replacement leader"
+        );
+        assert!(
+            status.last_applied.is_some(),
+            "node {node_id} has applied the committed entries"
         );
     }
 
@@ -366,6 +468,30 @@ async fn wait_for_committed_version(
         assert!(
             tokio::time::Instant::now() < deadline,
             "the committed version {upload_id} did not reach every node in the apply budget"
+        );
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Waits until every node's applied catalog equals `expected`.
+async fn wait_for_catalog(
+    nodes: &BTreeMap<u64, Arc<RaftNode>>,
+    expected: &BTreeMap<UploadId, CommittedVersion>,
+) {
+    let deadline = tokio::time::Instant::now() + APPLY_BUDGET;
+    loop {
+        let mut converged = true;
+        for node in nodes.values() {
+            if &node.committed_versions().await != expected {
+                converged = false;
+            }
+        }
+        if converged {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the applied catalog did not match on every surviving node in the apply budget"
         );
         tokio::time::sleep(POLL_INTERVAL).await;
     }
