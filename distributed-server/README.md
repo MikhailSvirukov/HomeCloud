@@ -182,7 +182,9 @@ the async connection halves, and `tracing` backs the structured logs the node
 emits with a level configured through `RUST_LOG`. The local OpenRaft state
 (`state.cbor`) and the bootstrap marker are persisted under the configured node
 data directory, so a restarted node restores its applied catalog and rejects a
-repeated bootstrap command. The applied Raft catalog stores the full version
+repeated bootstrap command. The state format is `4`; a pre-`4` state file is
+rejected rather than restored with incomplete replica status, so all nodes in a
+deployment must run the same build when upgrading. The applied Raft catalog stores the full version
 metadata (upload id, login, original file name, original and compressed byte
 sizes, SHA-256 of the original bytes, capture/creation time, and acceptance
 time) together with the

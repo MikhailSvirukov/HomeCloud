@@ -106,6 +106,8 @@ const UNKNOWN_COORDINATOR: u64 = 999;
 const REPLICATION_REJECTION_CODE: u32 = 0x0005_0002;
 /// Protocol code for an upload id conflict.
 const UPLOAD_ID_CONFLICT_CODE: u32 = 0x0005_0004;
+/// Protocol code for an unreached blob-replication quorum.
+const REPLICATION_QUORUM_CODE: u32 = 0x0006_0002;
 
 /// Temporary manifest and key directory shared by one test.
 struct Fixture {
@@ -843,7 +845,6 @@ fn maps_replication_errors_to_protocol_codes() {
         ReplicationError::LoginMismatch,
         ReplicationError::HashMismatch,
         ReplicationError::UnknownUpload,
-        ReplicationError::QuorumNotReached,
     ] {
         assert_eq!(
             u32::from(UploadErrorCode::from(error)),
@@ -852,9 +853,19 @@ fn maps_replication_errors_to_protocol_codes() {
         );
     }
     assert_eq!(
+        u32::from(UploadErrorCode::from(ReplicationError::QuorumNotReached)),
+        REPLICATION_QUORUM_CODE,
+        "an unreached replication quorum maps to the quorum protocol code"
+    );
+    assert_eq!(
         u32::from(UploadErrorCode::from(ReplicationError::MetadataConflict)),
         UPLOAD_ID_CONFLICT_CODE,
         "a metadata conflict maps to the upload id conflict protocol code"
+    );
+    assert_eq!(
+        RuntimeError::ReplicaRejected.upload_error_code(),
+        Some(UploadErrorCode::SizeMetadataHashMismatch),
+        "an apply-time replica rejection maps to the metadata mismatch code"
     );
 }
 

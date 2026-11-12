@@ -3,7 +3,8 @@
 //! SRS: `FR-CL-001 / 1`, `FR-CL-015 / 1`, `FR-CL-017 / 1`, `FR-CL-027 / 1`,
 //! `FR-CL-030 / 1`, `FR-CL-031 / 1`, `CFG-CL-003 / 1`, `CFG-CL-007 / 1`,
 //! `CFG-CL-021 / 1`, `CFG-CL-029 / 1`, `CFG-CL-031 / 1`, `CFG-CL-039 / 1`,
-//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `INT-NET-113 / 1`, `NFR-SEC-009 / 1`.
+//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `INT-NET-113 / 1`, `INT-NET-123 / 1`,
+//! `INT-NET-124 / 1`, `NFR-SEC-009 / 1`.
 
 use core::fmt;
 use core::num::NonZeroU32;
@@ -30,6 +31,7 @@ use crate::sealing::{RecipientPrivateKey, SealingError};
 use crate::server_session::serve_peer_connection;
 use crate::server_transport::{PeerDirectory, ServerTransport};
 use crate::signing::MessageSigningKey;
+use crate::upload_error::UploadErrorCode;
 
 /// Failure modes when starting or serving the node runtime.
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +69,17 @@ pub enum RuntimeError {
     /// The Raft commit did not accept the replica status for its upload.
     #[error("the committed replica status does not match the requested upload")]
     ReplicaRejected,
+}
+
+impl RuntimeError {
+    /// Returns the protocol upload code for replication validation failures.
+    pub fn upload_error_code(&self) -> Option<UploadErrorCode> {
+        match self {
+            Self::Replication(error) => Some((*error).into()),
+            Self::ReplicaRejected => Some(UploadErrorCode::SizeMetadataHashMismatch),
+            _ => None,
+        }
+    }
 }
 
 /// Manifest-validated node runtime that owns the local OpenRaft instance and

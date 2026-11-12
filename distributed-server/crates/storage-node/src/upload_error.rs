@@ -23,6 +23,8 @@ pub enum UploadErrorCode {
     AuthenticationRejected = 0x0002_0001,
     /// File size limit exceeded.
     FileSizeExceeded = 0x0005_0001,
+    /// Blob-replication quorum was not reached.
+    ReplicationQuorumUnreached = 0x0006_0002,
     /// Size, metadata, or hash mismatch.
     SizeMetadataHashMismatch = 0x0005_0002,
     /// Invalid frame sequence.
@@ -103,8 +105,8 @@ impl From<ReplicationError> for UploadErrorCode {
             | ReplicationError::EmptyVoterSet
             | ReplicationError::CoordinatorUnknown
             | ReplicationError::CoordinatorNotReplica
-            | ReplicationError::DuplicateReplica
-            | ReplicationError::QuorumNotReached => Self::SizeMetadataHashMismatch,
+            | ReplicationError::DuplicateReplica => Self::SizeMetadataHashMismatch,
+            ReplicationError::QuorumNotReached => Self::ReplicationQuorumUnreached,
             ReplicationError::MetadataConflict => Self::UploadIdConflict,
         }
     }

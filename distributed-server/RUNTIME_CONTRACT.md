@@ -249,9 +249,12 @@ stable for the test environment.
 | `RaftRuntime::initialize` | Sends the one-time initial membership command with all manifest storage voters. A persisted bootstrap is rejected by the Raft layer. |
 | `RaftRuntime::node` | Returns the shared `Arc<RaftNode>`. |
 | `RaftRuntime::serve` | Serves encrypted peer RPC sessions on a `Listener` until the shutdown future resolves, dispatching verified RPC bytes to the local OpenRaft node. |
+| `RaftRuntime::publish_version` | Pre-checks the fixed-voter quorum and local committed metadata, appends `RaftRequest::PublishVersion`, and returns the validated committed version; an invalid apply is a typed rejection. |
+| `RaftRuntime::replica_status` | Pre-checks and appends `RaftRequest::ReplicaStatus`; the state machine validates voter/upload/login/hash and persists availability, updating the catalog replica set. |
 | `RaftNode::status` | Returns `RaftStatus` with the current leader, term, and last applied index. |
 | `RaftNode::client_write` | Writes one `RaftRequest` toward the current leader. A follower returns the OpenRaft client-write error; this layer neither redirects nor forwards. |
 | `RaftNode::committed_versions` | Returns the applied catalog as a `BTreeMap<UploadId, CommittedVersion>`. |
+| `RaftNode::replica_statuses` | Returns the persisted replica status map keyed by upload id and replica node id. |
 | `RaftNode::handle_rpc` | Passes one encoded Raft RPC envelope to the local OpenRaft instance and returns the encoded reply. |
 
 `RaftRuntime::start` and `initialize` are asynchronous and return
