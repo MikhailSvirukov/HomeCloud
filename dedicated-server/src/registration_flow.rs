@@ -53,6 +53,16 @@ pub enum RegistrationFlowError {
     /// The login is not a valid login for this server.
     #[error(transparent)]
     Login(#[from] crate::registration::LoginError),
+    /// The password is outside the configured byte range.
+    #[error("password must be between {min} and {max} bytes, got {actual}")]
+    PasswordOutOfBounds {
+        /// Observed length in bytes.
+        actual: usize,
+        /// Configured minimum.
+        min: usize,
+        /// Configured maximum.
+        max: usize,
+    },
     /// The content tag could not be computed.
     #[error(transparent)]
     Tag(#[from] RegistrationSecretError),
@@ -78,6 +88,16 @@ pub(crate) fn register(
     input: &RegistrationInput<'_>,
 ) -> Result<CommittedRegistration, RegistrationFlowError> {
     crate::registration::Login::parse(input.login, &config.credential_limits())?;
+    let password_length = input.password.len();
+    if password_length < config.min_password_bytes.get()
+        || password_length > config.max_password_bytes.get()
+    {
+        return Err(RegistrationFlowError::PasswordOutOfBounds {
+            actual: password_length,
+            min: config.min_password_bytes.get(),
+            max: config.max_password_bytes.get(),
+        });
+    }
     let tag = content_tag(
         secret,
         input.login,
@@ -158,9 +178,7 @@ mod tests {
     use crate::config::ServerConfig;
     use crate::frame::read_frame;
     use crate::frame_seal::{open_frame, seal_frame};
-    use crate::wire::{
-        AccountRecord, ExternalHeader, InstallationRecord, InterServerMessage, RegistrySnapshot,
-    };
+    use crate::wire::{AccountRecord, ExternalHeader, InterServerMessage, RegistrySnapshot};
 
     const FIXTURE: &str = include_str!("../tests/fixtures/valid_server.toml");
     const STORAGE_ID: [u8; 16] = {
@@ -289,6 +307,7 @@ mod tests {
             installation_id: [u8; 16],
             commit_index: u64,
             form: VerifierForm,
+            expected_verifier: Option<String>,
         },
         Rejected(u32),
     }
@@ -373,6 +392,7 @@ mod tests {
                         installation_id,
                         commit_index,
                         form,
+                        expected_verifier: expected_verifier_value,
                     } => match request {
                         InterServerMessage::RegistrationPropose {
                             installation_id: sent,
@@ -383,12 +403,28 @@ mod tests {
                             assert_eq!(sent, INSTALLATION);
                             match form {
                                 VerifierForm::NewAccount => {
-                                    assert!(new_verifier.is_some());
                                     assert!(expected_verifier.is_none());
+                                    let verifier = new_verifier
+                                        .expect("a new account must carry a new verifier");
+                                    assert!(
+                                        verifier.starts_with("$argon2id$v=19$m=8,t=1,p=1$"),
+                                        "{verifier}"
+                                    );
+                                    let parsed = PasswordVerifier::parse(&verifier)
+                                        .expect("the new verifier must parse");
+                                    assert!(
+                                        parsed
+                                            .verify(PASSWORD)
+                                            .expect("the new verifier must verify"),
+                                        "the new verifier must match the password"
+                                    );
                                 }
                                 VerifierForm::ExistingAccount => {
-                                    assert!(expected_verifier.is_some());
                                     assert!(new_verifier.is_none());
+                                    assert_eq!(
+                                        expected_verifier.as_deref(),
+                                        expected_verifier_value.as_deref()
+                                    );
                                 }
                             }
                             InterServerMessage::RegistrationResult {
@@ -467,6 +503,7 @@ mod tests {
                     installation_id: INSTALLATION,
                     commit_index: 8,
                     form: VerifierForm::NewAccount,
+                    expected_verifier: None,
                 },
             ],
             LOGIN,
@@ -509,6 +546,28 @@ mod tests {
     }
 
     #[test]
+    fn a_reserved_login_is_rejected_before_any_exchange() {
+        assert!(matches!(
+            run(vec![], "..", PASSWORD),
+            Err(RegistrationFlowError::Login(
+                crate::registration::LoginError::Reserved
+            ))
+        ));
+    }
+
+    #[test]
+    fn a_short_password_is_rejected_before_any_exchange() {
+        assert!(matches!(
+            run(vec![], LOGIN, "short"),
+            Err(RegistrationFlowError::PasswordOutOfBounds {
+                actual: 5,
+                min: 8,
+                max: 1_024
+            })
+        ));
+    }
+
+    #[test]
     fn a_replay_with_another_tag_is_a_request_id_conflict() {
         let recorded = crate::wire::RegistrationRecord {
             content_tag: [0x99; 32],
@@ -537,12 +596,7 @@ mod tests {
                 verifier: verifier.as_str().to_owned(),
             }),
             registration: None,
-            installation: Some(InstallationRecord {
-                login: LOGIN.to_owned(),
-                installation_id: INSTALLATION,
-                x25519_key: X25519_KEY,
-                ed25519_key: ED25519_KEY,
-            }),
+            installation: None,
         };
 
         let outcome = run(
@@ -552,6 +606,7 @@ mod tests {
                     installation_id: INSTALLATION,
                     commit_index: 9,
                     form: VerifierForm::ExistingAccount,
+                    expected_verifier: Some(verifier.as_str().to_owned()),
                 },
             ],
             LOGIN,
@@ -597,6 +652,7 @@ mod tests {
                         installation_id: [0x88; 16],
                         commit_index: 9,
                         form: VerifierForm::NewAccount,
+                        expected_verifier: None,
                     },
                 ],
                 LOGIN,
