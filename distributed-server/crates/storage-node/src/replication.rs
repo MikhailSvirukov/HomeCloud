@@ -8,7 +8,8 @@
 //! version only when its protocol metadata is identical; the local acceptance time
 //! is not part of a publish command. Replica status is accepted only
 //! for a fixed voter and an existing committed upload whose login and SHA-256
-//! match; the `available` flag is carried through without interpretation.
+//! match; an accepted status persists the availability flag and updates the
+//! catalog replica set (available=false removes the replica, true adds it).
 
 use std::collections::BTreeSet;
 use std::fmt;

@@ -47,6 +47,10 @@ fn wire_codes_match_the_upload_protocol_table() {
     );
     assert_eq!(u32::from(UploadErrorCode::UploadIdConflict), 0x0005_0004);
     assert_eq!(
+        u32::from(UploadErrorCode::ReplicationQuorumUnreached),
+        0x0006_0002
+    );
+    assert_eq!(
         u32::from(UploadErrorCode::StorageCapacityExhausted),
         0x0007_0002
     );
