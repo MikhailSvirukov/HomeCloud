@@ -46,11 +46,10 @@ fn first_heartbeat_request_has_null_offset() {
         dedicated_sent_at_ms: 1000,
         previous_clock_offset_ms: None,
     });
+    let expected = vec![0x82, 0x01, 0x83, 0x01, 0x19, 0x03, 0xE8, 0xF6];
 
-    assert_eq!(
-        message.encode(),
-        vec![0x82, 0x01, 0x83, 0x01, 0x19, 0x03, 0xE8, 0xF6]
-    );
+    assert_eq!(message.encode(), expected);
+    assert_eq!(decode_message(&expected), Ok(message));
 }
 
 /// `INT-NET-087`, `TST-036/5`: a calculated offset of zero is CBOR integer
@@ -62,11 +61,10 @@ fn calculated_zero_clock_offset_is_integer_zero() {
         dedicated_sent_at_ms: 1000,
         previous_clock_offset_ms: Some(0),
     });
+    let expected = vec![0x82, 0x01, 0x83, 0x01, 0x19, 0x03, 0xE8, 0x00];
 
-    assert_eq!(
-        message.encode(),
-        vec![0x82, 0x01, 0x83, 0x01, 0x19, 0x03, 0xE8, 0x00]
-    );
+    assert_eq!(message.encode(), expected);
+    assert_eq!(decode_message(&expected), Ok(message));
 }
 
 /// `INT-NET-087`, `TST-036/5`: a positive calculated offset is a positive CBOR
@@ -132,6 +130,61 @@ fn heartbeat_response_accepts_negative_int64_timestamps() {
 
     assert_eq!(message.encode(), expected);
     assert_eq!(decode_message(&expected), Ok(message));
+}
+
+/// `INT-NET-073/6`, `TST-035/2`: the response schema fixes exactly three
+/// arguments.
+#[test]
+fn heartbeat_response_rejects_wrong_argument_count() {
+    assert_eq!(
+        HeartbeatResponse::from_args(&[Value::Uint(1), Value::Uint(2000)]),
+        Err(MessageError::WrongArgumentCount {
+            expected: 3,
+            actual: 2,
+        })
+    );
+    assert_eq!(
+        HeartbeatResponse::from_args(&[
+            Value::Uint(1),
+            Value::Uint(2000),
+            Value::Uint(3000),
+            Value::Null,
+        ]),
+        Err(MessageError::WrongArgumentCount {
+            expected: 3,
+            actual: 4,
+        })
+    );
+}
+
+/// `INT-NET-073/6`, `TST-036/5`: every response field keeps its published
+/// CBOR type.
+#[test]
+fn heartbeat_response_rejects_wrong_argument_types() {
+    assert_eq!(
+        HeartbeatResponse::from_args(&[
+            Value::Text("1".to_owned()),
+            Value::Uint(2000),
+            Value::Uint(3000),
+        ]),
+        Err(MessageError::WrongType("sequence_number"))
+    );
+    assert_eq!(
+        HeartbeatResponse::from_args(&[
+            Value::Uint(1),
+            Value::Text("2000".to_owned()),
+            Value::Uint(3000),
+        ]),
+        Err(MessageError::WrongType("node_received_at_ms"))
+    );
+    assert_eq!(
+        HeartbeatResponse::from_args(&[
+            Value::Uint(1),
+            Value::Uint(2000),
+            Value::Text("3000".to_owned()),
+        ]),
+        Err(MessageError::WrongType("node_sent_at_ms"))
+    );
 }
 
 /// `INT-NET-073/6`, `TST-036/5`: every heartbeat number uses the minimal
