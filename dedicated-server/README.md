@@ -269,9 +269,11 @@ for the whole process and flushes buffered records when dropped.
   value is rejected while the configuration is parsed, not by a later check.
 - `password`: `memory_kib`, `iterations` and `parallelism` are non-zero
   (`NonZeroU32`), and `salt_length_bytes` is a non-zero byte count
-  (`NonZeroUsize`) in the range 16..=48, the range a 64-character PHC salt
-  field can carry. The Argon2id parameters and salt length used to derive
-  password verifiers are configured here.
+  (`NonZeroUsize`) in the range 16..=64 (`CFG-CL-030`). A value above 48 bytes
+  cannot be encoded in a PHC salt field, which carries at most 64 unpadded
+  base64 characters, so it is rejected as unrepresentable (`CFG-CL-053`). The
+  Argon2id parameters and salt length used to derive password verifiers are
+  configured here.
 - `logging`: `path`, the structured JSON Lines log file, and four non-zero
   limits (`NonZeroU64`): `retention_ms` (how long a rotated file is kept),
   `max_file_age_ms` (maximum age of the active file before rotation),
