@@ -37,14 +37,25 @@ const DASH_C: &str = "-c";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_PROCESS_NAME_BYTES: usize = 15;
+const ZOMBIE_STATE: &str = "Z";
+const DEAD_STATE: &str = "X";
 
-/// Lists the supervisor's children and their `/proc/<pid>/comm` names, skipping
-/// the shell that `docker exec` created for this command.
+/// Lists the supervisor's children with their `/proc/<pid>/comm` name and
+/// `/proc/<pid>/stat` state, skipping the shell that `docker exec` created for
+/// this command.
 ///
 /// A `docker exec` process is itself a child of PID 1, so the script excludes
 /// its own shell PID `$$`; otherwise every read would observe the reader
-/// process as a supervised child.
-const CHILD_PROCESSES_SCRIPT: &str = r#"for pid in $(cat /proc/1/task/1/children); do [ "$pid" = "$$" ] || printf '%s %s\n' "$pid" "$(cat /proc/$pid/comm 2>/dev/null)"; done"#;
+/// process as a supervised child. The state is extracted after the final `)`
+/// in the stat line so a comm containing spaces does not shift the fields.
+const CHILD_PROCESSES_SCRIPT: &str = r#"for pid in $(cat /proc/1/task/1/children); do
+  [ "$pid" = "$$" ] && continue
+  comm=$(cat /proc/$pid/comm 2>/dev/null) || continue
+  stat=$(cat /proc/$pid/stat 2>/dev/null) || continue
+  rest=${stat#*) }
+  state=${rest%% *}
+  printf '%s %s %s\n' "$pid" "$comm" "$state"
+done"#;
 
 /// The container identity around a supervised process restart (`TST-016`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,28 +119,25 @@ impl DockerProcessFault {
         let (container_id, started_at) = self.inspect_identity(&name)?;
 
         let children = self.read_child_processes(&name)?;
-        let previous_pid = children
-            .iter()
-            .find(|(_, comm)| comm == expected_comm)
-            .map(|(pid, _)| *pid)
+        let previous_pid = matching_pid(&children, expected_comm, None)
             .ok_or(HarnessError::SupervisedProcessMissing { node })?;
 
-        self.exec_ok(&name, &exec_argv(&kill_process_script(expected_comm)))?;
+        self.exec_ok(
+            &name,
+            &exec_argv(&kill_process_script(previous_pid, expected_comm)),
+        )?;
 
         let started = Instant::now();
         loop {
             let children = self.read_child_processes(&name)?;
-            if let Some((current_pid, _)) = children
-                .iter()
-                .find(|(pid, comm)| *pid != previous_pid && comm == expected_comm)
-            {
+            if let Some(current_pid) = matching_pid(&children, expected_comm, Some(previous_pid)) {
                 let (current_container_id, current_started_at) = self.inspect_identity(&name)?;
                 if current_container_id != container_id || current_started_at != started_at {
                     return Err(HarnessError::ContainerRecreated { node });
                 }
                 return Ok(ProcessRestart {
                     previous_pid,
-                    current_pid: *current_pid,
+                    current_pid,
                     container_id,
                     started_at,
                 });
@@ -163,7 +171,7 @@ impl DockerProcessFault {
         Ok((id, started_at))
     }
 
-    fn read_child_processes(&self, container: &str) -> Result<Vec<(u32, String)>> {
+    fn read_child_processes(&self, container: &str) -> Result<Vec<(u32, String, String)>> {
         let (code, stdout) = self.exec_capture(container, &exec_argv(CHILD_PROCESSES_SCRIPT))?;
         if code != 0 {
             return Err(HarnessError::DockerApiFailed {
@@ -265,13 +273,14 @@ fn validate_process_name(name: &str) -> Result<()> {
     }
 }
 
-fn kill_process_script(comm: &str) -> String {
+fn kill_process_script(pid: u32, comm: &str) -> String {
     format!(
-        r#"for pid in $(cat /proc/1/task/1/children); do [ "$pid" = "$$" ] && continue; [ "$pid" = "1" ] && continue; [ "$(cat /proc/$pid/comm 2>/dev/null)" = "{comm}" ] && kill -KILL "$pid"; done"#
+        r#"[ "$(cat /proc/{pid}/comm 2>/dev/null)" = "{comm}" ] && kill -KILL {pid}
+exit 0"#
     )
 }
 
-fn parse_child_processes(output: &str) -> Result<Vec<(u32, String)>> {
+fn parse_child_processes(output: &str) -> Result<Vec<(u32, String, String)>> {
     let mut children = Vec::new();
 
     for line in output.lines() {
@@ -280,8 +289,8 @@ fn parse_child_processes(output: &str) -> Result<Vec<(u32, String)>> {
             continue;
         }
 
-        let (pid_token, comm) = match line.split_once(|character: char| character.is_whitespace()) {
-            Some((pid, comm)) => (pid, comm),
+        let (pid_token, rest) = match line.split_once(|character: char| character.is_whitespace()) {
+            Some((pid, rest)) => (pid, rest),
             None => (line, ""),
         };
 
@@ -292,32 +301,53 @@ fn parse_child_processes(output: &str) -> Result<Vec<(u32, String)>> {
                 message: format!("invalid child pid {pid_token:?}"),
             })?;
 
-        let comm = comm.trim();
-        if comm.is_empty() {
+        let Some((comm, state)) = rest.rsplit_once(|character: char| character.is_whitespace())
+        else {
+            continue;
+        };
+
+        if comm.is_empty() || state.is_empty() {
             continue;
         }
 
-        children.push((pid, comm.to_string()));
+        children.push((pid, comm.to_string(), state.to_string()));
     }
 
     Ok(children)
 }
 
+fn is_running_child(state: &str) -> bool {
+    state != ZOMBIE_STATE && state != DEAD_STATE
+}
+
+fn matching_pid(
+    children: &[(u32, String, String)],
+    comm: &str,
+    exclude: Option<u32>,
+) -> Option<u32> {
+    children
+        .iter()
+        .find(|(pid, child_comm, state)| {
+            Some(*pid) != exclude && child_comm == comm && is_running_child(state)
+        })
+        .map(|(pid, _, _)| *pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CHILD_PROCESSES_SCRIPT, exec_argv, kill_process_script, parse_child_processes,
-        validate_process_name,
+        CHILD_PROCESSES_SCRIPT, exec_argv, kill_process_script, matching_pid,
+        parse_child_processes, validate_process_name,
     };
     use harness_core::HarnessError;
 
     #[test]
-    fn parses_child_processes_with_names() {
+    fn parses_child_processes_with_state() {
         assert_eq!(
-            parse_child_processes("123 sleep\n456 storage-node\n"),
+            parse_child_processes("123 sleep S\n456 storage-node R\n"),
             Ok(vec![
-                (123, "sleep".to_string()),
-                (456, "storage-node".to_string()),
+                (123, "sleep".to_string(), "S".to_string()),
+                (456, "storage-node".to_string(), "R".to_string()),
             ])
         );
         assert_eq!(parse_child_processes(""), Ok(Vec::new()));
@@ -325,14 +355,36 @@ mod tests {
     }
 
     #[test]
+    fn ignores_malformed_and_partial_child_lines() {
+        assert_eq!(
+            parse_child_processes("123 sleep\n456\n789  S\n"),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
     fn rejects_non_numeric_child_pid() {
         assert_eq!(
-            parse_child_processes("abc sleep\n"),
+            parse_child_processes("abc sleep S\n"),
             Err(HarnessError::DockerApiFailed {
                 operation: "read child pids",
                 message: "invalid child pid \"abc\"".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn ignores_zombie_dead_and_mismatched_children() {
+        let children = vec![
+            (10, "storage-node".to_string(), "Z".to_string()),
+            (11, "storage-node".to_string(), "X".to_string()),
+            (12, "sleep".to_string(), "S".to_string()),
+            (13, "storage-node".to_string(), "S".to_string()),
+        ];
+
+        assert_eq!(matching_pid(&children, "storage-node", None), Some(13));
+        assert_eq!(matching_pid(&children, "missing", None), None);
+        assert_eq!(matching_pid(&children, "storage-node", Some(13)), None);
     }
 
     #[test]
@@ -349,11 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn kill_script_injects_the_validated_process_name() {
-        let script = kill_process_script("storage-node");
-        assert!(script.contains(r#"[ "$(cat /proc/$pid/comm 2>/dev/null)" = "storage-node" ]"#));
-        assert!(script.contains(r#"[ "$pid" = "$$" ] && continue"#));
-        assert!(script.contains(r#"[ "$pid" = "1" ] && continue"#));
+    fn kill_script_targets_the_observed_pid_and_comm() {
+        assert_eq!(
+            kill_process_script(42, "storage-node"),
+            r#"[ "$(cat /proc/42/comm 2>/dev/null)" = "storage-node" ] && kill -KILL 42
+exit 0"#
+        );
     }
 
     #[test]

@@ -77,6 +77,18 @@ fn storage_container(plan: &ClusterPlan) -> &ContainerPlan {
         .expect("the fixture plan always contains one storage container")
 }
 
+/// Removes the started containers and network when the test leaves its scope.
+struct ClusterGuard<'a> {
+    runtime: &'a mut BollardClusterRuntime,
+    plan: &'a ClusterPlan,
+}
+
+impl Drop for ClusterGuard<'_> {
+    fn drop(&mut self) {
+        let _ = self.runtime.remove(self.plan);
+    }
+}
+
 /// `TST-016/1`, `distributed-server/RUNTIME_CONTRACT.md` §2: killing the
 /// supervised child brings up a replacement in the same, non-recreated
 /// container.
@@ -92,6 +104,10 @@ fn abrupt_child_kill_restarts_the_supervised_process_in_place() {
     cluster
         .start(&cluster_plan)
         .expect("the planned containers must start on the Docker daemon");
+    let _guard = ClusterGuard {
+        runtime: &mut cluster,
+        plan: &cluster_plan,
+    };
 
     let storage = storage_container(&cluster_plan);
     let storage_name = container_name(&cluster_plan, storage);
@@ -133,8 +149,4 @@ fn abrupt_child_kill_restarts_the_supervised_process_in_place() {
         Some(true),
         "the container must still be running after the child restart"
     );
-
-    cluster
-        .remove(&cluster_plan)
-        .expect("the started containers and network must be removable");
 }
