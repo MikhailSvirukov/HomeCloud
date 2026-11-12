@@ -10,6 +10,7 @@ mod availability;
 mod clock;
 mod config;
 mod frame;
+mod frame_seal;
 mod heartbeat;
 mod identity;
 mod log_file;
@@ -27,13 +28,14 @@ pub use answers::{
     decode_topology_answer, registration_answer, topology_answer, TopologyEntry,
     TOPOLOGY_ENTRY_ELEMENTS,
 };
-pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor};
+pub use availability::{log_events, AvailabilityEvent, AvailabilityMonitor, AvailabilityPublisher};
 pub use clock::{ClockOffset, ClockSample, ExchangeTimestamps};
 pub use config::{
     ConfigError, LoggingConfig, MetricsConfig, MetricsTlsConfig, NodeField, NodeId, PublicKey,
     ServerConfig, CONFIG_PATH_ENV, DEFAULT_CONFIG_FILE_NAME,
 };
 pub use frame::{read_frame, write_frame, FrameError, FRAME_PREFIX_BYTES};
+pub use frame_seal::{open_frame, seal_frame, FrameSealError};
 pub use heartbeat::{HeartbeatAction, HeartbeatError, HeartbeatTiming, HeartbeatTracker};
 pub use identity::{IdentityError, ServerIdentity};
 pub use logging::{

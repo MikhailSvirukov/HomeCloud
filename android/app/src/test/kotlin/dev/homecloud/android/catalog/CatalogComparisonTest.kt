@@ -57,10 +57,9 @@ class CatalogComparisonTest {
         val second = version(contentSha256 = "02".repeat(32))
         val third = version(contentSha256 = "03".repeat(32))
 
-        assertEquals(
-            listOf(first, second, third),
-            CatalogComparison.missingVersions(listOf(third, first, second), emptyList()),
-        )
+        val input = listOf(third, first, second)
+
+        assertEquals(input, CatalogComparison.missingVersions(input, emptyList()))
     }
 
     @Test

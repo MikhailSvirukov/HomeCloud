@@ -25,6 +25,8 @@ pub enum MessageType {
     BlobGet = 13,
     /// Blob get result.
     BlobGetResult = 14,
+    /// Blob get data.
+    BlobGetData = 15,
 }
 
 impl TryFrom<u32> for MessageType {
@@ -41,6 +43,7 @@ impl TryFrom<u32> for MessageType {
             12 => Ok(Self::BlobPutResult),
             13 => Ok(Self::BlobGet),
             14 => Ok(Self::BlobGetResult),
+            15 => Ok(Self::BlobGetData),
             code => Err(MessageError::UnknownMessageType { code }),
         }
     }
