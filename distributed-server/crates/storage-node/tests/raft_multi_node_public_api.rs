@@ -26,9 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use storage_node::{
-    ClientLimits, Listener, ListenerError, MessageSigningKey, PrivateKey, RaftNode, RaftRequest,
-    RaftResponse, RaftRuntime, RecipientPrivateKey, StaticManifest, UploadId, KEY_LEN,
-    UPLOAD_ID_LEN,
+    ClientLimits, CommittedVersion, ContentHash, Listener, ListenerError, MessageSigningKey,
+    PrivateKey, RaftNode, RaftRequest, RaftRuntime, RecipientPrivateKey, StaticManifest, UploadId,
+    UploadRecord, KEY_LEN, UPLOAD_ID_LEN,
 };
 use tempfile::TempDir;
 use tokio::sync::oneshot;
@@ -218,9 +218,9 @@ impl Cluster {
         let bootstrap = runtimes[0]
             .take()
             .expect("the bootstrap runtime is present");
-        bootstrap
-            .initialize()
+        tokio::time::timeout(LEADER_BUDGET, bootstrap.initialize())
             .await
+            .expect("the explicit bootstrap completes within the leader budget")
             .expect("the explicit bootstrap initializes the manifest storage voters");
         let listener = listeners[0]
             .take()
@@ -295,21 +295,21 @@ async fn three_loopback_nodes_elect_a_leader_and_commit_through_the_peer_transpo
     );
 
     let upload_id = UploadId::from_bytes([0x44; UPLOAD_ID_LEN]);
-    let response = leader_node
-        .client_write(RaftRequest::UpdateReplicas {
-            upload_id,
-            replicas: BTreeSet::from([leader]),
-        })
-        .await
-        .expect("the leader commits the client write through a majority");
+    let version = committed_version(upload_id, leader);
+    let response = tokio::time::timeout(
+        APPLY_BUDGET,
+        leader_node.client_write(RaftRequest::CommitVersion(version.clone())),
+    )
+    .await
+    .expect("the client write completes within the apply budget")
+    .expect("the leader commits the client write through a majority");
     assert_eq!(
-        response,
-        RaftResponse { upload_id: None },
-        "an update for an unknown upload id commits without changing a catalog version"
+        response.upload_id,
+        Some(upload_id),
+        "the committed version is reported by the leader"
     );
 
-    let applied = wait_for_applied_index(&leader_node).await;
-    wait_for_all_nodes_to_apply(&cluster.nodes, applied).await;
+    wait_for_committed_version(&cluster.nodes, &version).await;
 
     for (node_id, node) in &cluster.nodes {
         let status = node.status();
@@ -318,44 +318,54 @@ async fn three_loopback_nodes_elect_a_leader_and_commit_through_the_peer_transpo
             Some(leader),
             "node {node_id} reports the elected leader"
         );
-        assert_eq!(
-            status.last_applied,
-            Some(applied),
-            "node {node_id} applied the committed entry at index {applied}"
+        assert!(
+            status.last_applied.is_some(),
+            "node {node_id} has applied the committed entry"
         );
     }
 
     cluster.shutdown().await;
 }
 
-/// Waits until `node` reports at least one applied log entry.
-async fn wait_for_applied_index(node: &RaftNode) -> u64 {
-    let deadline = tokio::time::Instant::now() + APPLY_BUDGET;
-    loop {
-        if let Some(index) = node.last_applied_index() {
-            return index;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the leader did not apply the committed entry within the apply budget"
-        );
-        tokio::time::sleep(POLL_INTERVAL).await;
+/// Builds a committed catalog version for the test write.
+fn committed_version(upload_id: UploadId, leader: u64) -> CommittedVersion {
+    let payload = b"multi-node raft catalog payload";
+    CommittedVersion {
+        record: UploadRecord::new(
+            upload_id,
+            "alice",
+            "photo.jpg",
+            u64::try_from(payload.len()).expect("the payload length fits in u64"),
+            u64::try_from(payload.len() / 2).expect("the compressed length fits in u64"),
+            ContentHash::digest(payload),
+            1_690_000_000_000,
+            1_700_000_000_000,
+        )
+        .expect("the test metadata is valid"),
+        replicas: BTreeSet::from([leader]),
     }
 }
 
-/// Waits until every node applies exactly `index`.
-async fn wait_for_all_nodes_to_apply(nodes: &BTreeMap<u64, Arc<RaftNode>>, index: u64) {
+/// Waits until every node has applied exactly `version` to its catalog.
+async fn wait_for_committed_version(
+    nodes: &BTreeMap<u64, Arc<RaftNode>>,
+    version: &CommittedVersion,
+) {
+    let upload_id = version.record.upload_id;
     let deadline = tokio::time::Instant::now() + APPLY_BUDGET;
     loop {
-        if nodes
-            .values()
-            .all(|node| node.last_applied_index() == Some(index))
-        {
+        let mut replicated = true;
+        for node in nodes.values() {
+            if node.committed_versions().await.get(&upload_id) != Some(version) {
+                replicated = false;
+            }
+        }
+        if replicated {
             return;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "every node did not apply log index {index} within the apply budget"
+            "the committed version {upload_id} did not reach every node in the apply budget"
         );
         tokio::time::sleep(POLL_INTERVAL).await;
     }
