@@ -1,0 +1,12 @@
+[package]
+name = "harness-wire"
+description = "Wire conformance harness for the fixed v1 frame, header, and result structures."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true

@@ -1,0 +1,21 @@
+//! Test-environment conformance oracle for the fixed v1 wire structures.
+//!
+//! This crate implements the dependency-free byte-level structures published in
+//! `contracts/wire-v1.md`: deterministic CBOR for the fixed headers, the frame
+//! body layout, the external frame header, and the result envelope. It is meant
+//! to produce and validate golden vectors for other v1 implementations; it
+//! performs no network, cryptographic, or configuration work.
+//!
+//! Encoding and decoding are strict: optional header positions are always
+//! present as CBOR `null`, integers use the minimal deterministic form, and any
+//! value outside the fixed v1 schema is rejected.
+
+pub mod cbor;
+pub mod frame;
+pub mod header;
+pub mod result;
+
+pub use cbor::{CborError, Value};
+pub use frame::{Frame, FrameError};
+pub use header::{ExternalFrameHeader, HeaderError};
+pub use result::{ResultClass, ResultEnvelope, ResultError};
