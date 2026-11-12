@@ -500,6 +500,13 @@ computes the content tag from the registration secret, the credentials and the
 installation keys, carries the expected or the new verifier, and returns the
 committed installation identifier with the commit index.
 
+`src/registration_flow.rs` decides one registration from the lookup: a recorded
+request with the same content tag returns the recorded installation identifier
+without changing state, the same identifier with other content is a conflict, an
+existing account must match its PHC verifier before an installation is added,
+and a new account is proposed with a freshly derived verifier. The committed
+installation identifier must equal the one the command carried.
+
 `src/frame_seal.rs` seals and opens an application frame body (`INT-NET-081`):
 the four-byte big-endian prefix, the encoded external header, the 64-byte
 Ed25519 signature over the prefix, the header and the payload, and the payload
