@@ -272,11 +272,11 @@ fn debug_does_not_print_payload() {
         "compact Debug output does not include the original payload"
     );
     assert!(
-        !debug.contains(&format!("{:?}", &payload[..])),
+        !debug.contains(&format!("{payload:?}")),
         "compact Debug output does not include the buffered original bytes"
     );
     assert!(
-        !debug.contains(&format!("{:?}", &transfer[..])),
+        !debug.contains(&format!("{transfer:?}")),
         "compact Debug output does not include the buffered transfer bytes"
     );
 }
@@ -315,11 +315,18 @@ fn rejects_multi_frame_skippable_and_dictionary_streams() {
         Err(ReplicaError::Decompress)
     ));
 
-    let mut compressor = zstd::bulk::Compressor::with_dictionary(
-        ZSTD_COMPRESSION_LEVEL,
-        b"homecloud-test-dictionary",
-    )
-    .expect("the test dictionary builds a compressor");
+    let samples: Vec<Vec<u8>> = (0..32)
+        .map(|index| {
+            let mut sample = PAYLOAD.to_vec();
+            sample.extend_from_slice(format!(" sample {index}").as_bytes());
+            sample
+        })
+        .collect();
+    let dictionary = zstd::dict::from_samples(&samples, 1024)
+        .expect("the test dictionary trains from the samples");
+    let mut compressor =
+        zstd::bulk::Compressor::with_dictionary(ZSTD_COMPRESSION_LEVEL, &dictionary)
+            .expect("the trained dictionary builds a compressor");
     let dictionary_stream = compressor
         .compress(PAYLOAD)
         .expect("the dictionary stream compresses");
