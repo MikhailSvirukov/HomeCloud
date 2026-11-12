@@ -12,9 +12,7 @@ use thiserror::Error;
 
 use crate::config::ServerConfig;
 use crate::identity::ServerIdentity;
-use crate::inter_server_client::{
-    lookup_registry, propose_registration, InterServerClientError, RegistrationProposeRequest,
-};
+use crate::inter_server_client::{InterServerClientError, RegistrationProposeRequest};
 use crate::password::{PasswordError, PasswordVerifier};
 use crate::registration_tag::{content_tag, RegistrationSecret, RegistrationSecretError};
 use crate::wire::IDENTIFIER_BYTES;
@@ -105,12 +103,15 @@ pub(crate) fn register(
         &input.x25519_key,
         &input.ed25519_key,
     )?;
-    let snapshot = lookup_registry(
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(config.registration.total_deadline_ms.get());
+    let snapshot = crate::inter_server_client::lookup_registry_until(
         config,
         identity,
         Some(input.login),
         Some(input.request_id),
         Some(input.installation_id),
+        deadline,
     )?;
 
     if let Some(recorded) = &snapshot.registration {
@@ -152,7 +153,9 @@ pub(crate) fn register(
         expected_verifier: expected_verifier.as_deref(),
         new_verifier: new_verifier.as_deref(),
     };
-    let commit = propose_registration(config, identity, secret, &request)?;
+    let commit = crate::inter_server_client::propose_registration_until(
+        config, identity, secret, &request, deadline,
+    )?;
     if commit.installation_id != input.installation_id {
         return Err(RegistrationFlowError::UnexpectedInstallation);
     }

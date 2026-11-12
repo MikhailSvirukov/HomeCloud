@@ -273,6 +273,19 @@ pub(crate) fn propose_registration(
     secret: &crate::registration_tag::RegistrationSecret,
     request: &RegistrationProposeRequest<'_>,
 ) -> Result<RegistrationCommit> {
+    let deadline =
+        Instant::now() + Duration::from_millis(config.registration.total_deadline_ms.get());
+    propose_registration_until(config, identity, secret, request, deadline)
+}
+
+/// Propose one registration command within an existing registration deadline.
+pub(crate) fn propose_registration_until(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    secret: &crate::registration_tag::RegistrationSecret,
+    request: &RegistrationProposeRequest<'_>,
+    deadline: Instant,
+) -> Result<RegistrationCommit> {
     if config.storage.is_empty() {
         return Err(InterServerClientError::NoStorageNode);
     }
@@ -298,7 +311,7 @@ pub(crate) fn propose_registration(
         expected_verifier: request.expected_verifier.map(str::to_owned),
         new_verifier: request.new_verifier.map(str::to_owned),
     };
-    let response = with_registration_budget(config, |storage, budget| {
+    let response = with_registration_budget(config, deadline, |storage, budget| {
         let response = exchange(config, identity, storage, &message, budget)?;
         match &response {
             InterServerMessage::RegistrationResult { code, .. } if is_temporary_code(*code) => {
@@ -331,17 +344,19 @@ pub(crate) fn propose_registration(
 /// count or the total registration deadline (`CFG-CL-042`-`CFG-CL-045`).
 fn with_registration_budget<T>(
     config: &ServerConfig,
+    deadline: Instant,
     mut attempt: impl FnMut(&ManifestEntry, Duration) -> Result<T>,
 ) -> Result<T> {
     let attempts = config.registration.attempts.get();
     let retry = Duration::from_millis(config.registration.retry_interval_ms.get());
+    let configured_attempt = Duration::from_millis(config.registration.attempt_deadline_ms.get());
     let total = Duration::from_millis(config.registration.total_deadline_ms.get());
-    let attempt_budget = Duration::from_millis(config.registration.attempt_deadline_ms.get());
-    let deadline = Instant::now() + total;
     let mut last = InterServerClientError::NoStorageNode;
 
     for index in 0..attempts {
-        if Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let attempt_budget = configured_attempt.min(remaining);
+        if attempt_budget.is_zero() {
             return Err(InterServerClientError::Deadline {
                 millis: total.as_millis() as u64,
             });
@@ -406,6 +421,27 @@ pub(crate) fn lookup_registry(
     registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
     installation_id: Option<[u8; IDENTIFIER_BYTES]>,
 ) -> Result<RegistrySnapshot> {
+    let deadline =
+        Instant::now() + Duration::from_millis(config.registration.total_deadline_ms.get());
+    lookup_registry_until(
+        config,
+        identity,
+        login,
+        registration_request_id,
+        installation_id,
+        deadline,
+    )
+}
+
+/// Look the registry up within an existing registration deadline.
+pub(crate) fn lookup_registry_until(
+    config: &ServerConfig,
+    identity: &ServerIdentity,
+    login: Option<&str>,
+    registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
+    installation_id: Option<[u8; IDENTIFIER_BYTES]>,
+    deadline: Instant,
+) -> Result<RegistrySnapshot> {
     if config.storage.is_empty() {
         return Err(InterServerClientError::NoStorageNode);
     }
@@ -422,7 +458,7 @@ pub(crate) fn lookup_registry(
         installation_id,
     };
 
-    let response = with_registration_budget(config, |storage, budget| {
+    let response = with_registration_budget(config, deadline, |storage, budget| {
         let message = exchange(config, identity, storage, &request, budget)?;
         match &message {
             InterServerMessage::RegistryLookupResult { code, .. } if is_temporary_code(*code) => {
@@ -1378,6 +1414,39 @@ mod tests {
                 max: 64
             })
         ));
+    }
+
+    #[test]
+    fn the_attempt_budget_never_exceeds_the_total_deadline() {
+        let config = config_with_failover(2, 1, 1, 1_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(40);
+        let mut seen = None;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, budget| {
+            seen = Some(budget);
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(seen.expect("the attempt must run") <= std::time::Duration::from_millis(40));
+    }
+
+    #[test]
+    fn an_attempt_after_the_deadline_is_not_started() {
+        let config = config_with_failover(2, 2, 1, 1_000);
+        let deadline = std::time::Instant::now();
+        let mut ran = false;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            ran = true;
+            Ok(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Deadline { .. })
+        ));
+        assert!(!ran);
     }
 
     #[test]
