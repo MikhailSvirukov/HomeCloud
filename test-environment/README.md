@@ -80,6 +80,10 @@ test-environment/
   shared blocks.
 - `harness-test-support`: fixtures shared by tests — a fixture topology and the
   `nodes`/`faults` helpers bound to it, plus the fixture address used by node ids.
+- `harness-probe`: `WireProbe`, a bounded raw TCP probe for negative protocol
+  scenarios (TST-021) — sends raw bytes, reads one frame within a configured
+  body limit, and asserts close-without-response; loopback-tested in PR CI with
+  no Docker required.
 
 ## Gates
 

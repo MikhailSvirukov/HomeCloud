@@ -153,6 +153,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-probe"
+version = "0.1.0"
+dependencies = [
+ "harness-wire",
+ "thiserror",
+]
+
+[[package]]
 name = "harness-scenario"
 version = "0.1.0"
 dependencies = [

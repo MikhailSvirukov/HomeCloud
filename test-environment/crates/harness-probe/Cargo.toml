@@ -1,0 +1,13 @@
+[package]
+name = "harness-probe"
+description = "Bounded TCP wire probe for negative protocol scenarios in the test harness."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+harness-wire.workspace = true
+thiserror.workspace = true
