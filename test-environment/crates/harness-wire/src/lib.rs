@@ -11,6 +11,7 @@
 //! present as CBOR `null`, integers use the minimal deterministic form, and any
 //! value outside the fixed v1 schema is rejected.
 
+pub mod catalog;
 pub mod cbor;
 pub mod frame;
 pub mod header;
@@ -21,6 +22,7 @@ pub mod raft;
 pub mod result;
 pub mod topology;
 
+pub use catalog::{CatalogEntry, CatalogError, CatalogPage, CatalogPageRequest};
 pub use cbor::{CborError, Value};
 pub use frame::{Frame, FrameError};
 pub use header::{ExternalFrameHeader, HeaderError};
