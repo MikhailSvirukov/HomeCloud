@@ -386,6 +386,14 @@ and dispatches the verified RPC bytes to the local OpenRaft instance for handlin
 `RaftRuntime::node` exposes that local node, and `RaftRuntime::local` exposes the
 resolved manifest entry.
 
+`RaftRuntime::publish_version` validates the fixed-voter majority and the
+locally applied committed catalog of a publish version, then submits it to the
+local OpenRaft instance; an identical replay returns the committed version
+without a second log entry. The pre-check reads local applied state and does not
+forward a follower request; concurrent/apply-time enforcement remains a separate
+state-machine step. The pure `validate_publish_version` check remains available for callers
+that validate a command without committing it.
+
 ## Publish version and replica status
 
 `validate_publish_version` accepts a publish-version command only when the fixed

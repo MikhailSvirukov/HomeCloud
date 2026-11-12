@@ -3,11 +3,11 @@
 //! SRS: `FR-CL-001 / 1`, `FR-CL-015 / 1`, `FR-CL-017 / 1`, `FR-CL-027 / 1`,
 //! `FR-CL-030 / 1`, `FR-CL-031 / 1`, `CFG-CL-003 / 1`, `CFG-CL-007 / 1`,
 //! `CFG-CL-021 / 1`, `CFG-CL-029 / 1`, `CFG-CL-031 / 1`, `CFG-CL-039 / 1`,
-//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `NFR-SEC-009 / 1`.
+//! `INT-NET-071 / 1`, `INT-NET-074 / 2`, `INT-NET-113 / 1`, `NFR-SEC-009 / 1`.
 
 use core::fmt;
 use core::num::NonZeroU32;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -21,7 +21,8 @@ use crate::client_limits::ClientLimits;
 use crate::keys::PrivateKey;
 use crate::listener::{Listener, ListenerError};
 use crate::manifest::{ManifestEntry, ManifestError, StaticManifest};
-use crate::raft::{NodeId, RaftError, RaftNode, RaftTiming};
+use crate::raft::{CommittedVersion, NodeId, RaftError, RaftNode, RaftRequest, RaftTiming};
+use crate::replication::{validate_publish_version, PublishVersion, ReplicationError};
 use crate::sealing::{RecipientPrivateKey, SealingError};
 use crate::server_session::serve_peer_connection;
 use crate::server_transport::{PeerDirectory, ServerTransport};
@@ -54,6 +55,12 @@ pub enum RuntimeError {
     /// The local Raft node could not be started or initialized.
     #[error("the local Raft node could not be started or initialized")]
     Raft(#[source] Box<RaftError>),
+    /// A publish version was rejected by fixed-voter or committed-catalog validation.
+    #[error(transparent)]
+    Replication(#[from] ReplicationError),
+    /// The Raft commit replied with a different upload id than the published version.
+    #[error("the committed publish version does not match the requested upload")]
+    PublishRejected,
 }
 
 /// Manifest-validated node runtime that owns the local OpenRaft instance and
@@ -152,6 +159,34 @@ impl RaftRuntime {
             .initialize(self.members.clone())
             .await
             .map_err(|error| RuntimeError::Raft(Box::new(error)))
+    }
+
+    /// Validates a publish version against the fixed manifest voters and the local
+    /// committed catalog, then submits it to OpenRaft. An identical committed
+    /// version is returned without a second log entry.
+    pub async fn publish_version(
+        &self,
+        command: PublishVersion,
+    ) -> Result<CommittedVersion, RuntimeError> {
+        let existing = self
+            .node
+            .committed_versions()
+            .await
+            .remove(&command.record.upload_id);
+        let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
+        let version = validate_publish_version(&command, &voters, existing.as_ref())?;
+        if existing.as_ref() == Some(&version) {
+            return Ok(version);
+        }
+        let response = self
+            .node
+            .client_write(RaftRequest::CommitVersion(version.clone()))
+            .await
+            .map_err(|error| RuntimeError::Raft(Box::new(error)))?;
+        if response.upload_id != Some(version.record.upload_id) {
+            return Err(RuntimeError::PublishRejected);
+        }
+        Ok(version)
     }
 
     /// Returns the shared local OpenRaft instance.

@@ -18,7 +18,9 @@
 //! configured storage connect timeout), `CFG-CL-029 / 1` and `CFG-CL-031 / 1`
 //! (the local responder label must fit the configured byte limit),
 //! `INT-NET-071 / 1` (the local sender id is the manifest entry's stable
-//! identifier), `NFR-SEC-009 / 1` (local identity keys must match the
+//! identifier), `INT-NET-113 / 1` (a committed publish version validates the
+//! fixed-voter quorum and committed metadata before it reaches Raft),
+//! `NFR-SEC-009 / 1` (local identity keys must match the
 //! trusted manifest before peer exchange), and `NFR-OBS-005 / 3` (the node
 //! exposes its Raft leader, term, last applied index, and voter count).
 
@@ -30,9 +32,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use storage_node::{
-    ClientLimits, ManifestError, MessageSigningKey, PrivateKey, RaftRequest, RaftResponse,
-    RaftRuntime, RecipientPrivateKey, RuntimeError, StaticManifest, UploadId, KEY_LEN,
-    UPLOAD_ID_LEN,
+    ClientLimits, ContentHash, ManifestError, MessageSigningKey, PrivateKey, PublishVersion,
+    RaftRequest, RaftResponse, RaftRuntime, RecipientPrivateKey, ReplicationError, RuntimeError,
+    StaticManifest, UploadId, UploadRecord, KEY_LEN, UPLOAD_ID_LEN,
 };
 use tempfile::TempDir;
 
@@ -80,6 +82,16 @@ const PASSWORD_MIN_LEN: usize = 1;
 const PASSWORD_MAX_LEN: usize = 256;
 /// Maximum responder-label length in bytes.
 const RESPONDER_LABEL_MAX_LEN: usize = 64;
+/// Fixed upload identifier used by the runtime publish tests.
+const PUBLISH_UPLOAD_ID: [u8; UPLOAD_ID_LEN] = [0x5A; UPLOAD_ID_LEN];
+/// Client login stored with the fixed publish record.
+const PUBLISH_LOGIN: &str = "alice";
+/// Original file name stored with the fixed publish record.
+const PUBLISH_ORIGINAL_NAME: &str = "photo.jpg";
+/// Fixed payload whose digest is stored as the publish content hash.
+const PUBLISH_PAYLOAD: &[u8] = b"runtime publish version";
+/// Coordinator id that does not belong to the manifest voter set.
+const UNKNOWN_COORDINATOR: u64 = 999;
 
 /// Temporary manifest and key directory shared by one test.
 struct Fixture {
@@ -159,6 +171,21 @@ async fn start_runtime_with_limits(
     .await
 }
 
+/// Builds the fixed structural upload record used by the runtime publish tests.
+fn publish_record() -> UploadRecord {
+    UploadRecord::new(
+        UploadId::from_bytes(PUBLISH_UPLOAD_ID),
+        PUBLISH_LOGIN,
+        PUBLISH_ORIGINAL_NAME,
+        PUBLISH_PAYLOAD.len() as u64,
+        PUBLISH_PAYLOAD.len() as u64 / 2,
+        ContentHash::digest(PUBLISH_PAYLOAD),
+        1_690_000_000_000,
+        1_700_000_000_000,
+    )
+    .expect("the fixed publish record is valid")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn starts_initializes_and_commits_on_a_single_node_runtime() {
     let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
@@ -215,6 +242,125 @@ async fn starts_initializes_and_commits_on_a_single_node_runtime() {
         runtime.voter_count(),
         1,
         "the runtime derives one voter from the single-entry manifest"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publishes_a_validated_version_and_replays_idempotently() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-publish"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    let leader = runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let record = publish_record();
+    let committed = runtime
+        .publish_version(PublishVersion {
+            record: record.clone(),
+            coordinator: leader,
+            replicas: vec![leader],
+        })
+        .await
+        .expect("the runtime validates and commits the publish version");
+
+    assert_eq!(committed.record, record);
+    assert_eq!(committed.replicas, BTreeSet::from([leader]));
+    assert_eq!(
+        runtime
+            .node()
+            .committed_versions()
+            .await
+            .get(&record.upload_id),
+        Some(&committed),
+        "the committed catalog contains the published version"
+    );
+
+    let applied_after_publish = runtime
+        .node()
+        .last_applied_index()
+        .expect("the publish version is applied to the catalog");
+    let replay = runtime
+        .publish_version(PublishVersion {
+            record: record.clone(),
+            coordinator: leader,
+            replicas: vec![leader],
+        })
+        .await
+        .expect("an identical replay returns the committed version");
+    assert_eq!(replay, committed);
+    assert_eq!(
+        runtime.node().last_applied_index(),
+        Some(applied_after_publish),
+        "an identical replay does not append a second log entry"
+    );
+    assert_eq!(
+        runtime.node().committed_version_count().await,
+        1,
+        "the catalog still contains exactly one version"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejects_an_unknown_publish_coordinator_before_raft() {
+    let fixture = Fixture::new(LOCAL_HOST, LOCAL_PORT);
+    let encryption_key = fixture.key("encryption.key", &ENCRYPTION_KEY);
+    let signing_key = fixture.key("signing.key", &SIGNING_KEY);
+
+    let runtime = start_runtime(
+        &fixture.manifest,
+        LOCAL_LABEL,
+        LOCAL_ADDRESS,
+        &encryption_key,
+        &signing_key,
+        fixture.raft_dir("raft-publish-rejected"),
+    )
+    .await
+    .expect("the runtime starts with matching keys, manifest entry, and address");
+    runtime
+        .initialize()
+        .await
+        .expect("the explicit bootstrap initializes the single-node cluster");
+    runtime
+        .node()
+        .wait_for_leader(LEADER_BUDGET)
+        .await
+        .expect("the single manifest voter becomes leader within the budget");
+
+    let result = runtime
+        .publish_version(PublishVersion {
+            record: publish_record(),
+            coordinator: UNKNOWN_COORDINATOR,
+            replicas: vec![UNKNOWN_COORDINATOR],
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(RuntimeError::Replication(
+            ReplicationError::CoordinatorUnknown
+        ))
+    ));
+    assert!(
+        runtime.node().committed_versions().await.is_empty(),
+        "a publish version rejected before Raft commits nothing"
     );
 }
 
