@@ -192,9 +192,14 @@ mod tests {
         }
 
         fn write_with_mode(contents: &[u8], mode: u32) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
             let path = std::env::temp_dir().join(format!(
-                "homecloud-registration-secret-{}",
-                std::process::id()
+                "homecloud-registration-secret-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
             ));
             let mut file = fs::File::create(&path).expect("the secret file must be created");
             file.write_all(contents)
@@ -259,7 +264,10 @@ mod tests {
 
     #[test]
     fn rejects_a_missing_secret_file() {
-        let path = std::env::temp_dir().join("homecloud-registration-secret-absent");
+        let path = std::env::temp_dir().join(format!(
+            "homecloud-registration-secret-absent-{}",
+            std::process::id()
+        ));
 
         assert!(matches!(
             RegistrationSecret::load(&path),
