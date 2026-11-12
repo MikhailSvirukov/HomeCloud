@@ -123,6 +123,22 @@ fn maps_the_assigned_message_type_codes() {
     let heartbeat_response =
         MessageType::try_from(2).expect("code 2 is the dedicated heartbeat response");
     let raft_rpc = MessageType::try_from(3).expect("code 3 is the OpenRaft RPC");
+    assert_eq!(
+        MessageType::try_from(8).expect("code 8 is publish version"),
+        MessageType::PublishVersion
+    );
+    assert_eq!(
+        MessageType::try_from(9).expect("code 9 is publish result"),
+        MessageType::PublishVersionResult
+    );
+    assert_eq!(
+        MessageType::try_from(16).expect("code 16 is replica status"),
+        MessageType::ReplicaStatus
+    );
+    assert_eq!(
+        MessageType::try_from(17).expect("code 17 is replica status result"),
+        MessageType::ReplicaStatusResult
+    );
 
     assert_eq!(heartbeat_request, MessageType::DedicatedHeartbeatRequest);
     assert_eq!(heartbeat_response, MessageType::DedicatedHeartbeatResponse);
