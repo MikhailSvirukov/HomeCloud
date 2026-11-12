@@ -54,10 +54,11 @@ following holds (`CFG-CL-038 / 1`):
 8. two entries, the dedicated entry included, share a `sender_id`, a `label` or
    an `address`.
 
-Identifiers, keys and labels are never normalised: an uppercase hexadecimal
-character, a DNS name or a trimmed label is rejected, so every component reads
-the same bytes. An address is parsed into an address value and rendered in its
-canonical form wherever the protocol carries it.
+Identifiers and keys are never normalised: an uppercase hexadecimal character
+or a DNS name is rejected, so every component reads the same bytes. A label is
+used exactly as written, without trimming or Unicode normalisation. An address
+is parsed into an address value and rendered in its canonical form wherever the
+protocol carries it.
 
 ## Example
 

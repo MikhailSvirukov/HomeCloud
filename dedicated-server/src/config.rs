@@ -1192,7 +1192,8 @@ mod tests {
 
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
-            Err(ConfigError::Parse { .. })
+            Err(ConfigError::Parse { source })
+                if source.to_string().contains("missing field `dedicated`")
         ));
     }
 
@@ -1205,7 +1206,8 @@ mod tests {
 
         assert!(matches!(
             ServerConfig::from_toml_str(&document),
-            Err(ConfigError::Parse { .. })
+            Err(ConfigError::Parse { source })
+                if source.to_string().contains("unknown field `node_id`")
         ));
     }
 
