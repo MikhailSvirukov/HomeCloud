@@ -343,7 +343,8 @@ fn with_registration_budget<T>(
         let storage = &config.storage[(index as usize) % config.storage.len()];
         match attempt(storage, attempt_budget) {
             Ok(value) => return Ok(value),
-            Err(error) => last = error,
+            Err(error) if is_transient(&error) => last = error,
+            Err(error) => return Err(error),
         }
         if index + 1 < attempts {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -352,6 +353,19 @@ fn with_registration_budget<T>(
     }
 
     Err(last)
+}
+
+/// Whether a failed exchange may succeed against another attempt.
+///
+/// Only a transport failure is retried; a protocol rejection, a malformed
+/// frame or an invalid signature is final (`INT-NET-065 / 1`).
+fn is_transient(error: &InterServerClientError) -> bool {
+    matches!(
+        error,
+        InterServerClientError::Connect { .. }
+            | InterServerClientError::Io(_)
+            | InterServerClientError::Deadline { .. }
+    )
 }
 
 /// Length of the encoded external header at the start of `body`.
