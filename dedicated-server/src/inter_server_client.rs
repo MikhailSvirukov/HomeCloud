@@ -10,7 +10,7 @@
 
 use std::io::Write;
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ciborium::Value;
 use thiserror::Error;
@@ -87,6 +87,12 @@ pub enum InterServerClientError {
     /// The response does not belong to the request or the addressed node.
     #[error("the response does not match the request: {0}")]
     Mismatch(&'static str),
+    /// The total registration deadline passed.
+    #[error("the registration deadline of {millis} ms passed before an exchange succeeded")]
+    Deadline {
+        /// Configured total deadline in milliseconds.
+        millis: u64,
+    },
     /// The content tag could not be computed.
     #[error("the registration content tag could not be computed: {0}")]
     Tag(#[from] crate::registration_tag::RegistrationSecretError),
@@ -105,6 +111,7 @@ fn exchange(
     storage: &ManifestEntry,
     request: &InterServerMessage,
     request_id: [u8; IDENTIFIER_BYTES],
+    attempt_budget: Duration,
 ) -> Result<InterServerMessage> {
     let signing_seed = key_seed(identity.signing_private_key(), "signing")?;
     let header = ExternalHeader {
@@ -124,7 +131,8 @@ fn exchange(
         &signing_seed,
     )?;
 
-    let connect_timeout = Duration::from_millis(config.connect_timeout_ms.get());
+    let connect_timeout =
+        Duration::from_millis(config.connect_timeout_ms.get()).min(attempt_budget);
     let mut stream =
         TcpStream::connect_timeout(&storage.address, connect_timeout).map_err(|source| {
             InterServerClientError::Connect {
@@ -132,7 +140,8 @@ fn exchange(
                 source,
             }
         })?;
-    let exchange_timeout = Duration::from_millis(config.inter_server_timeout_ms.get());
+    let exchange_timeout =
+        Duration::from_millis(config.inter_server_timeout_ms.get()).min(attempt_budget);
     stream.set_read_timeout(Some(exchange_timeout))?;
     stream.set_write_timeout(Some(exchange_timeout))?;
     stream.write_all(&frame)?;
@@ -262,10 +271,9 @@ pub(crate) fn propose_registration(
     secret: &crate::registration_tag::RegistrationSecret,
     request: &RegistrationProposeRequest<'_>,
 ) -> Result<RegistrationCommit> {
-    let storage = config
-        .storage
-        .first()
-        .ok_or(InterServerClientError::NoStorageNode)?;
+    if config.storage.is_empty() {
+        return Err(InterServerClientError::NoStorageNode);
+    }
     ensure_login_bounds(
         request.login,
         config.min_login_bytes.get(),
@@ -290,7 +298,11 @@ pub(crate) fn propose_registration(
     };
     let exchange_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
 
-    match exchange(config, identity, storage, &message, exchange_id)? {
+    let response = with_registration_budget(config, |storage, budget| {
+        exchange(config, identity, storage, &message, exchange_id, budget)
+    })?;
+
+    match response {
         InterServerMessage::RegistrationResult {
             code: 0,
             installation_id: Some(installation_id),
@@ -304,6 +316,42 @@ pub(crate) fn propose_registration(
         }
         _ => Err(InterServerClientError::UnexpectedMessage),
     }
+}
+
+/// Run one attempt per configured attempt, rotating through the storage nodes.
+///
+/// Each attempt is bounded by the per-attempt deadline, the pause between
+/// attempts comes from the configuration, and the loop stops at the attempt
+/// count or the total registration deadline (`CFG-CL-042`-`CFG-CL-045`).
+fn with_registration_budget<T>(
+    config: &ServerConfig,
+    mut attempt: impl FnMut(&ManifestEntry, Duration) -> Result<T>,
+) -> Result<T> {
+    let attempts = config.registration.attempts.get();
+    let retry = Duration::from_millis(config.registration.retry_interval_ms.get());
+    let total = Duration::from_millis(config.registration.total_deadline_ms.get());
+    let attempt_budget = Duration::from_millis(config.registration.attempt_deadline_ms.get());
+    let deadline = Instant::now() + total;
+    let mut last = InterServerClientError::NoStorageNode;
+
+    for index in 0..attempts {
+        if Instant::now() >= deadline {
+            return Err(InterServerClientError::Deadline {
+                millis: total.as_millis() as u64,
+            });
+        }
+        let storage = &config.storage[(index as usize) % config.storage.len()];
+        match attempt(storage, attempt_budget) {
+            Ok(value) => return Ok(value),
+            Err(error) => last = error,
+        }
+        if index + 1 < attempts {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            std::thread::sleep(retry.min(remaining));
+        }
+    }
+
+    Err(last)
 }
 
 /// Length of the encoded external header at the start of `body`.
@@ -329,10 +377,9 @@ pub(crate) fn lookup_registry(
     registration_request_id: Option<[u8; IDENTIFIER_BYTES]>,
     installation_id: Option<[u8; IDENTIFIER_BYTES]>,
 ) -> Result<RegistrySnapshot> {
-    let storage = config
-        .storage
-        .first()
-        .ok_or(InterServerClientError::NoStorageNode)?;
+    if config.storage.is_empty() {
+        return Err(InterServerClientError::NoStorageNode);
+    }
     if let Some(login) = login {
         ensure_login_bounds(
             login,
@@ -347,7 +394,11 @@ pub(crate) fn lookup_registry(
         installation_id,
     };
 
-    match exchange(config, identity, storage, &request, request_id)? {
+    let response = with_registration_budget(config, |storage, budget| {
+        exchange(config, identity, storage, &request, request_id, budget)
+    })?;
+
+    match response {
         InterServerMessage::RegistryLookupResult { code: 0, snapshot } => {
             let snapshot = snapshot.ok_or(InterServerClientError::UnexpectedMessage)?;
             if let Some(installation) = &snapshot.installation {
@@ -493,6 +544,52 @@ mod tests {
 
     fn config(port: u16) -> ServerConfig {
         config_with(port, None)
+    }
+
+    /// Two storage entries: an unreachable first node and the mock on the second.
+    fn config_with_failover(
+        mock_port: u16,
+        attempts: u32,
+        retry_ms: u64,
+        total_ms: u64,
+    ) -> ServerConfig {
+        let document = FIXTURE
+            .replace("address = \"10.0.0.11:7100\"", "address = \"127.0.0.1:1\"")
+            .replace(
+                "address = \"10.0.0.12:7100\"",
+                &format!("address = \"127.0.0.1:{mock_port}\""),
+            )
+            .replace(
+                "attempt_deadline_ms = 10000",
+                &format!("attempt_deadline_ms = {total_ms}"),
+            )
+            .replace("attempts = 5", &format!("attempts = {attempts}"))
+            .replace(
+                "retry_interval_ms = 1000",
+                &format!("retry_interval_ms = {retry_ms}"),
+            )
+            .replace(
+                "total_deadline_ms = 30000",
+                &format!("total_deadline_ms = {total_ms}"),
+            )
+            .replace(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                &hex(&x25519(&DEDICATED_X25519_SEED).1),
+            )
+            .replace(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &hex(&ed25519(&DEDICATED_ED25519_SEED)),
+            )
+            .replace(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                &hex(&x25519(&STORAGE_X25519_SEED).1),
+            )
+            .replace(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                &hex(&ed25519(&STORAGE_ED25519_SEED)),
+            );
+
+        ServerConfig::from_toml_str(&document).expect("the failover configuration must parse")
     }
 
     struct MockResponse {
@@ -890,6 +987,58 @@ mod tests {
         assert!(matches!(
             error,
             InterServerClientError::Rejected(0x0003_0001)
+        ));
+    }
+
+    #[test]
+    fn a_lookup_fails_over_to_the_next_storage_node() {
+        let dir = TempDir::new("failover");
+        let identity = identity(&dir);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let port = listener
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let snapshot = RegistrySnapshot {
+            read_index: 7,
+            account: None,
+            registration: None,
+            installation: None,
+        };
+        let server = mock_storage(
+            listener,
+            Reply::Message(MockResponse::snapshot(snapshot.clone())),
+        );
+        let config = config_with_failover(port, 2, 1, 5_000);
+
+        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
+            .expect("the second storage node must answer");
+
+        server.join().expect("the mock server must finish");
+        assert_eq!(found, snapshot);
+    }
+
+    #[test]
+    fn a_lookup_gives_up_after_the_configured_attempts() {
+        let dir = TempDir::new("give-up");
+        let identity = identity(&dir);
+        let config = config_with_failover(2, 2, 1, 5_000);
+
+        assert!(matches!(
+            lookup_registry(&config, &identity, Some("alice"), None, None),
+            Err(InterServerClientError::Connect { .. })
+        ));
+    }
+
+    #[test]
+    fn a_lookup_stops_at_the_total_deadline() {
+        let dir = TempDir::new("deadline");
+        let identity = identity(&dir);
+        let config = config_with_failover(2, 10, 100, 250);
+
+        assert!(matches!(
+            lookup_registry(&config, &identity, Some("alice"), None, None),
+            Err(InterServerClientError::Deadline { millis: 250 })
         ));
     }
 
