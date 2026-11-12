@@ -92,6 +92,12 @@
 //! Upload failures map to the published protocol result codes in
 //! [`UploadErrorCode`], covering request, authentication, file, frame-sequence,
 //! upload-id, capacity, and internal error classes (`INT-NET-064 / 1`).
+//! Publish-version quorum and replica-status validation
+//! ([`validate_publish_version`], [`validate_replica_status`],
+//! [`PublishVersion`], [`ReplicaStatus`], [`ReplicationError`]) checks the
+//! coordinator, fixed voter membership, unique strict-majority replicas, and
+//! the committed upload's login and SHA-256 (`INT-NET-113 / 1`,
+//! `INT-NET-124 / 1`).
 //! The Prometheus-compatible metrics endpoint
 //! ([`MetricsServer`]) serves `GET /metrics` on a separately configured
 //! monitoring listener, using plaintext HTTP only on loopback and TLS with the
@@ -152,6 +158,7 @@ mod node;
 mod payload;
 mod payload_stream;
 mod raft;
+mod replication;
 mod response;
 mod runtime;
 mod sealing;
@@ -230,6 +237,10 @@ pub use payload_stream::{send_payload, write_chain, StreamError};
 pub use raft::{
     CommittedVersion, RaftError, RaftNode, RaftRequest, RaftResponse, RaftStatus, RaftTiming,
     RaftTransport, RaftTransportError,
+};
+pub use replication::{
+    validate_publish_version, validate_replica_status, PublishVersion, ReplicaStatus,
+    ReplicationError,
 };
 pub use response::{ResponseError, UploadStatus};
 pub use runtime::{RaftRuntime, RuntimeError};

@@ -91,7 +91,9 @@ clients; it does not relay Raft or blob traffic.
   same verified durable write, refusing an unmarked local copy), `src/raft/`
   (local OpenRaft runtime, CBOR RPC adapter, and catalog state machine that
   stores full version metadata and blob replica sets with file-backed
-  persistence), `src/runtime.rs` (node Raft runtime that resolves the local
+  persistence), `src/replication.rs` (publish-version quorum and idempotent
+  replay validation plus replica-status validation for the fixed voter set),
+  `src/runtime.rs` (node Raft runtime that resolves the local
   manifest entry, validates the configured identity keys, derives the transport
   and voter set, and exposes the local OpenRaft node), `src/frame_sequence.rs`
   (contiguous client frame-number
@@ -134,6 +136,7 @@ clients; it does not relay Raft or blob traffic.
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `raft_multi_node_public_api.rs`,
   `raft_runtime_public_api.rs`, `storage_layout_public_api.rs`,
+  `replication_public_api.rs`,
   `integrity_public_api.rs`, `integrity_scan_public_api.rs`,
   `blob_writer_public_api.rs`, `blob_restore_public_api.rs`,
   `signing_public_api.rs`, `sealing_public_api.rs`,
@@ -382,6 +385,27 @@ manifest-derived trusted directory before signature verification and decryption,
 and dispatches the verified RPC bytes to the local OpenRaft instance for handling.
 `RaftRuntime::node` exposes that local node, and `RaftRuntime::local` exposes the
 resolved manifest entry.
+
+## Publish version and replica status
+
+`validate_publish_version` accepts a publish-version command only when the fixed
+voter set is non-empty, the coordinator belongs to it, every listed durable
+replica is a fixed voter, no replica repeats, and the unique replicas include the
+coordinator and form a strict majority of the voters. A strict majority is more
+than half, so an even-sized voter set still requires more than half. A committed
+upload id is idempotent: replaying identical protocol metadata returns the stored
+`CommittedVersion` unchanged (the retry's local acceptance time and replica list
+do not change the committed result), while different metadata for that upload id
+is a `MetadataConflict`. A new upload id commits the supplied record with its unique
+replica set.
+
+`validate_replica_status` accepts a status only for a fixed voter and an already
+committed upload whose login and SHA-256 match the committed record. The
+`available` flag is validated as part of the same status and carried through
+without changing the outcome, so a repeated status is idempotent. An unknown
+replica, an unknown upload, a login mismatch, and a hash mismatch are reported as
+distinct errors. Both validators are pure checks over their inputs; they do not
+perform the commit themselves.
 
 ## Catalog page exchange
 
