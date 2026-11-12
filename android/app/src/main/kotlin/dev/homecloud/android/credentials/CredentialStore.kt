@@ -24,7 +24,10 @@ internal class CredentialStorageException(
 internal data class StoredCredential(
     val login: String,
     val password: String,
-)
+) {
+    /** Keeps the password out of any message that prints this value (`FR-AND-023 / 2`). */
+    override fun toString(): String = "StoredCredential(login=redacted, password=redacted)"
+}
 
 /**
  * Reads and writes the single account credential used by background requests (`FR-AND-022 / 1`).

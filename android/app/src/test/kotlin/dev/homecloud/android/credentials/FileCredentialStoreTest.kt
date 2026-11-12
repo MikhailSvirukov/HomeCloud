@@ -12,6 +12,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.Base64
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -37,6 +38,46 @@ class FileCredentialStoreTest {
         store.save(StoredCredential(login = LOGIN, password = PASSWORD))
 
         assertEquals(StoredCredential(login = LOGIN, password = PASSWORD), store.load())
+    }
+
+    @Test
+    fun `a fresh store over the same file reads the saved credential`() {
+        val file = credentialFile()
+        val key = aesKey()
+        FileCredentialStore(file, AesGcmCredentialCipher(key))
+            .save(StoredCredential(login = LOGIN, password = PASSWORD))
+
+        val restored = FileCredentialStore(file, AesGcmCredentialCipher(key)).load()
+
+        assertEquals(StoredCredential(login = LOGIN, password = PASSWORD), restored)
+    }
+
+    @Test
+    fun `an envelope with invalid utf8 is rejected`() {
+        val file = credentialFile()
+        val cipher = AesGcmCredentialCipher(aesKey())
+        val invalidLogin = byteArrayOf(0xC3.toByte(), 0x28)
+        val password = PASSWORD.toByteArray(Charsets.UTF_8)
+        val payload =
+            ByteBuffer
+                .allocate(LOGIN_LENGTH_BYTES + invalidLogin.size + password.size)
+                .putInt(invalidLogin.size)
+                .put(invalidLogin)
+                .put(password)
+                .array()
+        writeEnvelope(file, cipher, payload)
+
+        assertThrows(CredentialStorageException::class.java) {
+            FileCredentialStore(file, cipher).load()
+        }
+    }
+
+    @Test
+    fun `the credential value does not print the password`() {
+        val text = StoredCredential(login = LOGIN, password = PASSWORD).toString()
+
+        assertFalse(text.contains(PASSWORD))
+        assertFalse(text.contains(LOGIN))
     }
 
     @Test
@@ -174,6 +215,7 @@ class FileCredentialStoreTest {
         const val NEWLINE = "\n"
         const val EMPTY = ""
         const val PAYLOAD_PREFIX = "payload="
+        const val LOGIN_LENGTH_BYTES = 4
 
         const val LOGIN = "user@example.test"
         const val PASSWORD = "correct horse battery staple"
