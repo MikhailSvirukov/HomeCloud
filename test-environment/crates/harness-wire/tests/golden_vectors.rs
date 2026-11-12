@@ -174,6 +174,15 @@ fn header_with_label(label: &str) -> Value {
     header_value(Some(SENDER_ID), REQUEST_ID, 0, None, Some(label), None)
 }
 
+/// Replaces one position of a header array with `replacement`.
+fn with_position(value: Value, position: usize, replacement: Value) -> Value {
+    let Value::Array(mut items) = value else {
+        panic!("external frame header must be an array");
+    };
+    items[position] = replacement;
+    Value::Array(items)
+}
+
 fn optional_bytes<const N: usize>(bytes: Option<[u8; N]>) -> Value {
     bytes.map_or(Value::Null, |bytes| Value::Bytes(bytes.to_vec()))
 }
@@ -276,6 +285,38 @@ fn version_position_uses_minimal_uint() {
     assert_eq!(
         cbor::decode(&non_minimal),
         Err(CborError::NonMinimalInteger)
+    );
+}
+
+/// `INT-NET-006/2`, `TST-030/1`: position one must be CBOR `uint32`, not text
+/// that merely reads as the version number.
+#[test]
+fn version_position_rejects_wrong_cbor_type() {
+    let value = with_position(
+        header_value(Some(SENDER_ID), REQUEST_ID, 0, None, None, None),
+        0,
+        Value::Text("1".to_owned()),
+    );
+
+    assert_eq!(
+        ExternalFrameHeader::decode(&value, LABEL_LIMIT),
+        Err(HeaderError::WrongType("protocol_version"))
+    );
+}
+
+/// `INT-NET-050/4`: `frame_number` must be a CBOR `uint32`, not text that
+/// merely reads as a number.
+#[test]
+fn frame_number_rejects_wrong_cbor_type() {
+    let value = with_position(
+        header_value(Some(SENDER_ID), REQUEST_ID, 0, None, None, None),
+        3,
+        Value::Text("0".to_owned()),
+    );
+
+    assert_eq!(
+        ExternalFrameHeader::decode(&value, LABEL_LIMIT),
+        Err(HeaderError::WrongType("frame_number"))
     );
 }
 

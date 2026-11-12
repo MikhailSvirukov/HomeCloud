@@ -102,7 +102,7 @@ impl ResultEnvelope {
     }
 }
 
-/// Reserved class of a v1 result code (`INT-NET-064`, Table 6).
+/// Reserved class of a v1 result code (`INT-NET-063 / 1`, Table 6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultClass {
     /// Successful execution, code `0`.
@@ -123,7 +123,8 @@ pub enum ResultClass {
     Resource,
     /// Internal errors, `0x0008_0000–0x0008_FFFF`.
     Internal,
-    /// Every other non-zero `uint32` value, including unused in-range values.
+    /// Every non-zero `uint32` value outside the published ranges; unused
+    /// values inside a published range take that range's class.
     Reserved,
 }
 
@@ -235,5 +236,50 @@ mod tests {
     fn classifies_codes_outside_published_ranges_as_reserved() {
         assert_eq!(class_of(0x0009_0001), ResultClass::Reserved);
         assert_eq!(class_of(u32::MAX), ResultClass::Reserved);
+    }
+
+    #[test]
+    fn decode_rejects_non_uint_code() {
+        let value = Value::Array(vec![Value::Text("1".to_owned()), Value::Array(Vec::new())]);
+        assert_eq!(
+            ResultEnvelope::decode(&value),
+            Err(ResultError::WrongType("result_code"))
+        );
+    }
+
+    #[test]
+    fn decode_rejects_code_above_uint32() {
+        let code = u64::from(u32::MAX) + 1;
+        let value = Value::Array(vec![Value::Uint(code), Value::Array(Vec::new())]);
+        assert_eq!(
+            ResultEnvelope::decode(&value),
+            Err(ResultError::CodeOutOfRange(code))
+        );
+    }
+
+    #[test]
+    fn decode_rejects_wrong_shape() {
+        let three_elements =
+            Value::Array(vec![Value::Uint(0), Value::Array(Vec::new()), Value::Null]);
+        assert_eq!(
+            ResultEnvelope::decode(&three_elements),
+            Err(ResultError::WrongShape)
+        );
+        assert_eq!(
+            ResultEnvelope::decode(&Value::Null),
+            Err(ResultError::WrongShape)
+        );
+    }
+
+    #[test]
+    fn encodes_max_uint32_code_with_empty_arguments() {
+        let envelope = ResultEnvelope {
+            code: u32::MAX,
+            args: Vec::new(),
+        };
+        assert_eq!(
+            envelope.encode(),
+            Ok(vec![0x82, 0x1A, 0xFF, 0xFF, 0xFF, 0xFF, 0x80])
+        );
     }
 }

@@ -6,6 +6,7 @@
 use crate::cbor::{self, Value};
 
 const PROTOCOL_VERSION: u64 = 1;
+const PROTOCOL_VERSION_FIELD: &str = "protocol_version";
 
 const SENDER_ID: &str = "sender_id";
 const REQUEST_ID: &str = "request_id";
@@ -70,7 +71,7 @@ impl ExternalFrameHeader {
         };
 
         let Value::Uint(version) = version else {
-            return Err(HeaderError::WrongType("protocol_version"));
+            return Err(HeaderError::WrongType(PROTOCOL_VERSION_FIELD));
         };
         if *version != PROTOCOL_VERSION {
             return Err(HeaderError::WrongVersion(*version));
@@ -243,6 +244,23 @@ mod tests {
         assert_eq!(
             ExternalFrameHeader::decode(&items, MAX_LABEL_BYTES),
             Ok(header)
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_element_count() {
+        let mut six_items = encoded_items(&ordinary_header());
+        six_items.pop();
+        assert_eq!(
+            ExternalFrameHeader::decode(&Value::Array(six_items), MAX_LABEL_BYTES),
+            Err(HeaderError::WrongShape)
+        );
+
+        let mut eight_items = encoded_items(&ordinary_header());
+        eight_items.push(Value::Null);
+        assert_eq!(
+            ExternalFrameHeader::decode(&Value::Array(eight_items), MAX_LABEL_BYTES),
+            Err(HeaderError::WrongShape)
         );
     }
 

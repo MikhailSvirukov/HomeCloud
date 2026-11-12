@@ -24,6 +24,7 @@ const MIN_TWO_BYTE_ARGUMENT: u16 = 0x100;
 const MIN_FOUR_BYTE_ARGUMENT: u32 = 0x1_0000;
 const MIN_EIGHT_BYTE_ARGUMENT: u64 = 0x1_0000_0000;
 const MAX_PREALLOCATED_ITEMS: usize = 64;
+const MAX_NESTING_DEPTH: usize = 64;
 
 /// A CBOR value used by the fixed wire structures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +49,9 @@ pub enum CborError {
     /// The input ended before the value was complete.
     #[error("CBOR input ended before the value was complete")]
     Truncated,
+    /// The input nests arrays deeper than the supported limit.
+    #[error("CBOR nesting exceeds the supported depth")]
+    NestingTooDeep,
     /// The input contained bytes after the first value.
     #[error("CBOR input has trailing bytes after the value")]
     TrailingBytes,
@@ -92,7 +96,7 @@ pub fn decode(bytes: &[u8]) -> Result<Value, CborError> {
 
 /// Same as [`decode`], returning the number of consumed bytes.
 pub fn decode_prefix(bytes: &[u8]) -> Result<(Value, usize), CborError> {
-    decode_value(bytes)
+    decode_value(bytes, 0)
 }
 
 fn encode_into(value: &Value, out: &mut Vec<u8>) {
@@ -146,7 +150,11 @@ fn encode_argument(major: u8, argument: u64, out: &mut Vec<u8>) {
     }
 }
 
-fn decode_value(bytes: &[u8]) -> Result<(Value, usize), CborError> {
+fn decode_value(bytes: &[u8], depth: usize) -> Result<(Value, usize), CborError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(CborError::NestingTooDeep);
+    }
+
     let (&first, rest) = bytes.split_first().ok_or(CborError::Truncated)?;
     let major = first >> 5;
     let additional = first & 0x1F;
@@ -179,7 +187,7 @@ fn decode_value(bytes: &[u8]) -> Result<(Value, usize), CborError> {
             let mut cursor = used;
             for _ in 0..length {
                 let remaining = rest.get(cursor..).ok_or(CborError::Truncated)?;
-                let (item, consumed) = decode_value(remaining)?;
+                let (item, consumed) = decode_value(remaining, depth + 1)?;
                 items.push(item);
                 cursor = cursor
                     .checked_add(consumed)
@@ -267,6 +275,23 @@ mod tests {
         assert_eq!(encode(&Value::Uint(24)), vec![0x18, 0x18]);
         assert_eq!(encode(&Value::Uint(255)), vec![0x18, 0xFF]);
         assert_eq!(encode(&Value::Uint(256)), vec![0x19, 0x01, 0x00]);
+        assert_eq!(encode(&Value::Uint(65_535)), vec![0x19, 0xFF, 0xFF]);
+        assert_eq!(
+            encode(&Value::Uint(65_536)),
+            vec![0x1A, 0x00, 0x01, 0x00, 0x00]
+        );
+        assert_eq!(
+            encode(&Value::Uint(1 << 32)),
+            vec![0x1B, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn encodes_i64_min_with_eight_byte_argument() {
+        assert_eq!(
+            encode(&Value::Int(i64::MIN)),
+            vec![0x3B, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        );
     }
 
     #[test]
@@ -311,6 +336,37 @@ mod tests {
             decode(&[0xC0, 0x00]),
             Err(CborError::UnsupportedMajorType(6))
         );
+    }
+
+    #[test]
+    fn decode_rejects_indefinite_length_array() {
+        assert_eq!(decode(&[0x9F]), Err(CborError::UnsupportedMajorType(4)));
+    }
+
+    #[test]
+    fn decode_rejects_indefinite_length_bytes() {
+        assert_eq!(decode(&[0x5F]), Err(CborError::UnsupportedMajorType(2)));
+    }
+
+    #[test]
+    fn decode_rejects_unsupported_simple_value() {
+        assert_eq!(decode(&[0xF7]), Err(CborError::UnsupportedSimpleValue(23)));
+    }
+
+    #[test]
+    fn decode_rejects_invalid_utf8_text() {
+        assert_eq!(decode(&[0x61, 0xFF]), Err(CborError::InvalidUtf8));
+    }
+
+    #[test]
+    fn decode_rejects_truncated_integer() {
+        assert_eq!(decode(&[0x18]), Err(CborError::Truncated));
+    }
+
+    #[test]
+    fn decode_rejects_nesting_beyond_limit() {
+        let bytes = vec![0x81; 70];
+        assert_eq!(decode(&bytes), Err(CborError::NestingTooDeep));
     }
 
     #[test]
