@@ -293,6 +293,10 @@ async fn publishes_a_validated_version_and_replays_idempotently() {
         "the committed catalog contains the published version"
     );
 
+    let applied_after_publish = runtime
+        .node()
+        .last_applied_index()
+        .expect("the publish version is applied to the catalog");
     let replay = runtime
         .publish_version(PublishVersion {
             record: record.clone(),
@@ -303,9 +307,14 @@ async fn publishes_a_validated_version_and_replays_idempotently() {
         .expect("an identical replay returns the committed version");
     assert_eq!(replay, committed);
     assert_eq!(
+        runtime.node().last_applied_index(),
+        Some(applied_after_publish),
+        "an identical replay does not append a second log entry"
+    );
+    assert_eq!(
         runtime.node().committed_version_count().await,
         1,
-        "an identical replay does not append a second catalog version"
+        "the catalog still contains exactly one version"
     );
 }
 
