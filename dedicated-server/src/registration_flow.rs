@@ -355,7 +355,7 @@ mod tests {
                             expected_verifier,
                             ..
                         } => {
-                            assert_eq!(sent, installation_id);
+                            assert_eq!(sent, INSTALLATION);
                             assert_eq!(new_verifier.is_some(), expected_verifier.is_none());
                             InterServerMessage::RegistrationResult {
                                 code: 0,
