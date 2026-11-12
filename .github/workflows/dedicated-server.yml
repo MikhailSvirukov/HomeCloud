@@ -81,10 +81,12 @@ jobs:
           cp dedicated-server/config/dedicated-server.example.toml "$config_dir/dedicated-server.toml"
           openssl rand -out "$config_dir/keys/encryption.key" 32
           openssl rand -out "$config_dir/keys/signing.key" 32
+          openssl rand -out "$config_dir/registration.secret" 32
           chmod 700 "$config_dir" "$config_dir/keys"
           chmod 600 "$config_dir/dedicated-server.toml" \
             "$config_dir/keys/encryption.key" \
-            "$config_dir/keys/signing.key"
+            "$config_dir/keys/signing.key" \
+            "$config_dir/registration.secret"
           sudo chown -R 10001:10001 "$config_dir" "$log_dir"
           sudo chmod 0755 "$log_dir"
 

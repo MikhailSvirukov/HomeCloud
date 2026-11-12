@@ -64,6 +64,9 @@ const ERROR_CODE_CONFIGURATION: &str = "configuration_error";
 /// Error code for an identity loading failure.
 const ERROR_CODE_IDENTITY: &str = "identity_error";
 
+/// Error code for a registration secret loading failure.
+const ERROR_CODE_REGISTRATION_SECRET: &str = "registration_secret_error";
+
 /// Error code for a structured log writer initialization failure.
 const ERROR_CODE_LOGGING: &str = "logging_error";
 
@@ -72,6 +75,9 @@ const MESSAGE_CONFIGURATION: &str = "configuration loading failed";
 
 /// Static message for an identity loading failure.
 const MESSAGE_IDENTITY: &str = "key identity loading failed";
+
+/// Static message for a registration secret loading failure.
+const MESSAGE_REGISTRATION_SECRET: &str = "registration secret loading failed";
 
 /// Static message for a structured logging initialization failure.
 const MESSAGE_LOGGING: &str = "logging initialization failed";
@@ -480,6 +486,9 @@ fn startup_failure(error: &StartupError) -> (&'static str, &'static str) {
     match error {
         StartupError::Configuration { .. } => (ERROR_CODE_CONFIGURATION, MESSAGE_CONFIGURATION),
         StartupError::Identity { .. } => (ERROR_CODE_IDENTITY, MESSAGE_IDENTITY),
+        StartupError::RegistrationSecret { .. } => {
+            (ERROR_CODE_REGISTRATION_SECRET, MESSAGE_REGISTRATION_SECRET)
+        }
     }
 }
 

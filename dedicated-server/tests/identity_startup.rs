@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use dedicated_server::CONFIG_PATH_ENV;
+use dedicated_server::{CONFIG_PATH_ENV, REGISTRATION_SECRET_BYTES};
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
@@ -22,6 +22,8 @@ const RUST_LOG_LEVEL: &str = "info";
 const IDENTITY_ERROR_CODE: &str = "identity_error";
 /// Fixed message the binary reports when the key identity cannot be loaded.
 const IDENTITY_FAILURE_MESSAGE: &str = "key identity loading failed";
+const REGISTRATION_SECRET_ERROR_CODE: &str = "registration_secret_error";
+const REGISTRATION_SECRET_FAILURE_MESSAGE: &str = "registration secret loading failed";
 /// Fixed message the binary reports when it stops.
 const SHUTDOWN_MESSAGE: &str = "server stopped";
 /// Label configured for the identity under test.
@@ -35,6 +37,7 @@ const CONFIG_TEMPLATE: &str = include_str!("fixtures/server_config.toml.tmpl");
 const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
+const REGISTRATION_SECRET_PLACEHOLDER: &str = "{{REGISTRATION_SECRET}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 /// Placeholder for the loopback metrics bind address used by the tests.
 const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
@@ -77,6 +80,32 @@ impl Drop for TempDir {
 
 /// Write a complete, valid configuration pointing at the given file paths.
 fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) -> PathBuf {
+    let secret = dir.file("registration.secret");
+    write_secret(&secret);
+    write_config_with_secret(dir, encryption, signing, log, &secret)
+}
+
+/// Write the 32-byte registration secret with owner-only permissions.
+fn write_secret(path: &Path) {
+    std::fs::write(path, [0x24_u8; REGISTRATION_SECRET_BYTES])
+        .expect("registration secret must be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .expect("registration secret permissions must be set");
+    }
+}
+
+/// Write a complete configuration pointing at the given file paths.
+fn write_config_with_secret(
+    dir: &TempDir,
+    encryption: &Path,
+    signing: &Path,
+    log: &Path,
+    secret: &Path,
+) -> PathBuf {
     let config = CONFIG_TEMPLATE
         .replace(
             ENCRYPTION_KEY_PLACEHOLDER,
@@ -84,6 +113,10 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) ->
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
+        .replace(
+            REGISTRATION_SECRET_PLACEHOLDER,
+            &secret.display().to_string(),
+        )
         .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
         .replace(
             METRICS_BIND_PLACEHOLDER,
@@ -259,6 +292,8 @@ fn assert_no_forbidden_data(contents: &str, paths: &[&Path]) {
         "encryption.key",
         "signing.key",
         "absent-encryption.key",
+        "registration.secret",
+        "absent-registration.secret",
     ] {
         assert!(
             !contents.contains(name),
@@ -272,6 +307,11 @@ fn assert_no_forbidden_data(contents: &str, paths: &[&Path]) {
             "log records must not contain key material: {contents}"
         );
     }
+    let secret = "$".repeat(REGISTRATION_SECRET_BYTES);
+    assert!(
+        !contents.contains(&secret),
+        "log records must not contain the registration secret: {contents}"
+    );
 }
 
 /// Assert that a timestamp is RFC 3339 in UTC with milliseconds.
@@ -429,6 +469,51 @@ fn unopenable_log_path_fails_with_the_logging_error_code_on_stderr() {
     assert_eq!(event["error_code"], "logging_error");
     assert_eq!(event["message"], "logging initialization failed");
     assert_no_forbidden_data(&stderr_of(&output), &[&config, &encryption, &signing]);
+}
+
+#[test]
+fn missing_registration_secret_fails_with_the_secret_error_code_and_no_paths() {
+    let dir = TempDir::new("missing-registration-secret");
+    let encryption = dir.file("encryption.key");
+    let signing = dir.file("signing.key");
+    let log = dir.file("dedicated-server.log");
+    let missing = dir.file("absent-registration.secret");
+    std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
+    std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    let config = write_config_with_secret(&dir, &encryption, &signing, &log, &missing);
+
+    let output = run_with_config(&config);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "the process must exit with the failure code, stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout must stay empty, got: {:?}",
+        stdout_of(&output)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr must stay empty once the log file is configured, got: {}",
+        stderr_of(&output)
+    );
+    let (contents, events) = configured_log(&log);
+    assert_eq!(events.len(), 1, "log contents: {contents}");
+    let event = &events[0];
+    assert_eq!(event["event"], "startup");
+    assert_eq!(event["outcome"], "failure");
+    assert_eq!(event["level"], "ERROR");
+    assert_eq!(event["error_code"], REGISTRATION_SECRET_ERROR_CODE);
+    assert_eq!(event["component"], "dedicated-server");
+    assert_utc_timestamp(event);
+    let message = event["message"]
+        .as_str()
+        .expect("startup failure event must carry a message");
+    assert_eq!(message, REGISTRATION_SECRET_FAILURE_MESSAGE);
+    assert_no_forbidden_data(&contents, &[&config, &log, &missing, &encryption, &signing]);
 }
 
 #[test]

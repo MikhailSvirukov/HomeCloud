@@ -16,6 +16,7 @@ use crate::identity::{IdentityError, ServerIdentity};
 use crate::registration::{
     AccountRegistry, RegistrationError, RegistrationOutcome, RegistrationRequest,
 };
+use crate::registration_tag::{RegistrationSecret, RegistrationSecretError};
 use crate::topology::Topology;
 
 /// Result of loading a [`Startup`].
@@ -26,6 +27,7 @@ pub struct Startup {
     config: ServerConfig,
     identity: ServerIdentity,
     accounts: AccountRegistry,
+    registration_secret: RegistrationSecret,
 }
 
 impl Startup {
@@ -49,12 +51,20 @@ impl Startup {
         .map_err(|source| StartupError::Identity { source })?;
 
         let accounts = AccountRegistry::new(config.password.params(), config.credential_limits());
+        let registration_secret = RegistrationSecret::load(&config.registration.secret_path)
+            .map_err(|source| StartupError::RegistrationSecret { source })?;
 
         Ok(Self {
             config,
             identity,
             accounts,
+            registration_secret,
         })
+    }
+
+    /// The registration secret `K` loaded at startup.
+    pub fn registration_secret(&self) -> &RegistrationSecret {
+        &self.registration_secret
     }
 
     /// Register a login or an additional installation with the configured parameters.
@@ -118,6 +128,13 @@ pub enum StartupError {
         /// Underlying identity failure.
         #[source]
         source: IdentityError,
+    },
+    /// Loading the registration secret named by the configuration failed.
+    #[error("failed to load the registration secret: {source}")]
+    RegistrationSecret {
+        /// Underlying secret failure.
+        #[source]
+        source: RegistrationSecretError,
     },
 }
 

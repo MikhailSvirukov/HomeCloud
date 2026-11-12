@@ -17,7 +17,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use serde_json::Value;
 
-use dedicated_server::CONFIG_PATH_ENV;
+use dedicated_server::{CONFIG_PATH_ENV, REGISTRATION_SECRET_BYTES};
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
@@ -32,6 +32,7 @@ const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
+const REGISTRATION_SECRET_PLACEHOLDER: &str = "{{REGISTRATION_SECRET}}";
 const ENCRYPTION_KEY: &[u8] = b"encryption-key-material-0123456789";
 const SIGNING_KEY: &[u8] = b"signing-key-material-abcdefghijklmnopqrstuvwxyz";
 const LABEL: &str = "dedicated-1";
@@ -170,8 +171,18 @@ impl Drop for ChildGuard {
 fn write_config(dir: &TempDir, log: &Path, metrics_bind: &str) -> PathBuf {
     let encryption = dir.file("encryption.key");
     let signing = dir.file("signing.key");
+    let secret = dir.file("registration.secret");
     std::fs::write(&encryption, ENCRYPTION_KEY).expect("encryption key must be written");
     std::fs::write(&signing, SIGNING_KEY).expect("signing key must be written");
+    std::fs::write(&secret, [0x42_u8; REGISTRATION_SECRET_BYTES])
+        .expect("registration secret must be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600))
+            .expect("registration secret permissions must be set");
+    }
 
     let config = CONFIG_TEMPLATE
         .replace(
@@ -180,6 +191,10 @@ fn write_config(dir: &TempDir, log: &Path, metrics_bind: &str) -> PathBuf {
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
+        .replace(
+            REGISTRATION_SECRET_PLACEHOLDER,
+            &secret.display().to_string(),
+        )
         .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
         .replace(METRICS_BIND_PLACEHOLDER, metrics_bind);
     let path = dir.file("dedicated-server.toml");

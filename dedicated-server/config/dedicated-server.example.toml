@@ -1,6 +1,7 @@
 # Example configuration for the dedicated-server runtime image.
 # Copy it to <DEDICATED_SERVER_CONFIG_DIR>/dedicated-server.toml and keep the
-# two key files in that external directory, never in this checkout.
+# key files and the registration secret in that external directory, never in
+# this checkout.
 # Node identifiers and public keys below are synthetic.
 
 listen = "0.0.0.0:7000"
@@ -64,6 +65,7 @@ signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bind = "127.0.0.1:9101"
 
 [registration]
+secret_path = "/etc/homecloud/registration.secret"
 total_deadline_ms = 30000
 attempt_deadline_ms = 10000
 attempts = 5
