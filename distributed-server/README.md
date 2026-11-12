@@ -56,6 +56,11 @@ clients; it does not relay Raft or blob traffic.
   `[12, [result_code, result_args]]` with `[upload_id]` on success and an
   empty argument array on every non-zero code; the transfer size is bounded
   by `B(original_size) = original_size + floor(original_size / 256) + 64`),
+  `src/blob_receiver.rs` (receiver for the inter-server blob-put stream:
+  accumulates exactly the declared transfer size in bounded chunks,
+  decompresses one complete Zstandard frame into exactly the declared original
+  size, verifies SHA-256, and writes the replica directly through the durable
+  blob writer, removing rejected data),
   `src/blob_get.rs` (inter-server blob-get codecs: the request
   `[13, [login, upload_id]]` and the result
   `[14, [result_code, result_args]]` with
@@ -123,7 +128,8 @@ clients; it does not relay Raft or blob traffic.
   `catalog_exchange_public_api.rs`, `catalog_handler_public_api.rs`,
   `upload_exchange_public_api.rs`, `upload_outcomes_public_api.rs`,
   `upload_error_codes_public_api.rs`, `blob_put_public_api.rs`,
-  `blob_get_public_api.rs`, `listener_public_api.rs`, `metrics_public_api.rs`,
+  `blob_receiver_public_api.rs`, `blob_get_public_api.rs`,
+  `listener_public_api.rs`, `metrics_public_api.rs`,
   `metrics_tls_public_api.rs`, `cpu_pool_public_api.rs`,
   `node_public_api.rs`,
   `raft_cluster_public_api.rs`, `raft_multi_node_public_api.rs`,
@@ -193,7 +199,14 @@ verification, file and parent-directory fsync, refusal to overwrite, and
 partial-file cleanup. A missing or marked-corrupt blob is restored from a
 repair source through the same verified durable write, while an unmarked
 existing blob is refused; `blob_restore_public_api.rs` covers those paths and
-the marker kept by a failed restore. The connection actors and `io_uring` are not
+the marker kept by a failed restore. An inter-server blob-put receiver
+accumulates exactly the declared transfer stream, decompresses one complete
+Zstandard frame into the declared original size, verifies the SHA-256, and
+writes the replica through the direct durable path; truncated, oversized,
+invalid, size-mismatched, or hash-mismatched streams are rejected and their
+incomplete data is removed. `blob_receiver_public_api.rs` covers those paths,
+the configured file-size limit, and the redacted receiver `Debug` output. The
+connection actors and `io_uring` are not
 implemented yet. Acceptance criteria live in the
 [shared v1 specification](../../docs/specification-v1.md).
 
