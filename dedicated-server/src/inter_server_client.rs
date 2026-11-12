@@ -1497,6 +1497,24 @@ mod tests {
     }
 
     #[test]
+    fn the_configured_attempt_count_is_exact() {
+        let config = config_with_failover(closed_port(), closed_port(), 3, 1, 5_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_000);
+        let mut calls = 0;
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            calls += 1;
+            Err(InterServerClientError::Rejected(0x0007_0001))
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Rejected(0x0007_0001))
+        ));
+        assert_eq!(calls, 3, "the attempt count must be exact");
+    }
+
+    #[test]
     fn exactly_one_attempt_is_made_when_the_budget_allows_one() {
         let dir = TempDir::new("one-attempt");
         let identity = identity(&dir);
@@ -1529,7 +1547,7 @@ mod tests {
             vec![ProposeReply {
                 expected_tag,
                 installation_id: [0x66; 16],
-                code: 0x0003_0001,
+                code: 0x0007_0001,
                 commit_index: 0,
                 expected_verifier: None,
                 new_verifier: Some("new-phc".to_owned()),
@@ -1549,7 +1567,7 @@ mod tests {
 
         assert!(matches!(
             propose_registration(&config, &identity, &secret, &request),
-            Err(InterServerClientError::Rejected(0x0003_0001))
+            Err(InterServerClientError::Rejected(0x0007_0001))
         ));
 
         node_a.join().expect("the first mock must finish");
@@ -1597,6 +1615,7 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(30);
 
         let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            std::thread::sleep(std::time::Duration::from_millis(200));
             Err(InterServerClientError::Rejected(0x0006_0001))
         });
 
