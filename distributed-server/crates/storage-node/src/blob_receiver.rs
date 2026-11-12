@@ -1,7 +1,11 @@
 //! Bounded blob-put replica receiver.
 //!
+//! This receiver buffers the declared transfer and decompressed blob in memory,
+//! bounded by the configured file and transfer limits. It is not the final
+//! streaming buffer-chain path.
+//!
 //! SRS: `INT-NET-115 / 1`, `INT-NET-128 / 1`, `FR-UP-012 / 1`,
-//! `FR-UP-013 / 1`, `FR-UP-022 / 1`, `NFR-REL-008 / 1`.
+//! `FR-UP-013 / 1`, `FR-UP-022 / 1`, `NFR-REL-008 / 2`.
 
 use core::fmt;
 use std::io::Cursor;

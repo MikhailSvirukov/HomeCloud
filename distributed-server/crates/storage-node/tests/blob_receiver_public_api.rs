@@ -175,17 +175,22 @@ fn rejects_decompression_failure_and_decompressed_size_overflow() {
         .expect_err("invalid Zstandard bytes are rejected");
     assert!(matches!(error, ReplicaError::Decompress));
 
-    let transfer = compressed(PAYLOAD);
-    let mut metadata = metadata_for(PAYLOAD);
-    metadata.original_size_bytes = PAYLOAD.len() as u64 - 1;
+    let bomb = b"A".repeat(4096);
+    let transfer = compressed(&bomb);
+    let mut metadata = metadata_for(&bomb);
+    metadata.original_size_bytes = 1;
     let mut overflowing = receiver(&layout, put_begin(metadata, transfer.len() as u64));
     overflowing
         .push(&transfer)
         .expect("the complete transfer stream is accepted");
     let error = overflowing
         .finish()
-        .expect_err("decompressed bytes beyond the declared original size are rejected");
-    assert!(matches!(error, ReplicaError::SizeMismatch));
+        .expect_err("decompressed bytes beyond the one-byte capacity bound are rejected");
+    assert!(matches!(error, ReplicaError::Decompress));
+    assert!(
+        !blob_path(&layout).exists(),
+        "a decompression-bomb stream is rejected before a blob is published"
+    );
 }
 
 #[test]
@@ -286,16 +291,23 @@ fn rejects_multi_frame_skippable_and_dictionary_streams() {
     let temp = TempDir::new().expect("temp directory is created");
     let layout = StorageLayout::new(temp.path());
 
+    let second_frame = b"second frame";
+    let mut combined = PAYLOAD.to_vec();
+    combined.extend_from_slice(second_frame);
     let mut concatenated = compressed(PAYLOAD);
-    concatenated.extend(compressed(b"second frame"));
+    concatenated.extend(compressed(second_frame));
     let mut multi = receiver(
         &layout,
-        put_begin(metadata_for(PAYLOAD), concatenated.len() as u64),
+        put_begin(metadata_for(&combined), concatenated.len() as u64),
     );
     multi
         .push(&concatenated)
         .expect("the concatenated test stream is accepted into the buffer");
     assert!(matches!(multi.finish(), Err(ReplicaError::Decompress)));
+    assert!(
+        !blob_path(&layout).exists(),
+        "a multi-frame stream is rejected before a blob is published"
+    );
 
     let skippable = [0x50, 0x2A, 0x4D, 0x18, 0, 0, 0, 0];
     let empty_metadata = BlobMetadata {
