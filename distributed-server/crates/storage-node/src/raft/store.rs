@@ -29,7 +29,7 @@ use openraft::Vote;
 use tokio::sync::RwLock;
 
 use crate::metadata::UploadId;
-use crate::replication::validate_publish_version;
+use crate::replication::{validate_publish_version, validate_replica_status};
 
 use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
 
@@ -365,6 +365,19 @@ impl RaftStorage<RaftConfig> for MemStore {
                             responses.push(RaftResponse { upload_id: None });
                         }
                     }
+                }
+                EntryPayload::Normal(RaftRequest::ReplicaStatus(status)) => {
+                    let voters: BTreeSet<NodeId> = inner.last_membership.voter_ids().collect();
+                    let accepted = {
+                        let existing = inner.catalog.get(&status.upload_id);
+                        validate_replica_status(status, &voters, existing).is_ok()
+                    };
+                    // No separate durable status table exists in this increment:
+                    // the catalog is unchanged and a non-`None` reply acknowledges
+                    // that the status entry itself was accepted.
+                    responses.push(RaftResponse {
+                        upload_id: accepted.then_some(status.upload_id),
+                    });
                 }
                 EntryPayload::Normal(RaftRequest::UpdateReplicas {
                     upload_id,

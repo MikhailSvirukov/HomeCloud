@@ -22,7 +22,10 @@ use crate::keys::PrivateKey;
 use crate::listener::{Listener, ListenerError};
 use crate::manifest::{ManifestEntry, ManifestError, StaticManifest};
 use crate::raft::{CommittedVersion, NodeId, RaftError, RaftNode, RaftRequest, RaftTiming};
-use crate::replication::{validate_publish_version, PublishVersion, ReplicationError};
+use crate::replication::{
+    validate_publish_version, validate_replica_status, PublishVersion, ReplicaStatus,
+    ReplicationError,
+};
 use crate::sealing::{RecipientPrivateKey, SealingError};
 use crate::server_session::serve_peer_connection;
 use crate::server_transport::{PeerDirectory, ServerTransport};
@@ -61,6 +64,9 @@ pub enum RuntimeError {
     /// The Raft commit replied with a different upload id than the published version.
     #[error("the committed publish version does not match the requested upload")]
     PublishRejected,
+    /// The Raft commit did not accept the replica status for its upload.
+    #[error("the committed replica status does not match the requested upload")]
+    ReplicaRejected,
 }
 
 /// Manifest-validated node runtime that owns the local OpenRaft instance and
@@ -187,6 +193,28 @@ impl RaftRuntime {
             return Err(RuntimeError::PublishRejected);
         }
         Ok(version)
+    }
+
+    /// Validates a replica status against the fixed manifest voters and the local
+    /// committed catalog, then submits it to OpenRaft. An accepted status is
+    /// acknowledged by the committed log entry; the catalog is not changed.
+    pub async fn replica_status(&self, status: ReplicaStatus) -> Result<(), RuntimeError> {
+        let existing = self
+            .node
+            .committed_versions()
+            .await
+            .remove(&status.upload_id);
+        let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
+        validate_replica_status(&status, &voters, existing.as_ref())?;
+        let response = self
+            .node
+            .client_write(RaftRequest::ReplicaStatus(status.clone()))
+            .await
+            .map_err(|error| RuntimeError::Raft(Box::new(error)))?;
+        if response.upload_id != Some(status.upload_id) {
+            return Err(RuntimeError::ReplicaRejected);
+        }
+        Ok(())
     }
 
     /// Returns the shared local OpenRaft instance.

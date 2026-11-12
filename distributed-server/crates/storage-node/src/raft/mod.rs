@@ -38,7 +38,7 @@ use openraft::Config;
 use openraft::Raft;
 
 use crate::metadata::UploadId;
-use crate::replication::PublishVersion;
+use crate::replication::{PublishVersion, ReplicaStatus};
 
 /// Node identifier used by the storage-cluster Raft instance.
 pub type NodeId = u64;
@@ -81,6 +81,10 @@ pub enum RaftRequest {
     /// Validates a publish version against the committed membership and catalog
     /// before applying it to the catalog.
     PublishVersion(PublishVersion),
+    /// Validates a replica status against the committed membership and catalog at
+    /// apply time; only a fixed voter reporting an existing committed upload with
+    /// matching login and SHA-256 is accepted.
+    ReplicaStatus(ReplicaStatus),
     /// Replaces the set of storage nodes that durably hold the version's blob; an unknown upload id is a no-op reported as `None`.
     UpdateReplicas {
         upload_id: UploadId,

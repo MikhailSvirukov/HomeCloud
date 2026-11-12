@@ -398,6 +398,9 @@ against the committed membership and catalog when it is applied; an invalid
 entry is ignored without mutating the catalog, and the runtime maps the missing
 upload id to a typed rejection. The pure `validate_publish_version` check remains
 available for callers that validate a command without committing it.
+`RaftRuntime::replica_status` pre-checks and submits a validated status; the state
+machine checks fixed membership, committed upload, login, and SHA-256; invalid entries
+are no-ops.
 
 ## Publish version and replica status
 
