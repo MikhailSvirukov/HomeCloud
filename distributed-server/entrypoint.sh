@@ -27,7 +27,7 @@ case "$restart_delay" in
         ;;
 esac
 
-if [ "$restart_delay" -lt 1 ] || [ "$restart_delay" -gt 3600 ]; then
+if [ "${#restart_delay}" -gt 4 ] || [ "$restart_delay" -lt 1 ] || [ "$restart_delay" -gt 3600 ]; then
     printf '%s: STORAGE_NODE_RESTART_DELAY_SECONDS must be in 1..=3600, got "%s"\n' \
         "$0" "$restart_delay" >&2
     exit "$EXIT_INVALID_DELAY"

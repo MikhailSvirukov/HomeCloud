@@ -78,7 +78,7 @@ the supervisor's restart line on standard error identify the cause.
 
 - Unset or empty: `1`.
 - Otherwise: the value must consist only of ASCII decimal digits (`0` through
-  `9`) and be in `1..=3600`. Zero, a signed value, a decimal fraction,
+  `9`), have at most four digits, and be in `1..=3600`. Zero, a signed value, a decimal fraction,
   whitespace, an out-of-range value, or any other character makes the
   entrypoint exit with status `64` before starting the node. There is no
   clamping to another value.
