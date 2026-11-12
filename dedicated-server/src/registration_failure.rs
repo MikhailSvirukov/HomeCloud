@@ -143,6 +143,16 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_frame_seal_answers_the_internal_code() {
+        assert_eq!(
+            registration_failure(&RegistrationFlowError::Exchange(
+                InterServerClientError::Seal(crate::frame_seal::FrameSealError::Signature)
+            )),
+            ResultCode::Internal
+        );
+    }
+
+    #[test]
     fn an_oversized_response_header_answers_the_internal_code() {
         assert_eq!(
             registration_failure(&RegistrationFlowError::Exchange(
