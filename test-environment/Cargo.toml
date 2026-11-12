@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/harness-core",
     "crates/harness-docker",
+    "crates/harness-probe",
     "crates/harness-scenario",
     "crates/harness-test-support",
     "crates/harness-wire",
@@ -22,5 +23,6 @@ futures-util = "0.3"
 harness-core = { path = "crates/harness-core" }
 harness-docker = { path = "crates/harness-docker" }
 harness-test-support = { path = "crates/harness-test-support" }
+harness-wire = { path = "crates/harness-wire" }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "net", "time"] }
