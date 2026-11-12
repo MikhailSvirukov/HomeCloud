@@ -4,6 +4,7 @@ import dev.homecloud.android.protocol.TopologyNode
 import dev.homecloud.android.queue.UploadQueue
 import dev.homecloud.android.queue.UploadQueueEntry
 import dev.homecloud.android.upload.UploadRequest
+import kotlin.coroutines.cancellation.CancellationException
 
 /** Outcome of one pending-entry execution. */
 internal enum class PendingUploadOutcome {
@@ -15,22 +16,21 @@ internal enum class PendingUploadOutcome {
 /**
  * Executes one pending queue entry against the storage nodes of the topology.
  *
- * The entry is marked in flight before anything else happens, then prepared once. The topology is
- * requested once and its nodes are tried in answer order, reusing the same prepared values for every
- * node because each upload call restarts the version from frame zero with a fresh request id
- * (`FR-AND-017`, `FR-AND-030`, `FR-AND-052`, `FR-UP-016`). The first node that confirms the upload
- * completes the entry (`FR-UP-021`); a preparation failure, a topology failure, an empty topology or
- * a failed upload on every node marks it failed, so an unfinished upload stays queued
+ * The entry is marked in flight before anything else happens and prepared exactly once through the
+ * supplied preparation, which turns the entry and its source URI into the upload arguments and
+ * payload. The node list is requested once from the dedicated server, and its nodes are tried in
+ * answer order with the same prepared values, because the upload operation restarts the version
+ * from frame zero for every attempt (`FR-AND-017`, `FR-AND-030`). The first node that confirms the
+ * upload completes the entry (`FR-UP-021`); a preparation failure, a topology failure, an empty
+ * topology or a failed upload on every node marks it failed, so an unfinished upload stays queued
  * (`FR-AND-027`).
  *
- * The executor holds no state between calls, produces no log output, and never places credentials,
- * names, payload bytes or digests into an outcome. A failure of the queue itself is propagated to
- * the caller instead of being treated as an upload failure.
- *
- * @param queue records the in-flight, completed and failed states (`FR-AND-027`)
- * @param prepare turns the entry and its source URI into the upload arguments and payload
- * @param fetchTopology requests the node list from the dedicated server
- * @param upload sends one prepared version to one node and returns the confirmed upload id
+ * The queue records the in-flight, completed and failed states, the preparation and topology
+ * request run once per execution, and the upload runs once per tried node. A failure of the queue
+ * itself is propagated to the caller instead of being treated as an upload failure. The executor
+ * holds no state between calls, produces no log output, and never places credentials, names,
+ * payload bytes or digests into an outcome; a node failure's cause is not carried because the
+ * outcome is a summary and the upload operation reports its own failures.
  */
 internal class PendingUploadExecutor(
     private val queue: UploadQueue,
@@ -55,6 +55,8 @@ internal class PendingUploadExecutor(
         val prepared =
             try {
                 prepare(entry, uri)
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (_: Exception) {
                 queue.markFailed(entry.uploadId)
                 return PendingUploadOutcome.FAILED
@@ -62,6 +64,8 @@ internal class PendingUploadExecutor(
         val nodes =
             try {
                 fetchTopology(serverHost, serverPort, login, password)
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (_: Exception) {
                 queue.markFailed(entry.uploadId)
                 return PendingUploadOutcome.FAILED
@@ -84,6 +88,8 @@ internal class PendingUploadExecutor(
                         ),
                     )
                     true
+                } catch (exception: CancellationException) {
+                    throw exception
                 } catch (_: Exception) {
                     false
                 }

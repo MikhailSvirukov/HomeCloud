@@ -13,11 +13,12 @@ import dev.homecloud.android.upload.UploadRequest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /**
- * Asserts the pending-entry execution of `FR-AND-017`, `FR-AND-027`, `FR-AND-030`, `FR-AND-052`,
- * `FR-UP-016` and `FR-UP-021`.
+ * Asserts the pending-entry execution of `FR-AND-017`, `FR-AND-027`, `FR-AND-030` and
+ * `FR-UP-021` at the executor seam.
  */
 class PendingUploadExecutorTest {
     private val queuedEntry = newEntry()
@@ -59,17 +60,23 @@ class PendingUploadExecutorTest {
         assertSame(preparedUpload.metadata, request.metadata)
         assertSame(preparedUpload.payload, request.payload)
         assertEquals(firstNode, request.node)
+        assertEquals(listOf(queuedEntry.uploadId, queuedEntry.uploadId), queue.mutationIds)
         assertEquals(listOf(ExecutedStep.IN_FLIGHT, ExecutedStep.COMPLETED), queue.mutations)
     }
 
     @Test
     fun `second node success reuses the prepared values and completes`() {
         val queue = RecordingUploadQueue(queuedEntry)
+        var preparationCount = 0
         val requests = mutableListOf<UploadRequest>()
         val executor =
             executor(
                 queue = queue,
-                fetchTopology = { _, _, _, _ -> listOf(firstNode, secondNode) },
+                prepare = { _, _ ->
+                    preparationCount += 1
+                    preparedUpload
+                },
+                fetchTopology = { _, _, _, _ -> listOf(firstNode, secondNode, thirdNode) },
                 upload = { request ->
                     requests += request
                     if (requests.size == FIRST_ATTEMPT) {
@@ -82,13 +89,27 @@ class PendingUploadExecutorTest {
         val outcome = executor.execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
 
         assertEquals(PendingUploadOutcome.COMPLETED, outcome)
+        assertEquals(SINGLE_PREPARATION, preparationCount)
         assertEquals(listOf(firstNode, secondNode), requests.map { it.node })
         for (request in requests) {
             assertArrayEquals(preparedUpload.uploadId, request.uploadId)
             assertSame(preparedUpload.metadata, request.metadata)
             assertSame(preparedUpload.payload, request.payload)
         }
+        assertEquals(
+            listOf(queuedEntry.uploadId, queuedEntry.uploadId),
+            queue.mutationIds,
+        )
         assertEquals(listOf(ExecutedStep.IN_FLIGHT, ExecutedStep.COMPLETED), queue.mutations)
+    }
+
+    @Test
+    fun `a queue failure is propagated instead of being reported as an upload failure`() {
+        val queue = RecordingUploadQueue(queuedEntry, inFlightFailure = IllegalStateException(QUEUE_FAILED_MESSAGE))
+
+        assertThrows(IllegalStateException::class.java) {
+            executor(queue = queue).execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
+        }
     }
 
     @Test
@@ -179,7 +200,7 @@ class PendingUploadExecutorTest {
     @Test
     fun `the entry is in flight before preparation`() {
         val steps = mutableListOf<ExecutedStep>()
-        val queue = RecordingUploadQueue(queuedEntry, steps)
+        val queue = RecordingUploadQueue(queuedEntry, inFlightFailure = null, steps = steps)
         val executor =
             executor(
                 queue = queue,
@@ -315,10 +336,17 @@ class PendingUploadExecutorTest {
 
     private class RecordingUploadQueue(
         private val entry: UploadQueueEntry,
+        private val inFlightFailure: Exception? = null,
         private val steps: MutableList<ExecutedStep> = mutableListOf(),
+        private val ids: MutableList<String> = mutableListOf(),
     ) : UploadQueue {
         val mutations: List<ExecutedStep>
             get() = steps.filter { step -> step in QUEUE_MUTATIONS }
+
+        val mutationIds: List<String>
+            get() = ids.toList()
+
+        private var state: UploadQueueState = UploadQueueState.PENDING
 
         override fun enqueue(
             uploadId: String,
@@ -331,25 +359,32 @@ class PendingUploadExecutorTest {
 
         override fun restore(entries: List<UploadQueueEntry>) = Unit
 
-        override fun entries(): List<UploadQueueEntry> = listOf(entry)
+        override fun entries(): List<UploadQueueEntry> = listOf(entry.copy(state = state))
 
-        override fun nextPending(): UploadQueueEntry? = entry
+        override fun nextPending(): UploadQueueEntry? = if (state == UploadQueueState.PENDING) entry else null
 
         override fun markInFlight(uploadId: String) {
+            inFlightFailure?.let { failure -> throw failure }
+            ids += uploadId
             steps += ExecutedStep.IN_FLIGHT
+            state = UploadQueueState.IN_FLIGHT
         }
 
         override fun markCompleted(uploadId: String) {
+            ids += uploadId
             steps += ExecutedStep.COMPLETED
+            state = UploadQueueState.COMPLETED
         }
 
         override fun markFailed(uploadId: String) {
+            ids += uploadId
             steps += ExecutedStep.FAILED
+            state = UploadQueueState.FAILED
         }
 
         override fun requeueFailed(): Int = NO_REQUEUED_ENTRIES
 
-        override fun pendingCount(): Int = PENDING_ENTRIES
+        override fun pendingCount(): Int = if (state == UploadQueueState.PENDING) PENDING_ENTRIES else NO_PENDING_ENTRIES
     }
 
     private enum class ExecutedStep {
@@ -388,13 +423,17 @@ class PendingUploadExecutorTest {
         const val THIRD_PORT = 9_003
         const val FIRST_ATTEMPT = 1
         const val NO_REQUEUED_ENTRIES = 0
+        const val NO_PENDING_ENTRIES = 0
         const val PENDING_ENTRIES = 1
+        const val SINGLE_PREPARATION = 1
+        const val UPLOAD_ID_BYTES = 16
+        const val QUEUE_FAILED_MESSAGE = "the queue store is unavailable"
         const val UPLOAD_FAILED_MESSAGE = "the upload request failed"
         const val PREPARATION_FAILED_MESSAGE = "the queued version could not be prepared"
         const val TOPOLOGY_FAILED_MESSAGE = "the topology request failed"
 
         val CONTENT_SHA256 = "a".repeat(SHA256_HEX_CHARS)
-        val PREPARED_UPLOAD_ID = ByteArray(KEY_BYTES) { index -> index.toByte() }
+        val PREPARED_UPLOAD_ID = ByteArray(UPLOAD_ID_BYTES) { index -> (index + 7).toByte() }
         val SHA256 = ByteArray(SHA256_BYTES) { index -> (index + 1).toByte() }
         val PAYLOAD_BYTES = "compressed payload".toByteArray(Charsets.UTF_8)
 
