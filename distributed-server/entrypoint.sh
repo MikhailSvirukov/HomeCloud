@@ -27,7 +27,14 @@ case "$restart_delay" in
         ;;
 esac
 
+if [ "$restart_delay" -lt 1 ] || [ "$restart_delay" -gt 3600 ]; then
+    printf '%s: STORAGE_NODE_RESTART_DELAY_SECONDS must be in 1..=3600, got "%s"\n' \
+        "$0" "$restart_delay" >&2
+    exit "$EXIT_INVALID_DELAY"
+fi
+
 child_pid=
+sleep_pid=
 shutdown=0
 shutdown_signal=TERM
 shutdown_status=0
@@ -44,6 +51,9 @@ trigger_shutdown() {
     fi
     if [ -n "$child_pid" ]; then
         kill "-$trap_signal" "$child_pid" 2>/dev/null || true
+    fi
+    if [ -n "$sleep_pid" ]; then
+        kill "-$trap_signal" "$sleep_pid" 2>/dev/null || true
     fi
 }
 
@@ -89,7 +99,16 @@ while :; do
 
     printf '%s: storage node exited with status %s; restarting in %s second(s)\n' \
         "$0" "$status" "$restart_delay" >&2
-    if [ "$restart_delay" != "0" ]; then
-        sleep "$restart_delay" || true
+    sleep "$restart_delay" &
+    sleep_pid=$!
+    status=0
+    wait "$sleep_pid" || status=$?
+    sleep_pid=
+    if [ "$shutdown" -eq 1 ]; then
+        exit "$shutdown_status"
+    fi
+    if [ "$status" -ne 0 ]; then
+        printf "%s: restart delay failed with status %s\n" "$0" "$status" >&2
+        exit 1
     fi
 done

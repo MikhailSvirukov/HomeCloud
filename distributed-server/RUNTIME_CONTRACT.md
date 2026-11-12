@@ -78,9 +78,10 @@ the supervisor's restart line on standard error identify the cause.
 
 - Unset or empty: `1`.
 - Otherwise: the value must consist only of ASCII decimal digits (`0` through
-  `9`). A signed value, a decimal fraction, whitespace, or any other character
-  makes the entrypoint exit with status `64` before starting the node. There is
-  no clamping to another value.
+  `9`) and be in `1..=3600`. Zero, a signed value, a decimal fraction,
+  whitespace, an out-of-range value, or any other character makes the
+  entrypoint exit with status `64` before starting the node. There is no
+  clamping to another value.
 
 `STORAGE_NODE_BIN` overrides the child executable path:
 
@@ -328,20 +329,26 @@ docker build -f distributed-server/Dockerfile -t homecloud-storage-node:test .
 
 ### Prepare runtime material
 
+Keep private keys, manifest, and data outside the repository/build context
+(`CFG-CL-033`). The operator creates a host-only directory; the key directory
+and files must be owned/readable only by container UID/GID 10001 and are
+mounted read-only:
+
 ```sh
-# Generated per test run; private keys stay outside the image.
-install -d -m 0700 testdata/keys
-install -d -m 0750 -o 10001 -g 10001 testdata/storage-a
+SECRETS_DIR=/srv/homecloud-test
+sudo install -d -m 0700 -o 10001 -g 10001 "$SECRETS_DIR/keys"
+sudo install -d -m 0750 -o 10001 -g 10001 "$SECRETS_DIR/storage-a"
 ```
 
-`testdata/manifest.toml` is the manifest from the README with the test nodes'
-open keys. `testdata/keys/` contains the corresponding private key files.
-The data directory is writable by UID 10001.
+`$SECRETS_DIR/manifest.toml` is the manifest from the README with the test
+nodes' open keys and `192.0.2.0/24` addresses. `$SECRETS_DIR/keys/` contains
+the corresponding private key files, created by the operator outside the
+checkout. `$SECRETS_DIR/storage-a` is writable by UID 10001.
 
 ### Run one node
 
 Put the node settings from the README in an environment file, for example
-`testdata/storage-a.env`:
+`$SECRETS_DIR/storage-a.env`:
 
 ```sh
 NODE_ID=storage-a
@@ -356,26 +363,27 @@ METRICS_BIND_ADDR=127.0.0.1:9001
 
 The environment file must contain every required value; this contract supplies
 no defaults. The manifest advertises concrete node addresses, so the harness
-must attach the containers to a network where those addresses are reachable.
-Create that network and start the bootstrap node once:
+must attach the containers to the network used by those addresses. Create the
+network with the manifest subnet and start the bootstrap node once:
 
 ```sh
-docker network create homecloud-test
+docker network create --subnet 192.0.2.0/24 homecloud-test
 
 docker run -d --name storage-a \
-  --network homecloud-test \
-  --env-file testdata/storage-a.env \
+  --network homecloud-test --ip 192.0.2.11 \
+  --env-file "$SECRETS_DIR/storage-a.env" \
   -e RAFT_BOOTSTRAP=true \
   -p 127.0.0.1:7001:7001 \
-  -v "$PWD/testdata/manifest.toml:/etc/homecloud/manifest.toml:ro" \
-  -v "$PWD/testdata/keys:/etc/homecloud/keys:ro" \
-  -v "$PWD/testdata/storage-a:/var/lib/homecloud" \
+  -v "$SECRETS_DIR/manifest.toml:/etc/homecloud/manifest.toml:ro" \
+  -v "$SECRETS_DIR/keys:/etc/homecloud/keys:ro" \
+  -v "$SECRETS_DIR/storage-a:/var/lib/homecloud" \
   homecloud-storage-node:test
 ```
 
-Start the other storage nodes with the same mounts and their own
-`NODE_ID`, `LISTEN_ADDR`, data directory, metrics address, and published port,
-but without `RAFT_BOOTSTRAP=true` (or with it set to `false`).
+Start the other storage nodes with the same mounts and their own `NODE_ID`,
+`LISTEN_ADDR`, `--ip` matching the manifest, data directory, metrics address,
+and published port, but without `RAFT_BOOTSTRAP=true` (or with it set to
+`false`).
 
 ### Poll readiness
 
@@ -400,12 +408,12 @@ recreate the container without the bootstrap variable:
 docker stop storage-a
 docker rm storage-a
 docker run -d --name storage-a \
-  --network homecloud-test \
-  --env-file testdata/storage-a.env \
+  --network homecloud-test --ip 192.0.2.11 \
+  --env-file "$SECRETS_DIR/storage-a.env" \
   -p 127.0.0.1:7001:7001 \
-  -v "$PWD/testdata/manifest.toml:/etc/homecloud/manifest.toml:ro" \
-  -v "$PWD/testdata/keys:/etc/homecloud/keys:ro" \
-  -v "$PWD/testdata/storage-a:/var/lib/homecloud" \
+  -v "$SECRETS_DIR/manifest.toml:/etc/homecloud/manifest.toml:ro" \
+  -v "$SECRETS_DIR/keys:/etc/homecloud/keys:ro" \
+  -v "$SECRETS_DIR/storage-a:/var/lib/homecloud" \
   homecloud-storage-node:test
 ```
 
