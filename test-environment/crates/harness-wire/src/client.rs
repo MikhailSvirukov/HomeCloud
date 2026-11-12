@@ -1,11 +1,12 @@
 //! Authenticated client logical header.
 //!
 //! A client request is the four-position CBOR array
-//! `[operation_type, login, password, args]` (`INT-NET-051 / 3`). The
-//! operation-argument schema is determined by the operation type and validated
-//! by the caller; this module validates only that the fourth position is a CBOR
-//! array.
+//! `[operation_type, login, password, args]` (`INT-NET-051 / 3`). Topology and
+//! catalog-page argument schemas are enforced here; registration and upload
+//! argument schemas come from the normative protocol appendix and are supplied
+//! by the caller.
 
+use crate::catalog::{CatalogError, CatalogPageRequest};
 use crate::cbor::Value;
 
 const OPERATION_REGISTRATION: u32 = 1;
@@ -95,6 +96,7 @@ impl ClientRequest {
     /// `[operation_type, login, password, args]`; validates the credential limits.
     pub fn to_args(&self, limits: CredentialLimits) -> Result<Vec<Value>, ClientError> {
         validate_credentials(&self.login, &self.password, limits)?;
+        validate_arguments(self.operation, &self.args)?;
 
         Ok(vec![
             Value::Uint(u64::from(self.operation.code())),
@@ -127,6 +129,7 @@ impl ClientRequest {
         };
 
         validate_credentials(login, password, limits)?;
+        validate_arguments(operation, operation_args)?;
 
         Ok(Self {
             operation,
@@ -149,6 +152,12 @@ pub enum ClientError {
     /// The operation code is not assigned in the v1 operation table.
     #[error("unknown operation code {0}")]
     UnknownOperation(u64),
+    /// A topology request carries operation arguments.
+    #[error("topology request must have no arguments, found {count}")]
+    TopologyArguments { count: usize },
+    /// The catalog-page request arguments are invalid.
+    #[error("catalog page arguments are invalid: {0}")]
+    CatalogArguments(#[from] CatalogError),
     /// The login contains a character outside the v1 ASCII set.
     #[error("login character {character:?} is not allowed")]
     InvalidLoginCharacter { character: char },
@@ -175,6 +184,23 @@ fn validate_credentials(
 ) -> Result<(), ClientError> {
     validate_login(login, limits)?;
     validate_password(password, limits)
+}
+
+fn validate_arguments(operation: OperationType, args: &[Value]) -> Result<(), ClientError> {
+    match operation {
+        OperationType::Topology => {
+            if args.is_empty() {
+                Ok(())
+            } else {
+                Err(ClientError::TopologyArguments { count: args.len() })
+            }
+        }
+        OperationType::CatalogPage => {
+            CatalogPageRequest::from_args(args)?;
+            Ok(())
+        }
+        OperationType::Registration | OperationType::Upload => Ok(()),
+    }
 }
 
 fn validate_login(login: &str, limits: CredentialLimits) -> Result<(), ClientError> {

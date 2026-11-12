@@ -5,7 +5,7 @@
 //!
 //! [`contracts/wire-v1.md`]: ../../../../contracts/wire-v1.md
 
-use harness_wire::catalog::CatalogPageRequest;
+use harness_wire::catalog::{CatalogError, CatalogPageRequest};
 use harness_wire::cbor::{self, Value};
 use harness_wire::client::{ClientError, ClientRequest, CredentialLimits, OperationType};
 
@@ -41,6 +41,29 @@ fn request_with(login: &str, password: &str) -> ClientRequest {
         password: password.to_owned(),
         ..request(OperationType::Topology)
     }
+}
+
+/// A catalog page request with the first-page `[null, null]` arguments.
+fn catalog_request() -> ClientRequest {
+    ClientRequest {
+        args: CatalogPageRequest {
+            snapshot_token: None,
+            cursor: None,
+        }
+        .to_args()
+        .expect("request arguments are valid"),
+        ..request(OperationType::CatalogPage)
+    }
+}
+
+/// Literal bytes of the catalog page request vector.
+fn catalog_request_bytes() -> Vec<u8> {
+    let mut bytes = vec![0x84, 0x03, 0x65];
+    bytes.extend_from_slice(LOGIN.as_bytes());
+    bytes.push(0x6B);
+    bytes.extend_from_slice(PASSWORD.as_bytes());
+    bytes.extend_from_slice(&[0x82, 0xF6, 0xF6]);
+    bytes
 }
 
 /// Builds a client-header array from its four positions.
@@ -109,26 +132,10 @@ fn topology_request_matches_contract_vector() {
 /// the `[snapshot_token, cursor]` arguments in the fourth position.
 #[test]
 fn catalog_request_matches_contract_vector() {
-    let request = ClientRequest {
-        args: CatalogPageRequest {
-            snapshot_token: None,
-            cursor: None,
-        }
-        .to_args()
-        .expect("request arguments are valid"),
-        ..request(OperationType::CatalogPage)
-    };
+    let request = catalog_request();
     let args = request.to_args(LIMITS).expect("request is valid");
-    let expected = {
-        let mut bytes = vec![0x84, 0x03, 0x65];
-        bytes.extend_from_slice(LOGIN.as_bytes());
-        bytes.push(0x6B);
-        bytes.extend_from_slice(PASSWORD.as_bytes());
-        bytes.extend_from_slice(&[0x82, 0xF6, 0xF6]);
-        bytes
-    };
 
-    assert_eq!(cbor::encode(&Value::Array(args)), expected);
+    assert_eq!(cbor::encode(&Value::Array(args)), catalog_request_bytes());
     assert_eq!(round_trip(&request), request);
 }
 
@@ -184,6 +191,11 @@ fn login_accepts_exactly_the_configured_limits() {
     let accepted = request_with("abcd", PASSWORD);
     let args = accepted.to_args(custom).expect("login is valid");
     assert_eq!(ClientRequest::from_args(&args, custom), Ok(accepted));
+
+    let longest_custom = request_with("abcdefgh", PASSWORD);
+    let args = longest_custom.to_args(custom).expect("login is valid");
+    assert_eq!(ClientRequest::from_args(&args, custom), Ok(longest_custom));
+
     assert_eq!(
         request_with("abc", PASSWORD).to_args(custom),
         Err(ClientError::LoginLength {
@@ -223,7 +235,7 @@ fn login_rejects_characters_outside_the_allowed_set() {
 fn login_allows_every_published_character() {
     let allowed = request_with("AZaz09._-", PASSWORD);
 
-    assert_eq!(allowed.login.len(), 10);
+    assert_eq!(allowed.login.len(), 9);
     assert_eq!(round_trip(&allowed), allowed);
 }
 
@@ -289,10 +301,52 @@ fn password_round_trips_unicode_without_normalization() {
     );
 }
 
-/// `INT-NET-051/3`: the header is exactly four positions with their published
-/// CBOR types.
+/// `CFG-CL-029`: a configured password range other than the v1 default is
+/// enforced inclusively.
 #[test]
-fn client_header_rejects_wrong_shapes_and_types() {
+fn password_accepts_custom_limits() {
+    let limits = CredentialLimits {
+        min_password_bytes: 1,
+        max_password_bytes: 4,
+        ..LIMITS
+    };
+
+    let accepted = request_with(LOGIN, "abcd");
+    let args = accepted.to_args(limits).expect("password is valid");
+    assert_eq!(ClientRequest::from_args(&args, limits), Ok(accepted));
+    assert_eq!(
+        request_with(LOGIN, "abcde").to_args(limits),
+        Err(ClientError::PasswordLength {
+            actual: 5,
+            min: 1,
+            max: 4,
+        })
+    );
+}
+
+/// `INT-NET-054/1`: leading and trailing spaces are part of the password and
+/// are not trimmed.
+#[test]
+fn password_keeps_leading_and_trailing_spaces() {
+    let leading = request_with(LOGIN, " password");
+    let trailing = request_with(LOGIN, "password ");
+
+    assert_eq!(leading.password.len(), 9);
+    let leading_bytes = cbor::encode(&Value::Array(
+        leading.to_args(LIMITS).expect("password is valid"),
+    ));
+    let trailing_bytes = cbor::encode(&Value::Array(
+        trailing.to_args(LIMITS).expect("password is valid"),
+    ));
+
+    assert_ne!(leading_bytes, trailing_bytes);
+    assert_eq!(round_trip(&leading).password, " password");
+    assert_eq!(round_trip(&trailing).password, "password ");
+}
+
+/// `INT-NET-051/3`: the header is exactly a four-element CBOR array.
+#[test]
+fn client_header_rejects_wrong_shapes() {
     let Value::Array(items) = valid_header() else {
         panic!("client header is an array");
     };
@@ -311,7 +365,11 @@ fn client_header_rejects_wrong_shapes_and_types() {
         ClientRequest::from_args(&[Value::Null], LIMITS),
         Err(ClientError::WrongShape)
     );
+}
 
+/// `INT-NET-051/3`: each header position keeps its published CBOR type.
+#[test]
+fn client_header_rejects_wrong_types() {
     assert_eq!(
         decode_header(&with_position(
             valid_header(),
@@ -346,23 +404,70 @@ fn client_header_rejects_unknown_operation_codes() {
     }
 }
 
-/// `INT-NET-054/1`: invalid credentials cannot be encoded.
+/// `INT-NET-054/1`: invalid credentials are rejected while decoding a header.
 #[test]
-fn encode_rejects_invalid_credentials() {
+fn decode_rejects_invalid_credentials() {
+    let long_login = with_position(valid_header(), 1, Value::Text("a".repeat(65)));
     assert_eq!(
-        request_with(&"a".repeat(65), PASSWORD).to_args(LIMITS),
+        decode_header(&long_login),
         Err(ClientError::LoginLength {
             actual: 65,
             min: 1,
             max: 64,
         })
     );
+
+    let short_password = with_position(valid_header(), 2, Value::Text("a".repeat(7)));
     assert_eq!(
-        request_with(LOGIN, &"a".repeat(7)).to_args(LIMITS),
+        decode_header(&short_password),
         Err(ClientError::PasswordLength {
             actual: 7,
             min: 8,
             max: 1024,
         })
+    );
+}
+
+/// `INT-NET-060/1`: a topology request carries no operation arguments.
+#[test]
+fn topology_rejects_non_empty_arguments() {
+    let request = ClientRequest {
+        args: vec![Value::Null],
+        ..request(OperationType::Topology)
+    };
+    assert_eq!(
+        request.to_args(LIMITS),
+        Err(ClientError::TopologyArguments { count: 1 })
+    );
+
+    let header = with_position(valid_header(), 3, Value::Array(vec![Value::Null]));
+    assert_eq!(
+        decode_header(&header),
+        Err(ClientError::TopologyArguments { count: 1 })
+    );
+}
+
+/// `INT-NET-080/1`, `TST-028/1`: a catalog page request carries the validated
+/// `[snapshot_token, cursor]` arguments.
+#[test]
+fn catalog_arguments_are_validated() {
+    let accepted = catalog_request();
+    let args = accepted.to_args(LIMITS).expect("request is valid");
+    assert_eq!(ClientRequest::from_args(&args, LIMITS), Ok(accepted));
+    assert_eq!(
+        cbor::encode(&Value::Array(args)),
+        catalog_request_bytes(),
+        "the accepted form still matches the catalog golden vector"
+    );
+
+    let rejected = ClientRequest {
+        args: vec![Value::Null],
+        ..request(OperationType::CatalogPage)
+    };
+    assert_eq!(
+        rejected.to_args(LIMITS),
+        Err(ClientError::CatalogArguments(
+            CatalogError::WrongRequestShape
+        ))
     );
 }

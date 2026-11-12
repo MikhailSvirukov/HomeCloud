@@ -65,7 +65,9 @@ request, and `4` media upload. Login is UTF-8 text restricted to
 `[A-Za-z0-9._-]`; password is UTF-8 text compared as bytes without trimming or
 Unicode normalization. `CredentialLimits` carries the `CFG-CL-029` bounds
 (`V1_DEFAULT`: login `1..=64` bytes, password `8..=1024` bytes); both limits are
-inclusive and measured in encoded UTF-8 bytes.
+inclusive and measured in encoded UTF-8 bytes. The header enforces the topology
+(empty) and catalog-page argument schemas; registration and upload argument
+schemas come from the normative protocol appendix.
 
 ## Catalog page requests
 
