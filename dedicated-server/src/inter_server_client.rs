@@ -385,9 +385,7 @@ fn with_registration_budget<T>(
 /// frame or an invalid signature is final (`INT-NET-065 / 1`).
 fn is_transient(error: &InterServerClientError) -> bool {
     match error {
-        InterServerClientError::Connect { .. }
-        | InterServerClientError::Io(_)
-        | InterServerClientError::Deadline { .. } => true,
+        InterServerClientError::Connect { .. } | InterServerClientError::Io(_) => true,
         InterServerClientError::Frame(FrameError::Io(_)) => true,
         InterServerClientError::Rejected(code) => is_temporary_code(*code),
         _ => false,
@@ -633,6 +631,48 @@ mod tests {
             .port()
     }
 
+    fn config_with_two_nodes(first_port: u16, second_port: u16, attempts: u32) -> ServerConfig {
+        let document = FIXTURE
+            .replace(
+                "address = \"10.0.0.11:7100\"",
+                &format!("address = \"127.0.0.1:{first_port}\""),
+            )
+            .replace(
+                "address = \"10.0.0.12:7100\"",
+                &format!("address = \"127.0.0.1:{second_port}\""),
+            )
+            .replace("attempt_deadline_ms = 10000", "attempt_deadline_ms = 1000")
+            .replace("attempts = 5", &format!("attempts = {attempts}"))
+            .replace("retry_interval_ms = 1000", "retry_interval_ms = 1")
+            .replace("total_deadline_ms = 30000", "total_deadline_ms = 5000")
+            .replace(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                &hex(&x25519(&DEDICATED_X25519_SEED).1),
+            )
+            .replace(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                &hex(&ed25519(&DEDICATED_ED25519_SEED)),
+            )
+            .replace(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                &hex(&x25519(&STORAGE_X25519_SEED).1),
+            )
+            .replace(
+                "2222222222222222222222222222222222222222222222222222222222222222",
+                &hex(&ed25519(&STORAGE_ED25519_SEED)),
+            )
+            .replace(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                &hex(&x25519(&STORAGE2_X25519_SEED).1),
+            )
+            .replace(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                &hex(&ed25519(&STORAGE2_ED25519_SEED)),
+            );
+
+        ServerConfig::from_toml_str(&document).expect("the two-node configuration must parse")
+    }
+
     fn config_with_failover(
         first_port: u16,
         mock_port: u16,
@@ -864,6 +904,7 @@ mod tests {
         RegistrationSecret::load(&path).expect("the secret must load")
     }
 
+    #[derive(Clone)]
     struct ProposeReply {
         expected_tag: [u8; 32],
         installation_id: [u8; 16],
@@ -871,6 +912,79 @@ mod tests {
         commit_index: u64,
         expected_verifier: Option<String>,
         new_verifier: Option<String>,
+    }
+
+    fn mock_storage_propose_sequence(
+        listener: TcpListener,
+        node: MockNode,
+        replies: Vec<ProposeReply>,
+    ) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().expect("the client must connect");
+                let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
+                let body = read_frame(&mut stream, limit).expect("the request must arrive");
+                let header_length =
+                    external_header_length(&body).expect("the request header must be found");
+                let request_header = ExternalHeader::decode(&body[..header_length], 64)
+                    .expect("the header must parse");
+                let mut sealed = Vec::with_capacity(4 + body.len());
+                sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                sealed.extend_from_slice(&body);
+                let (storage_x25519, _) = x25519(&node.x25519_secret);
+                let dedicated_signing = ed25519(&DEDICATED_ED25519_SEED);
+                let plaintext =
+                    open_frame(&sealed, header_length, &storage_x25519, &dedicated_signing)
+                        .expect("the request must open");
+                let request =
+                    InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
+                match request {
+                    InterServerMessage::RegistrationPropose {
+                        login,
+                        registration_request_id,
+                        content_tag,
+                        installation_id: sent,
+                        x25519_key,
+                        ed25519_key,
+                        ..
+                    } => {
+                        assert_eq!(login, "alice");
+                        assert_eq!(registration_request_id, [0x11; 16]);
+                        assert_eq!(content_tag, reply.expected_tag);
+                        assert_eq!(sent, reply.installation_id);
+                        assert_eq!(x25519_key, [0x44; 32]);
+                        assert_eq!(ed25519_key, [0x55; 32]);
+                    }
+                    _ => panic!("the request must be a propose"),
+                }
+                let response = InterServerMessage::RegistrationResult {
+                    code: reply.code,
+                    installation_id: (reply.code == 0).then_some(reply.installation_id),
+                    commit_index: (reply.code == 0).then_some(reply.commit_index),
+                };
+                let payload = response.encode(512).expect("the response must encode");
+                let header = ExternalHeader {
+                    sender_id: Some(node.sender_id),
+                    request_id: request_header.request_id,
+                    frame_number: 0,
+                    upload_id: None,
+                    responder_label: Some(node.label.to_owned()),
+                    bootstrap_signing_public_key: None,
+                };
+                let header_bytes = header.encode(64).expect("the response header must encode");
+                let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
+                let frame = seal_frame(
+                    &header_bytes,
+                    &payload,
+                    &dedicated_x25519,
+                    &node.ed25519_seed,
+                )
+                .expect("the response must seal");
+                stream
+                    .write_all(&frame)
+                    .expect("the response must be written");
+            }
+        })
     }
 
     fn mock_storage_propose(
@@ -1164,6 +1278,205 @@ mod tests {
 
         server.join().expect("the mock server must finish");
         assert_eq!(commit.commit_index, 11);
+    }
+
+    #[test]
+    fn a_temporary_propose_rejection_retries_the_same_command_on_the_next_node() {
+        let dir = TempDir::new("propose-temporary");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let reply = ProposeReply {
+            expected_tag,
+            installation_id: [0x66; 16],
+            code: 0,
+            commit_index: 12,
+            expected_verifier: None,
+            new_verifier: Some("new-phc".to_owned()),
+        };
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                code: 0x0007_0001,
+                ..reply.clone()
+            }],
+        );
+        let node_b = mock_storage_propose_sequence(second, node_two(), vec![reply]);
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the second node must commit the same command");
+
+        node_a.join().expect("the first mock must finish");
+        node_b.join().expect("the second mock must finish");
+        assert_eq!(commit.commit_index, 12);
+    }
+
+    #[test]
+    fn a_quorum_rejection_retries_the_same_command_on_the_next_node() {
+        let dir = TempDir::new("propose-quorum");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let reply = ProposeReply {
+            expected_tag,
+            installation_id: [0x66; 16],
+            code: 0,
+            commit_index: 13,
+            expected_verifier: None,
+            new_verifier: Some("new-phc".to_owned()),
+        };
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                code: 0x0006_0001,
+                ..reply.clone()
+            }],
+        );
+        let node_b = mock_storage_propose_sequence(second, node_two(), vec![reply]);
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let commit = propose_registration(&config, &identity, &secret, &request)
+            .expect("the quorum rejection must be retried");
+
+        node_a.join().expect("the first mock must finish");
+        node_b.join().expect("the second mock must finish");
+        assert_eq!(commit.commit_index, 13);
+    }
+
+    #[test]
+    fn a_permanent_propose_rejection_does_not_reach_the_next_node() {
+        let dir = TempDir::new("propose-permanent");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+        let first = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let first_port = first
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        let second = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
+        let second_port = second
+            .local_addr()
+            .expect("the listener must have an address")
+            .port();
+        second
+            .set_nonblocking(true)
+            .expect("the second listener must be non-blocking");
+        let config = config_with_two_nodes(first_port, second_port, 3);
+        let node_a = mock_storage_propose_sequence(
+            first,
+            node_one(),
+            vec![ProposeReply {
+                expected_tag,
+                installation_id: [0x66; 16],
+                code: 0x0003_0001,
+                commit_index: 0,
+                expected_verifier: None,
+                new_verifier: Some("new-phc".to_owned()),
+            }],
+        );
+        let request = RegistrationProposeRequest {
+            login: "alice",
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        let error = propose_registration(&config, &identity, &secret, &request)
+            .expect_err("a permanent rejection must fail");
+
+        node_a.join().expect("the first mock must finish");
+        assert!(matches!(
+            error,
+            InterServerClientError::Rejected(0x0003_0001)
+        ));
+        assert!(
+            matches!(second.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "the second node must not receive a retried command"
+        );
+    }
+
+    #[test]
+    fn a_temporary_rejection_survives_an_expired_budget() {
+        let config = config_with_failover(closed_port(), closed_port(), 100, 1, 1_000);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(30);
+
+        let result: Result<()> = with_registration_budget(&config, deadline, |_, _| {
+            Err(InterServerClientError::Rejected(0x0006_0001))
+        });
+
+        assert!(matches!(
+            result,
+            Err(InterServerClientError::Rejected(0x0006_0001))
+        ));
     }
 
     #[test]
