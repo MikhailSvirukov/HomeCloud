@@ -13,6 +13,7 @@
 
 pub mod catalog;
 pub mod cbor;
+pub mod client;
 pub mod frame;
 pub mod header;
 pub mod heartbeat;
@@ -24,6 +25,7 @@ pub mod topology;
 
 pub use catalog::{CatalogEntry, CatalogError, CatalogPage, CatalogPageRequest};
 pub use cbor::{CborError, Value};
+pub use client::{ClientError, ClientRequest, CredentialLimits, OperationType};
 pub use frame::{Frame, FrameError};
 pub use header::{ExternalFrameHeader, HeaderError};
 pub use heartbeat::{HeartbeatRequest, HeartbeatResponse};

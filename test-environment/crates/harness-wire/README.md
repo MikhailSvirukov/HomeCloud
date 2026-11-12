@@ -23,6 +23,9 @@ cryptographic, or configuration work.
 - `FR-CAT-012/3`, `FR-CAT-013/2`, `INT-NET-080/1` and `TST-025/2`, `TST-026/2`,
   `TST-028/1`, `TST-034/1`, `CFG-CL-032` — the catalog entry row, page answer,
   first and continuation page requests, and byte-bounded source names.
+- `INT-NET-051/3`, `INT-NET-054/1`, `INT-NET-055/2`, `INT-NET-057/1`,
+  `INT-NET-060/1`, `CFG-CL-029` — the authenticated client logical header, the
+  v1 operation table, the login character set, and credential limits.
 
 ## API
 
@@ -49,6 +52,22 @@ cryptographic, or configuration work.
   `CatalogError`; the six-position entry row, the
   `[snapshot_token, next_cursor, entries]` page answer, and the
   `[snapshot_token, cursor]` page request.
+- `harness_wire::client` — `ClientRequest`, `OperationType`, `CredentialLimits`,
+  `ClientError`; the `[operation_type, login, password, args]` client logical
+  header, the operation table, and the credential rules.
+
+## Client logical header
+
+A client request is the four-position array
+`[operation_type, login, password, args]`. Operation type `0` is invalid; `1` is
+account/installation registration, `2` topology retrieval, `3` a catalog-page
+request, and `4` media upload. Login is UTF-8 text restricted to
+`[A-Za-z0-9._-]`; password is UTF-8 text compared as bytes without trimming or
+Unicode normalization. `CredentialLimits` carries the `CFG-CL-029` bounds
+(`V1_DEFAULT`: login `1..=64` bytes, password `8..=1024` bytes); both limits are
+inclusive and measured in encoded UTF-8 bytes. The header enforces the topology
+(empty) and catalog-page argument schemas; registration and upload argument
+schemas come from the normative protocol appendix.
 
 ## Catalog page requests
 
@@ -78,6 +97,9 @@ Callers pass the limits; the crate holds no configuration of its own.
   `TopologyAnswer`/`NodeEntry` encoding and decoding.
 - `CFG-CL-032` source-name limit in UTF-8 bytes — passed to
   `CatalogEntry::to_value`/`from_value` and `CatalogPage::to_args`/`from_args`.
+- `CFG-CL-029` credential limits — a `CredentialLimits` value passed to
+  `ClientRequest::to_args`/`from_args`; `CredentialLimits::V1_DEFAULT` matches
+  the published v1 defaults.
 
 ## Scope
 
@@ -93,6 +115,7 @@ published result code; `tests/inter_server_vectors.rs` pins the envelope,
 heartbeat, and RPC vectors and the registry table; `tests/topology_vectors.rs`
 pins the topology answer, node rows, and canonical host rules;
 `tests/catalog_vectors.rs` pins the catalog entry row, page answers, and page
-requests. Component implementations (Android, dedicated server, distributed
-storage) can consume the same vectors as external conformance tests so that one
-encoding is proven across languages.
+requests; `tests/client_vectors.rs` pins the client logical header, operation
+codes, and credential limits. Component implementations (Android, dedicated
+server, distributed storage) can consume the same vectors as external
+conformance tests so that one encoding is proven across languages.
