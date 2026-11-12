@@ -297,6 +297,14 @@ label = "storage-b"
     }
 
     #[test]
+    fn rejects_non_sequence_storage_value() {
+        let error =
+            manifest_storage_identities("storage = \"x\"").expect_err("manifest is invalid");
+
+        assert!(matches!(error, IdentityError::Manifest(_)));
+    }
+
+    #[test]
     fn rejects_invalid_manifest_uuids() {
         for value in [
             "11111111-1111-4111-8111-11111111111",
@@ -308,6 +316,30 @@ label = "storage-b"
                 Err(IdentityError::InvalidSenderId(_))
             ));
         }
+    }
+
+    #[test]
+    fn accepts_uppercase_uuid_hex() {
+        let uppercase =
+            parse_uuid("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA").expect("uppercase UUID is valid");
+
+        assert_eq!(
+            uppercase,
+            [
+                0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0x4A, 0xAA, 0x8A, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+                0xAA, 0xAA,
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_invalid_uuid_text() {
+        let value = "not-a-uuid";
+
+        assert!(matches!(
+            parse_uuid(value),
+            Err(IdentityError::InvalidSenderId(reported)) if reported == value
+        ));
     }
 
     #[test]
@@ -324,7 +356,9 @@ label = "storage-b"
 
         assert!(matches!(
             manifest_storage_identities(manifest),
-            Err(IdentityError::DuplicateSenderId(id)) if id == [0x11; 16]
+            Err(IdentityError::DuplicateSenderId(id))
+                if id == parse_uuid("11111111-1111-4111-8111-111111111111")
+                    .expect("valid uuid")
         ));
     }
 
