@@ -105,11 +105,42 @@ class PendingUploadExecutorTest {
 
     @Test
     fun `a queue failure is propagated instead of being reported as an upload failure`() {
-        val queue = RecordingUploadQueue(queuedEntry, inFlightFailure = IllegalStateException(QUEUE_FAILED_MESSAGE))
+        val failure = IllegalStateException(QUEUE_FAILED_MESSAGE)
+        val queue = RecordingUploadQueue(queuedEntry, inFlightFailure = failure)
 
-        assertThrows(IllegalStateException::class.java) {
-            executor(queue = queue).execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
-        }
+        assertSame(
+            failure,
+            assertThrows(IllegalStateException::class.java) {
+                executor(queue = queue).execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
+            },
+        )
+    }
+
+    @Test
+    fun `a queue failure while completing is propagated`() {
+        val failure = IllegalStateException(QUEUE_FAILED_MESSAGE)
+        val queue = RecordingUploadQueue(queuedEntry, completionFailure = failure)
+
+        assertSame(
+            failure,
+            assertThrows(IllegalStateException::class.java) {
+                executor(queue = queue).execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
+            },
+        )
+    }
+
+    @Test
+    fun `a queue failure while marking failed is propagated`() {
+        val failure = IllegalStateException(QUEUE_FAILED_MESSAGE)
+        val queue = RecordingUploadQueue(queuedEntry, failedFailure = failure)
+
+        assertSame(
+            failure,
+            assertThrows(IllegalStateException::class.java) {
+                executor(queue = queue, upload = { throw UploadException(UPLOAD_FAILED_MESSAGE) })
+                    .execute(queuedEntry, URI, SERVER_HOST, SERVER_PORT, LOGIN, PASSWORD)
+            },
+        )
     }
 
     @Test
@@ -200,7 +231,7 @@ class PendingUploadExecutorTest {
     @Test
     fun `the entry is in flight before preparation`() {
         val steps = mutableListOf<ExecutedStep>()
-        val queue = RecordingUploadQueue(queuedEntry, inFlightFailure = null, steps = steps)
+        val queue = RecordingUploadQueue(queuedEntry, steps = steps)
         val executor =
             executor(
                 queue = queue,
@@ -337,6 +368,8 @@ class PendingUploadExecutorTest {
     private class RecordingUploadQueue(
         private val entry: UploadQueueEntry,
         private val inFlightFailure: Exception? = null,
+        private val completionFailure: Exception? = null,
+        private val failedFailure: Exception? = null,
         private val steps: MutableList<ExecutedStep> = mutableListOf(),
         private val ids: MutableList<String> = mutableListOf(),
     ) : UploadQueue {
@@ -371,12 +404,14 @@ class PendingUploadExecutorTest {
         }
 
         override fun markCompleted(uploadId: String) {
+            completionFailure?.let { failure -> throw failure }
             ids += uploadId
             steps += ExecutedStep.COMPLETED
             state = UploadQueueState.COMPLETED
         }
 
         override fun markFailed(uploadId: String) {
+            failedFailure?.let { failure -> throw failure }
             ids += uploadId
             steps += ExecutedStep.FAILED
             state = UploadQueueState.FAILED
