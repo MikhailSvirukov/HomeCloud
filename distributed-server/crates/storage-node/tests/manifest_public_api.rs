@@ -9,7 +9,8 @@
 //! fields are rejected. Covers `NFR-SEC-008 / 1`: the manifest carries only
 //! open keys. Covers `FR-CL-015 / 1`, `FR-CL-017 / 1`, and `FR-CL-027 / 1`:
 //! Raft membership is the fixed set of storage nodes from the manifest, and
-//! `INT-NET-071 / 1`: each node's `sender_id` is a unique UUID taken from the manifest.
+//! `INT-NET-071 / 1`: each node's `sender_id` is a unique 16-byte identifier
+//! taken from the manifest.
 
 use std::fs;
 
@@ -17,62 +18,50 @@ use storage_node::{
     ManifestError, MessageSigningKey, RecipientPrivateKey, StaticManifest, MAX_MANIFEST_LABEL_LEN,
 };
 
-const DEDICATED_SENDER_ID: &str = "33333333-3333-4333-8333-333333333333";
+const DEDICATED_SENDER_ID: &str = "33333333333343338333333333333333";
 const DEDICATED_LABEL: &str = "dedicated";
-const DEDICATED_HOST: &str = "127.0.0.3";
-const DEDICATED_PORT: u16 = 7000;
 const DEDICATED_ADDRESS: &str = "127.0.0.3:7000";
 const DEDICATED_X25519_SEED: u8 = 0xC1;
 const DEDICATED_ED25519_SEED: u8 = 0xC2;
 
-const STORAGE_A_SENDER_ID: &str = "11111111-1111-4111-8111-111111111111";
+const STORAGE_A_SENDER_ID: &str = "11111111111141118111111111111111";
 const STORAGE_A_LABEL: &str = "storage-a";
-const STORAGE_A_HOST: &str = "127.0.0.1";
-const STORAGE_A_PORT: u16 = 7001;
 const STORAGE_A_ADDRESS: &str = "127.0.0.1:7001";
 const STORAGE_A_X25519_SEED: u8 = 0xA1;
 const STORAGE_A_ED25519_SEED: u8 = 0xA2;
 
-const STORAGE_B_SENDER_ID: &str = "22222222-2222-4222-8222-222222222222";
+const STORAGE_B_SENDER_ID: &str = "22222222222242228222222222222222";
 const STORAGE_B_LABEL: &str = "storage-b";
-const STORAGE_B_HOST: &str = "127.0.0.2";
-const STORAGE_B_PORT: u16 = 7002;
 const STORAGE_B_ADDRESS: &str = "127.0.0.2:7002";
 const STORAGE_B_X25519_SEED: u8 = 0xB1;
 const STORAGE_B_ED25519_SEED: u8 = 0xB2;
 
-const COLLISION_SENDER_ID_A: &str = "00112233-4455-4677-8899-aabbccddeeff";
-const COLLISION_SENDER_ID_B: &str = "00112233-4455-4677-8899-000000000000";
+const COLLISION_SENDER_ID_A: &str = "00112233445546778899aabbccddeeff";
+const COLLISION_SENDER_ID_B: &str = "00112233445546778899000000000000";
 
-const INVALID_SENDER_ID: &str = "not-a-uuid";
-const DNS_HOST: &str = "storage-a.example";
+const HYPHENATED_SENDER_ID: &str = "33333333-3333-4333-8333-333333333333";
+const UPPERCASE_SENDER_ID: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const INVALID_SENDER_ID: &str = "not-a-sender-id";
+const DNS_ADDRESS: &str = "storage-a.example:7001";
+const ZONE_ADDRESS: &str = "[fe80::1%eth0]:7001";
 const LOCAL_LABEL: &str = "unknown-storage";
 
 struct EntrySpec {
     sender_id: String,
     label: String,
-    host: String,
-    port: u32,
-    x25519_public_key: String,
-    ed25519_public_key: String,
+    address: String,
+    encryption_public_key: String,
+    signing_public_key: String,
 }
 
 impl EntrySpec {
-    fn new(
-        sender_id: &str,
-        label: &str,
-        host: &str,
-        port: u16,
-        x25519_seed: u8,
-        ed25519_seed: u8,
-    ) -> Self {
+    fn new(sender_id: &str, label: &str, address: &str, x25519_seed: u8, ed25519_seed: u8) -> Self {
         Self {
             sender_id: sender_id.to_owned(),
             label: label.to_owned(),
-            host: host.to_owned(),
-            port: u32::from(port),
-            x25519_public_key: key_hex(&recipient_public_key_bytes(x25519_seed)),
-            ed25519_public_key: key_hex(&verifying_key_bytes(ed25519_seed)),
+            address: address.to_owned(),
+            encryption_public_key: key_hex(&recipient_public_key_bytes(x25519_seed)),
+            signing_public_key: key_hex(&verifying_key_bytes(ed25519_seed)),
         }
     }
 }
@@ -98,8 +87,7 @@ fn dedicated_spec() -> EntrySpec {
     EntrySpec::new(
         DEDICATED_SENDER_ID,
         DEDICATED_LABEL,
-        DEDICATED_HOST,
-        DEDICATED_PORT,
+        DEDICATED_ADDRESS,
         DEDICATED_X25519_SEED,
         DEDICATED_ED25519_SEED,
     )
@@ -109,8 +97,7 @@ fn storage_a_spec() -> EntrySpec {
     EntrySpec::new(
         STORAGE_A_SENDER_ID,
         STORAGE_A_LABEL,
-        STORAGE_A_HOST,
-        STORAGE_A_PORT,
+        STORAGE_A_ADDRESS,
         STORAGE_A_X25519_SEED,
         STORAGE_A_ED25519_SEED,
     )
@@ -120,8 +107,7 @@ fn storage_b_spec() -> EntrySpec {
     EntrySpec::new(
         STORAGE_B_SENDER_ID,
         STORAGE_B_LABEL,
-        STORAGE_B_HOST,
-        STORAGE_B_PORT,
+        STORAGE_B_ADDRESS,
         STORAGE_B_X25519_SEED,
         STORAGE_B_ED25519_SEED,
     )
@@ -129,13 +115,12 @@ fn storage_b_spec() -> EntrySpec {
 
 fn render_entry(header: &str, spec: &EntrySpec) -> String {
     format!(
-        "{header}\nsender_id = \"{}\"\nlabel = \"{}\"\nhost = \"{}\"\nport = {}\nx25519_public_key = \"{}\"\ned25519_public_key = \"{}\"\n",
+        "{header}\nsender_id = \"{}\"\nlabel = \"{}\"\naddress = \"{}\"\nencryption_public_key = \"{}\"\nsigning_public_key = \"{}\"\n",
         spec.sender_id,
         spec.label,
-        spec.host,
-        spec.port,
-        spec.x25519_public_key,
-        spec.ed25519_public_key,
+        spec.address,
+        spec.encryption_public_key,
+        spec.signing_public_key,
     )
 }
 
@@ -320,7 +305,7 @@ fn rejects_missing_unknown_duplicate_and_malformed_toml() {
         ManifestError::EmptyStorage
     ));
 
-    let missing_field = valid_manifest().replace("port = 7000\n", "");
+    let missing_field = valid_manifest().replace("address = \"127.0.0.3:7000\"\n", "");
     assert!(matches!(parse_error(&missing_field), ManifestError::Toml));
 
     let unknown_field = format!("{}unknown = \"value\"\n", valid_manifest());
@@ -367,8 +352,7 @@ fn rejects_duplicate_labels_senders_addresses_and_node_id_collisions() {
     ));
 
     let mut duplicate_address = storage_b_spec();
-    duplicate_address.host = STORAGE_A_HOST.to_owned();
-    duplicate_address.port = u32::from(STORAGE_A_PORT);
+    duplicate_address.address = STORAGE_A_ADDRESS.to_owned();
     let source = manifest_text(
         Some(&dedicated_spec()),
         &[storage_a_spec(), duplicate_address],
@@ -377,6 +361,16 @@ fn rejects_duplicate_labels_senders_addresses_and_node_id_collisions() {
         parse_error(&source),
         ManifestError::DuplicateAddress
     ));
+
+    let mut first_ipv6 = storage_a_spec();
+    first_ipv6.address = "[::1]:9001".to_owned();
+    let mut second_ipv6 = storage_b_spec();
+    second_ipv6.address = "[0:0:0:0:0:0:0:1]:9001".to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[first_ipv6, second_ipv6]);
+    assert!(
+        matches!(parse_error(&source), ManifestError::DuplicateAddress),
+        "equivalent IPv6 spellings resolve to the same canonical address"
+    );
 
     let mut first = storage_a_spec();
     first.sender_id = COLLISION_SENDER_ID_A.to_owned();
@@ -390,7 +384,7 @@ fn rejects_duplicate_labels_senders_addresses_and_node_id_collisions() {
 }
 
 #[test]
-fn rejects_invalid_identifiers_keys_hosts_and_labels() {
+fn rejects_invalid_identifiers_keys_addresses_and_labels() {
     let mut invalid_sender = storage_a_spec();
     invalid_sender.sender_id = INVALID_SENDER_ID.to_owned();
     let source = manifest_text(Some(&dedicated_spec()), &[invalid_sender]);
@@ -399,8 +393,24 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
         ManifestError::InvalidSenderId
     ));
 
+    let mut hyphenated_sender = storage_a_spec();
+    hyphenated_sender.sender_id = HYPHENATED_SENDER_ID.to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[hyphenated_sender]);
+    assert!(
+        matches!(parse_error(&source), ManifestError::InvalidSenderId),
+        "a hyphenated UUID is not a 32-character sender id"
+    );
+
+    let mut uppercase_sender = storage_a_spec();
+    uppercase_sender.sender_id = UPPERCASE_SENDER_ID.to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[uppercase_sender]);
+    assert!(
+        matches!(parse_error(&source), ManifestError::InvalidSenderId),
+        "uppercase hexadecimal is not canonical"
+    );
+
     let mut short_key = storage_a_spec();
-    short_key.x25519_public_key = "a".repeat(63);
+    short_key.encryption_public_key = "a".repeat(63);
     let source = manifest_text(Some(&dedicated_spec()), &[short_key]);
     assert!(matches!(
         parse_error(&source),
@@ -408,7 +418,7 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
     ));
 
     let mut non_hex_key = storage_a_spec();
-    non_hex_key.x25519_public_key = "z".repeat(64);
+    non_hex_key.encryption_public_key = "z".repeat(64);
     let source = manifest_text(Some(&dedicated_spec()), &[non_hex_key]);
     assert!(matches!(
         parse_error(&source),
@@ -416,33 +426,35 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
     ));
 
     let mut invalid_ed25519 = storage_a_spec();
-    invalid_ed25519.ed25519_public_key = format!("02{}", "00".repeat(31));
+    invalid_ed25519.signing_public_key = format!("02{}", "00".repeat(31));
     let source = manifest_text(Some(&dedicated_spec()), &[invalid_ed25519]);
     assert!(matches!(
         parse_error(&source),
         ManifestError::InvalidPublicKey
     ));
 
-    let mut dns_host = storage_a_spec();
-    dns_host.host = DNS_HOST.to_owned();
-    let source = manifest_text(Some(&dedicated_spec()), &[dns_host]);
+    let mut dns_address = storage_a_spec();
+    dns_address.address = DNS_ADDRESS.to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[dns_address]);
     assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
 
-    let mut zone_host = storage_a_spec();
-    zone_host.host = "fe80::1%eth0".to_owned();
-    let source = manifest_text(Some(&dedicated_spec()), &[zone_host]);
+    let mut zone_address = storage_a_spec();
+    zone_address.address = ZONE_ADDRESS.to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[zone_address]);
     assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
 
     let mut overflow_port = storage_a_spec();
-    overflow_port.port = 70_000;
+    overflow_port.address = "127.0.0.1:70000".to_owned();
     let source = manifest_text(Some(&dedicated_spec()), &[overflow_port]);
-    assert!(matches!(parse_error(&source), ManifestError::Toml));
+    assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
 
-    let negative_port = valid_manifest().replace("port = 7001", "port = -1");
-    assert!(matches!(parse_error(&negative_port), ManifestError::Toml));
+    let mut negative_port = storage_a_spec();
+    negative_port.address = "127.0.0.1:-1".to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[negative_port]);
+    assert!(matches!(parse_error(&source), ManifestError::InvalidHost));
 
     let mut zero_port = storage_a_spec();
-    zero_port.port = 0;
+    zero_port.address = "127.0.0.1:0".to_owned();
     let source = manifest_text(Some(&dedicated_spec()), &[zero_port]);
     assert!(matches!(parse_error(&source), ManifestError::InvalidPort));
 
@@ -455,6 +467,55 @@ fn rejects_invalid_identifiers_keys_hosts_and_labels() {
     oversized_label.label = "a".repeat(MAX_MANIFEST_LABEL_LEN + 1);
     let source = manifest_text(Some(&dedicated_spec()), &[oversized_label]);
     assert!(matches!(parse_error(&source), ManifestError::InvalidLabel));
+}
+
+#[test]
+fn rejects_the_old_manifest_schema() {
+    let old_host_and_port = valid_manifest().replace(
+        "address = \"127.0.0.3:7000\"\n",
+        "host = \"127.0.0.3\"\nport = 7000\n",
+    );
+    assert!(
+        matches!(parse_error(&old_host_and_port), ManifestError::Toml),
+        "separate host and port keys are unknown fields"
+    );
+
+    let old_key_names = valid_manifest()
+        .replace("encryption_public_key", "x25519_public_key")
+        .replace("signing_public_key", "ed25519_public_key");
+    assert!(
+        matches!(parse_error(&old_key_names), ManifestError::Toml),
+        "the old public-key names are unknown fields"
+    );
+}
+
+#[test]
+fn parses_compact_sender_ids_and_canonicalizes_ipv6_addresses() {
+    let mut storage = storage_a_spec();
+    storage.sender_id = "0123456789abcdef0123456789abcdef".to_owned();
+    storage.address = "[0:0:0:0:0:0:0:1]:9001".to_owned();
+    let source = manifest_text(Some(&dedicated_spec()), &[storage]);
+
+    let manifest = StaticManifest::parse(&source).expect("the IPv6 manifest parses");
+    let entry = &manifest.storage[0];
+    assert_eq!(
+        entry.sender_id,
+        [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+            0xcd, 0xef,
+        ]
+    );
+    assert_eq!(entry.node_id(), 0x0123_4567_89ab_cdef);
+    assert_eq!(entry.address.to_string(), "[::1]:9001");
+
+    let voters = manifest
+        .voting_members()
+        .expect("the storage entry forms a voter set");
+    assert_eq!(
+        voters.get(&entry.node_id()).map(String::as_str),
+        Some("[::1]:9001"),
+        "the voter view renders the canonical address"
+    );
 }
 
 #[test]

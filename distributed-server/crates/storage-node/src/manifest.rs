@@ -2,10 +2,11 @@
 //!
 //! SRS: `CFG-CL-001 / 1`–`CFG-CL-005 / 1`, `CFG-CL-021 / 1`,
 //! `CFG-CL-034 / 2`, `CFG-CL-038 / 1`, `FR-CL-015 / 1`,
-//! `FR-CL-017 / 1`, `FR-CL-027 / 1`, `INT-NET-071 / 1`, `NFR-SEC-008 / 1`.
+//! `FR-CL-017 / 1`, `FR-CL-027 / 1`, `INT-NET-070 / 6`,
+//! `INT-NET-071 / 1`, `NFR-SEC-008 / 1`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -18,23 +19,14 @@ use crate::signing::MessageVerifyingKey;
 /// Fallible manifest operation result.
 type Result<T> = core::result::Result<T, ManifestError>;
 
-/// Maximum accepted label length in UTF-8 bytes.
+/// Absolute accepted label length in UTF-8 bytes until the configured limit is applied.
 pub const MAX_MANIFEST_LABEL_LEN: usize = 4096;
 
 /// Sender identifier length in bytes.
 const SENDER_ID_LEN: usize = 16;
 
-/// Hyphenated sender identifier text length.
-const SENDER_ID_TEXT_LEN: usize = 36;
-
-/// Compact sender identifier text length.
-const SENDER_ID_COMPACT_LEN: usize = 32;
-
 /// Public key length in bytes.
 const PUBLIC_KEY_LEN: usize = 32;
-
-/// Positions of the hyphens in a hyphenated sender identifier.
-const SENDER_ID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// One trusted server entry from the static manifest.
 pub struct ManifestEntry {
@@ -149,17 +141,17 @@ pub enum ManifestError {
     /// A label is empty or too long.
     #[error("the manifest label is empty or too long")]
     InvalidLabel,
-    /// A sender identifier is not a 16-byte UUID.
-    #[error("the manifest sender id is not a 16-byte UUID")]
+    /// A sender identifier is not exactly 32 lowercase hexadecimal characters.
+    #[error("the manifest sender id is not 32 lowercase hexadecimal characters")]
     InvalidSenderId,
-    /// A public key is not 32 bytes of hex or not a valid curve point.
-    #[error("the manifest public key is not 32 bytes of hex")]
+    /// A public key is not exactly 64 lowercase hexadecimal characters or not a valid curve point.
+    #[error("the manifest public key is not 64 lowercase hexadecimal characters")]
     InvalidPublicKey,
-    /// A host is not an IP literal.
-    #[error("the manifest host is not a canonical IP literal")]
+    /// An address is not an IP literal with a port.
+    #[error("the manifest address is not an IP literal with a port")]
     InvalidHost,
-    /// A port is zero.
-    #[error("the manifest port is zero")]
+    /// An address port is zero.
+    #[error("the manifest address port is zero")]
     InvalidPort,
     /// Two entries share a label.
     #[error("duplicate manifest label")]
@@ -193,10 +185,9 @@ struct ManifestFile {
 struct NodeEntry {
     sender_id: String,
     label: String,
-    host: String,
-    port: u16,
-    x25519_public_key: String,
-    ed25519_public_key: String,
+    address: String,
+    encryption_public_key: String,
+    signing_public_key: String,
 }
 
 impl NodeEntry {
@@ -205,19 +196,17 @@ impl NodeEntry {
             return Err(ManifestError::InvalidLabel);
         }
         let sender_id = parse_sender_id(&self.sender_id)?;
-        if self.port == 0 {
+        let address = self
+            .address
+            .parse::<SocketAddr>()
+            .map_err(|_| ManifestError::InvalidHost)?;
+        if address.port() == 0 {
             return Err(ManifestError::InvalidPort);
         }
-        let address = SocketAddr::new(
-            self.host
-                .parse::<IpAddr>()
-                .map_err(|_| ManifestError::InvalidHost)?,
-            self.port,
-        );
-        let x25519_public_key = parse_public_key(&self.x25519_public_key)?;
+        let x25519_public_key = parse_public_key(&self.encryption_public_key)?;
         RecipientPublicKey::from_bytes(&x25519_public_key)
             .map_err(|_| ManifestError::InvalidPublicKey)?;
-        let ed25519_public_key = parse_public_key(&self.ed25519_public_key)?;
+        let ed25519_public_key = parse_public_key(&self.signing_public_key)?;
         MessageVerifyingKey::from_bytes(ed25519_public_key)
             .map_err(|_| ManifestError::InvalidPublicKey)?;
         Ok(ManifestEntry {
@@ -255,33 +244,7 @@ fn check_unique(dedicated: &ManifestEntry, storage: &[ManifestEntry]) -> Result<
 }
 
 fn parse_sender_id(text: &str) -> Result<[u8; SENDER_ID_LEN]> {
-    let bytes = text.as_bytes();
-    let compact = if bytes.len() == SENDER_ID_TEXT_LEN {
-        compact_sender_id(bytes).ok_or(ManifestError::InvalidSenderId)?
-    } else if bytes.len() == SENDER_ID_COMPACT_LEN {
-        let mut compact = [0u8; SENDER_ID_COMPACT_LEN];
-        compact.copy_from_slice(bytes);
-        compact
-    } else {
-        return Err(ManifestError::InvalidSenderId);
-    };
-    decode_hex::<SENDER_ID_LEN>(&compact).ok_or(ManifestError::InvalidSenderId)
-}
-
-fn compact_sender_id(bytes: &[u8]) -> Option<[u8; SENDER_ID_COMPACT_LEN]> {
-    let mut compact = [0u8; SENDER_ID_COMPACT_LEN];
-    let mut next = 0;
-    for (index, byte) in bytes.iter().enumerate() {
-        if SENDER_ID_HYPHENS.contains(&index) {
-            if *byte != b'-' {
-                return None;
-            }
-        } else {
-            compact[next] = *byte;
-            next += 1;
-        }
-    }
-    Some(compact)
+    decode_hex::<SENDER_ID_LEN>(text.as_bytes()).ok_or(ManifestError::InvalidSenderId)
 }
 
 fn parse_public_key(text: &str) -> Result<[u8; PUBLIC_KEY_LEN]> {
@@ -305,7 +268,6 @@ fn hex_digit(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
 }

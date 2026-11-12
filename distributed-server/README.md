@@ -322,35 +322,38 @@ exactly one `[dedicated]` table and one or more `[[storage]]` tables:
 
 ```toml
 [dedicated]
-sender_id = "33333333-3333-4333-8333-333333333333"
+sender_id = "33333333333343338333333333333333"
 label = "dedicated"
-host = "192.0.2.10"
-port = 7000
-x25519_public_key = "<64 hex characters>"
-ed25519_public_key = "<64 hex characters>"
+address = "192.0.2.10:7000"
+encryption_public_key = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+signing_public_key = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 
 [[storage]]
-sender_id = "11111111-1111-4111-8111-111111111111"
+sender_id = "11111111111141118111111111111111"
 label = "storage-a"
-host = "192.0.2.11"
-port = 7001
-x25519_public_key = "<64 hex characters>"
-ed25519_public_key = "<64 hex characters>"
+address = "192.0.2.11:7001"
+encryption_public_key = "1111111111111111111111111111111111111111111111111111111111111111"
+signing_public_key = "2222222222222222222222222222222222222222222222222222222222222222"
 ```
 
-Every entry has the same six fields. `sender_id` is the node's stable UUID, `host` is
-an IP literal, `port` is a non-zero TCP port, and the two keys are 32-byte open keys
-written as 64 hexadecimal characters. The manifest contains only open keys; each
-component keeps its own private keys in separately configured files.
+Every entry has the same five fields. `sender_id` is exactly 32 lowercase hexadecimal
+characters (16 bytes) and is the node's stable identifier. `address` is an IP literal
+and TCP port such as `192.0.2.11:7100`; a DNS name, an IPv6 zone identifier and a port
+outside `1..=65535` are rejected. The two keys are 32-byte open keys written as exactly
+64 lowercase hexadecimal characters. Identifiers and keys are never normalised, so
+uppercase hexadecimal is rejected. The manifest contains only open keys; each component
+keeps its own private keys in separately configured files.
 
 Validation covers the whole file before a validated manifest is returned. Missing
-`[dedicated]`, missing or empty `[[storage]]`, missing or unknown fields, duplicate
-fields, malformed TOML, malformed UUIDs, keys that are not 64 hex characters, DNS host
-names, zero ports, labels that are empty or longer than `MAX_MANIFEST_LABEL_LEN`,
-duplicate labels, duplicate sender ids, duplicate addresses, and two different UUIDs
-that map to the same Raft node id are rejected. A manifest error is returned to the
-caller, which must stop startup before opening any listener; the diagnostic does not
-contain private keys.
+`[dedicated]`, missing or empty `[[storage]]`, missing, unknown or duplicate fields or
+sections, malformed TOML, sender ids that are not exactly 32 lowercase hexadecimal
+characters, keys that are not exactly 64 lowercase hexadecimal characters, DNS names,
+zero ports, labels that are empty or longer than `MAX_MANIFEST_LABEL_LEN`, duplicate
+labels, duplicate sender ids, duplicate addresses, and two sender ids that map to the
+same Raft node id are rejected. `MAX_MANIFEST_LABEL_LEN` is the absolute 4096-byte
+limit; the configured `max_label_bytes` is not applied to this check yet. A manifest
+error is returned to the caller, which must stop startup before opening any listener;
+the diagnostic does not contain private keys.
 
 `StaticManifest::local(label)` resolves only a storage entry, by its label; the
 dedicated server and unknown labels return `LocalNotFound`. `peer_directory` builds
