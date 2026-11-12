@@ -1123,7 +1123,7 @@ mod tests {
             .local_addr()
             .expect("the listener must have an address")
             .port();
-        let config = config_with_failover(port, 3, 1, 5_000);
+        let config = config_with_failover(port, 4, 1, 5_000);
         let temporary = MockResponse {
             sender_id: Some(node_two().sender_id),
             responder_label: Some(node_two().label.to_owned()),
