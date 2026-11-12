@@ -82,12 +82,14 @@ pub enum WireError {
         position: usize,
     },
     /// A byte string has a different length than the schema fixes.
-    #[error("{header} element {position} must be {expected} bytes long")]
+    #[error("{header} element {position} must be {expected} bytes long, got {actual}")]
     ByteStringLength {
         /// Header being decoded.
         header: &'static str,
         /// One-based element position.
         position: usize,
+        /// Observed byte length.
+        actual: usize,
         /// Required byte length.
         expected: usize,
     },
@@ -175,6 +177,18 @@ pub enum WireError {
         operation: ClientOperation,
         /// Zero-based argument index.
         index: usize,
+    },
+    /// An operation argument is a byte string of the wrong length.
+    #[error("operation {operation:?} argument {index} is {actual} bytes, expected {expected}")]
+    WrongArgumentByteLength {
+        /// Operation whose schema is fixed.
+        operation: ClientOperation,
+        /// Zero-based argument index.
+        index: usize,
+        /// Observed byte-string length.
+        actual: usize,
+        /// Length the schema fixes.
+        expected: usize,
     },
     /// A response answer carries an unexpected result code.
     #[error("unexpected result code {0} in a success answer")]
@@ -793,6 +807,14 @@ fn require_length(elements: &[Value], header: &'static str, expected: usize) -> 
 fn argument_error(operation: ClientOperation, index: usize) -> impl Fn(WireError) -> WireError {
     move |error| match error {
         WireError::WrongType { .. } => WireError::WrongArgumentType { operation, index },
+        WireError::ByteStringLength {
+            actual, expected, ..
+        } => WireError::WrongArgumentByteLength {
+            operation,
+            index,
+            actual,
+            expected,
+        },
         other => other,
     }
 }
@@ -875,6 +897,7 @@ fn fixed_bytes<const N: usize>(
                 .map_err(|_| WireError::ByteStringLength {
                     header,
                     position,
+                    actual: bytes.len(),
                     expected: N,
                 })
         }
@@ -2076,6 +2099,57 @@ mod tests {
             header
         );
     }
+    #[test]
+    fn a_registration_argument_with_a_short_key_names_the_argument() {
+        let value = Value::Array(vec![
+            Value::Integer(1.into()),
+            Value::Text("alice".to_owned()),
+            Value::Text("secret-password".to_owned()),
+            Value::Array(vec![
+                Value::Bytes(vec![0x11; IDENTIFIER_BYTES]),
+                Value::Bytes(vec![0x22; KEY_BYTES]),
+            ]),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &header_limits()),
+            Err(WireError::WrongArgumentByteLength {
+                operation: ClientOperation::Registration,
+                index: 0,
+                actual: 16,
+                expected: 32
+            })
+        ));
+    }
+
+    #[test]
+    fn an_upload_argument_with_a_short_hash_names_the_argument() {
+        let value = Value::Array(vec![
+            Value::Integer(4.into()),
+            Value::Text("alice".to_owned()),
+            Value::Text("secret-password".to_owned()),
+            Value::Array(vec![
+                Value::Text("photo.jpg".to_owned()),
+                Value::Integer(1.into()),
+                Value::Integer(1_000.into()),
+                Value::Integer(500.into()),
+                Value::Bytes(vec![0x99; IDENTIFIER_BYTES]),
+            ]),
+        ]);
+        let bytes = encode_value(&value).expect("encoding must work");
+
+        assert!(matches!(
+            ClientHeader::decode(&bytes, &header_limits()),
+            Err(WireError::WrongArgumentByteLength {
+                operation: ClientOperation::Upload,
+                index: 4,
+                actual: 16,
+                expected: 32
+            })
+        ));
+    }
+
     #[test]
     fn a_byte_string_of_the_wrong_length_is_rejected() {
         let value = Value::Array(vec![
