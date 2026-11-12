@@ -5,7 +5,8 @@
 //! A publish version is accepted only for a coordinator in the fixed voter set
 //! with a unique durable replica list that contains the coordinator and a strict
 //! majority of the voters. A repeated committed upload id returns the stored
-//! version only when its metadata is identical. Replica status is accepted only
+//! version only when its protocol metadata is identical; the local acceptance time
+//! is not part of a publish command. Replica status is accepted only
 //! for a fixed voter and an existing committed upload whose login and SHA-256
 //! match; the `available` flag is carried through without interpretation.
 
@@ -99,7 +100,8 @@ pub enum ReplicationError {
 /// an unknown or repeated replica, and a non-majority replica set are rejected
 /// before the repeated upload id is compared. A covered upload id with identical
 /// metadata returns the stored version; different metadata is a conflict. A new
-/// upload id commits the supplied record with the unique replica set.
+/// upload id commits the supplied record with the unique replica set. The local
+/// `accepted_at_ms` is not part of the publish command and is ignored on replay.
 pub fn validate_publish_version(
     command: &PublishVersion,
     voters: &BTreeSet<NodeId>,
@@ -129,7 +131,7 @@ pub fn validate_publish_version(
     }
 
     if let Some(version) = existing {
-        if version.record == command.record {
+        if same_publish_metadata(&version.record, &command.record) {
             return Ok(version.clone());
         }
         return Err(ReplicationError::MetadataConflict);
@@ -138,6 +140,17 @@ pub fn validate_publish_version(
         record: command.record.clone(),
         replicas: unique_replicas,
     })
+}
+
+/// Compares the publish-command metadata, excluding the local acceptance time.
+fn same_publish_metadata(existing: &UploadRecord, candidate: &UploadRecord) -> bool {
+    existing.upload_id == candidate.upload_id
+        && existing.login == candidate.login
+        && existing.original_name == candidate.original_name
+        && existing.size_bytes == candidate.size_bytes
+        && existing.compressed_size_bytes == candidate.compressed_size_bytes
+        && existing.content_hash == candidate.content_hash
+        && existing.captured_at_ms == candidate.captured_at_ms
 }
 
 /// Validates a replica status against the fixed voter set and the existing

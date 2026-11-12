@@ -59,6 +59,19 @@ fn accepts_the_coordinator_and_a_strict_majority() {
 }
 
 #[test]
+fn accepts_a_strict_majority_of_an_even_voter_set() {
+    let command = PublishVersion {
+        record: record(upload_id(2)),
+        coordinator: 1,
+        replicas: vec![1, 2, 3],
+    };
+
+    let committed = validate_publish_version(&command, &voters(&[1, 2, 3, 4]), None)
+        .expect("three of four voters form a strict majority");
+    assert_eq!(committed.replicas, voters(&[1, 2, 3]));
+}
+
+#[test]
 fn rejects_an_empty_voter_set_and_an_unknown_coordinator() {
     let command = PublishVersion {
         record: record(upload_id(2)),
@@ -140,6 +153,31 @@ fn replays_identical_metadata_and_rejects_a_metadata_conflict() {
     assert_eq!(
         validate_publish_version(&replay, &voters(&[1, 2, 3]), Some(&existing)),
         Ok(existing.clone())
+    );
+
+    let local_acceptance_changed = PublishVersion {
+        record: UploadRecord::new(
+            upload_id(1),
+            FIXED_LOGIN,
+            FIXED_SOURCE_NAME,
+            100,
+            50,
+            ContentHash::digest(FIXED_PAYLOAD),
+            1_690_000_000_000,
+            1_700_000_000_999,
+        )
+        .expect("the replay record is structurally valid"),
+        coordinator: 1,
+        replicas: vec![1, 3],
+    };
+    assert_eq!(
+        validate_publish_version(
+            &local_acceptance_changed,
+            &voters(&[1, 2, 3]),
+            Some(&existing)
+        ),
+        Ok(existing.clone()),
+        "a retry with only a new local acceptance time returns the committed version"
     );
 
     let renamed = PublishVersion {

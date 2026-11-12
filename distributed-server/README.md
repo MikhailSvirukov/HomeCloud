@@ -393,9 +393,10 @@ voter set is non-empty, the coordinator belongs to it, every listed durable
 replica is a fixed voter, no replica repeats, and the unique replicas include the
 coordinator and form a strict majority of the voters. A strict majority is more
 than half, so an even-sized voter set still requires more than half. A committed
-upload id is idempotent: replaying the same record returns the stored
-`CommittedVersion` unchanged, while a different record for that upload id is a
-`MetadataConflict`. A new upload id commits the supplied record with its unique
+upload id is idempotent: replaying identical protocol metadata returns the stored
+`CommittedVersion` unchanged (the retry's local acceptance time and replica list
+do not change the committed result), while different metadata for that upload id
+is a `MetadataConflict`. A new upload id commits the supplied record with its unique
 replica set.
 
 `validate_replica_status` accepts a status only for a fixed voter and an already
