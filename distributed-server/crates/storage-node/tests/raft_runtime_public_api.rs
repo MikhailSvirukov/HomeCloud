@@ -564,6 +564,10 @@ async fn records_a_valid_replica_status_and_replays_idempotently() {
         .replica_status(status.clone())
         .await
         .expect("a fixed voter reports a matching committed upload");
+    let applied_after_status = runtime
+        .node()
+        .last_applied_index()
+        .expect("the status is applied");
     runtime
         .replica_status(status)
         .await
@@ -573,6 +577,11 @@ async fn records_a_valid_replica_status_and_replays_idempotently() {
         runtime.node().committed_versions().await,
         catalog_before,
         "replica status entries leave the committed catalog unchanged"
+    );
+    assert_eq!(
+        runtime.node().last_applied_index(),
+        Some(applied_after_status),
+        "an identical status replay does not append another Raft entry"
     );
 }
 
