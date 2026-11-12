@@ -93,6 +93,7 @@ pub struct ServerConfig {
     /// The dedicated server's own entry in the trusted static manifest.
     pub(crate) dedicated: ManifestEntry,
     /// Storage entries of the trusted static manifest, in manifest order.
+    #[serde(default)]
     pub(crate) storage: Vec<ManifestEntry>,
 }
 
