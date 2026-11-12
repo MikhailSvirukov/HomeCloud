@@ -625,6 +625,25 @@ keeps running until its shutdown signal resolves. The node runtime does not star
 the loop yet; it becomes active when the runtime exposes the committed catalog
 source.
 
+## Runtime contract and container image
+
+[`RUNTIME_CONTRACT.md`](RUNTIME_CONTRACT.md) is the stable public contract for
+the test environment: image layout, process supervision, readiness, bootstrap,
+configuration and data locations, and the public Rust surface. The image is
+built from the repository root:
+
+```sh
+docker build -f distributed-server/Dockerfile .
+```
+
+The non-root image runs `/usr/local/bin/storage-node-entrypoint` as PID 1. It
+starts `storage-node` as a child, restarts a non-zero child exit after
+`STORAGE_NODE_RESTART_DELAY_SECONDS` (default `1`), forwards `SIGTERM`/`SIGINT`
+to the child, and exits when the child exits cleanly. Readiness is a successful
+TCP connect to `LISTEN_ADDR`; there is no HTTP health endpoint. Positional
+arguments after the image name replace the supervisor. See the contract for
+bootstrap, mounted manifest/key/data paths, and test-environment examples.
+
 ## Build and test
 
 The CI script is run by GitHub Actions for pull requests. OpenCode agents add

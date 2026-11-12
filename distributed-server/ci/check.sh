@@ -7,6 +7,8 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 workspace_root="$(cd -- "${script_dir}/.." && pwd)"
 cd -- "${workspace_root}"
 
+bash "${script_dir}/entrypoint-check.sh"
+
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features
