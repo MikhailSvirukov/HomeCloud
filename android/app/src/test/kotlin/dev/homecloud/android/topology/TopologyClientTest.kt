@@ -15,6 +15,13 @@ import dev.homecloud.android.protocol.ResultEnvelope
 import dev.homecloud.android.protocol.ResultEnvelopeCodec
 import dev.homecloud.android.protocol.TopologyCodec
 import dev.homecloud.android.protocol.TopologyNode
+import dev.homecloud.android.testsupport.AbsentIdentityStore
+import dev.homecloud.android.testsupport.FailingReadFrameChannel
+import dev.homecloud.android.testsupport.FixedIdentityStore
+import dev.homecloud.android.testsupport.RespondingFrameChannel
+import dev.homecloud.android.testsupport.requireValue
+import dev.homecloud.android.testsupport.unusedChannel
+import dev.homecloud.android.testsupport.uuidBytes
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,8 +30,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
-import java.nio.ByteBuffer
-import java.util.UUID
 
 /**
  * Asserts the dedicated-server topology exchange of `INT-NET-025`, `INT-NET-034`, `INT-NET-060`,
@@ -272,7 +277,8 @@ class TopologyClientTest {
         channelFactory: (String, Int) -> FrameChannel,
     ): TopologyClient = TopologyClient(store, channelFactory, MAX_FRAME_BYTES, maxLabelBytes)
 
-    private fun respondingChannel(respond: (request: ByteArray) -> ByteArray): RespondingFrameChannel = RespondingFrameChannel(respond)
+    private fun respondingChannel(respond: (request: ByteArray) -> ByteArray): RespondingFrameChannel =
+        RespondingFrameChannel { writes -> respond(writes.last()) }
 
     private fun decodeWrittenRequest(request: ByteArray): DecodedRequest {
         val decoded =
@@ -347,13 +353,6 @@ class TopologyClientTest {
         assertArrayEquals(expected.ed25519PublicKey, actual.ed25519PublicKey)
     }
 
-    private fun <T : Any> requireValue(
-        value: T?,
-        message: String,
-    ): T = value ?: throw AssertionError(message)
-
-    private fun unusedChannel(): FrameChannel = RespondingFrameChannel { throw AssertionError("the channel must not be opened") }
-
     private data class DecodedRequest(
         val header: ExternalFrameHeader,
         val logicalBytes: ByteArray,
@@ -386,71 +385,3 @@ class TopologyClientTest {
         val DIFFERENT_REQUEST_ID = uuidBytes("a3b2c1d0-e4f5-4678-9abc-def012345678")
     }
 }
-
-/** In-memory identity store that always produces the same identity. */
-private class FixedIdentityStore(
-    private val stored: InstallationIdentity,
-) : InstallationIdentityStore {
-    override fun load(): InstallationIdentity = stored
-
-    override fun save(identity: InstallationIdentity) = Unit
-}
-
-/** In-memory identity store that holds no installation identity. */
-private class AbsentIdentityStore : InstallationIdentityStore {
-    override fun load(): InstallationIdentity? = null
-
-    override fun save(identity: InstallationIdentity) = Unit
-}
-
-/** Frame channel that builds its response from the frame just written and records every write. */
-private class RespondingFrameChannel(
-    private val respond: (request: ByteArray) -> ByteArray,
-) : FrameChannel {
-    val writes = mutableListOf<ByteArray>()
-    var closed = false
-        private set
-    private var response: ByteArray? = null
-
-    override fun write(frame: ByteArray) {
-        writes += frame.copyOf()
-        response = respond(frame)
-    }
-
-    override fun read(): ByteArray = response ?: throw AssertionError(NO_RESPONSE_MESSAGE)
-
-    override fun close() {
-        closed = true
-    }
-
-    private companion object {
-        const val NO_RESPONSE_MESSAGE = "no response was scripted"
-    }
-}
-
-/** Frame channel that records its close flag while every read fails with the scripted failure. */
-private class FailingReadFrameChannel(
-    private val failure: IOException,
-) : FrameChannel {
-    var closed = false
-        private set
-
-    override fun write(frame: ByteArray) = Unit
-
-    override fun read(): ByteArray = throw failure
-
-    override fun close() {
-        closed = true
-    }
-}
-
-private fun uuidBytes(value: String): ByteArray {
-    val uuid = UUID.fromString(value)
-    return ByteBuffer
-        .allocate(UUID_BYTES)
-        .putLong(uuid.mostSignificantBits)
-        .putLong(uuid.leastSignificantBits)
-        .array()
-}
-
-private const val UUID_BYTES = 16
