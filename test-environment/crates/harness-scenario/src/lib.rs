@@ -8,6 +8,7 @@
 
 mod catalogue;
 mod checks;
+mod identity;
 mod scenario;
 mod spec;
 
@@ -17,6 +18,10 @@ pub use catalogue::{
 pub use checks::{
     AllNodesRunning, FaultActive, NoActiveFaults, NodeRunning, NodeStopped, QuorumLost,
     StorageQuorumHeld,
+};
+pub use identity::{
+    IdentityError, NodeIdentity, manifest_storage_identities, verify_message_sender,
+    verify_topology_identities,
 };
 pub use scenario::{
     Action, Scenario, ScenarioBuilder, ScenarioCheck, ScenarioContext, ScenarioReport,
