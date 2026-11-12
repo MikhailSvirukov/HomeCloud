@@ -13,6 +13,8 @@ use crate::storage_layout::{LayoutError, StorageLayout};
 
 /// Capacity hint for the empty transfer buffer; the declared size is not preallocated.
 const INITIAL_TRANSFER_CAPACITY: usize = 64 * 1024;
+/// Standard Zstandard frame magic in byte order.
+const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
 /// Result alias for replica receiving.
 type Result<T> = core::result::Result<T, ReplicaError>;
@@ -26,6 +28,9 @@ pub enum ReplicaError {
     /// A size or accumulation exceeds its declared or configured bound.
     #[error("the transfer stream exceeds its declared size")]
     Overflow,
+    /// The declared transfer size is outside `1..=B(original_size)`.
+    #[error("the transfer size is outside the declared bound")]
+    TransferBound,
     /// The transfer stream is not one complete Zstandard frame.
     #[error("the transfer stream could not be decompressed")]
     Decompress,
@@ -64,8 +69,13 @@ impl fmt::Debug for BlobReplicaReceiver {
 impl BlobReplicaReceiver {
     /// Starts a receiver after checking the declared transfer and local size bounds.
     pub fn new(begin: BlobPutBegin, layout: StorageLayout, max_file_bytes: u64) -> Result<Self> {
-        if begin.transfer_compressed_size == 0 {
-            return Err(ReplicaError::Truncated);
+        let Some(transfer_bound) =
+            crate::blob_put::transfer_size_bound(begin.metadata.original_size_bytes)
+        else {
+            return Err(ReplicaError::Overflow);
+        };
+        if begin.transfer_compressed_size == 0 || begin.transfer_compressed_size > transfer_bound {
+            return Err(ReplicaError::TransferBound);
         }
         if begin.metadata.original_size_bytes > max_file_bytes
             || begin.metadata.compressed_size_bytes > max_file_bytes
@@ -110,6 +120,16 @@ impl BlobReplicaReceiver {
         let original_size = usize::try_from(self.begin.metadata.original_size_bytes)
             .map_err(|_| ReplicaError::Overflow)?;
         let capacity = original_size.checked_add(1).ok_or(ReplicaError::Overflow)?;
+        if self.compressed.len() < ZSTD_FRAME_MAGIC.len()
+            || self.compressed[..ZSTD_FRAME_MAGIC.len()] != ZSTD_FRAME_MAGIC
+        {
+            return Err(ReplicaError::Decompress);
+        }
+        let frame_len = zstd::zstd_safe::find_frame_compressed_size(&self.compressed)
+            .map_err(|_| ReplicaError::Decompress)?;
+        if frame_len != self.compressed.len() {
+            return Err(ReplicaError::Decompress);
+        }
         let decompressed = zstd::bulk::decompress(&self.compressed, capacity)
             .map_err(|_| ReplicaError::Decompress)?;
 

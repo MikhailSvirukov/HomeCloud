@@ -280,3 +280,98 @@ fn debug_does_not_print_payload() {
         "compact Debug output does not include the buffered transfer bytes"
     );
 }
+
+#[test]
+fn rejects_multi_frame_skippable_and_dictionary_streams() {
+    let temp = TempDir::new().expect("temp directory is created");
+    let layout = StorageLayout::new(temp.path());
+
+    let mut concatenated = compressed(PAYLOAD);
+    concatenated.extend(compressed(b"second frame"));
+    let mut multi = receiver(
+        &layout,
+        put_begin(metadata_for(PAYLOAD), concatenated.len() as u64),
+    );
+    multi
+        .push(&concatenated)
+        .expect("the concatenated test stream is accepted into the buffer");
+    assert!(matches!(multi.finish(), Err(ReplicaError::Decompress)));
+
+    let skippable = [0x50, 0x2A, 0x4D, 0x18, 0, 0, 0, 0];
+    let empty_metadata = BlobMetadata {
+        source_name: SOURCE_NAME.to_owned(),
+        timestamp_ms: TIMESTAMP_MS,
+        original_size_bytes: 0,
+        compressed_size_bytes: 0,
+        sha256: ContentHash::digest(&[]),
+    };
+    let mut skippable_receiver =
+        receiver(&layout, put_begin(empty_metadata, skippable.len() as u64));
+    skippable_receiver
+        .push(&skippable)
+        .expect("the skippable test bytes are accepted into the buffer");
+    assert!(matches!(
+        skippable_receiver.finish(),
+        Err(ReplicaError::Decompress)
+    ));
+
+    let mut compressor = zstd::bulk::Compressor::with_dictionary(
+        ZSTD_COMPRESSION_LEVEL,
+        b"homecloud-test-dictionary",
+    )
+    .expect("the test dictionary builds a compressor");
+    let dictionary_stream = compressor
+        .compress(PAYLOAD)
+        .expect("the dictionary stream compresses");
+    let mut dictionary_receiver = receiver(
+        &layout,
+        put_begin(metadata_for(PAYLOAD), dictionary_stream.len() as u64),
+    );
+    dictionary_receiver
+        .push(&dictionary_stream)
+        .expect("the dictionary stream is accepted into the buffer");
+    assert!(matches!(
+        dictionary_receiver.finish(),
+        Err(ReplicaError::Decompress)
+    ));
+}
+
+#[test]
+fn accepts_a_complete_empty_original_stream() {
+    let temp = TempDir::new().expect("temp directory is created");
+    let layout = StorageLayout::new(temp.path());
+    let path = blob_path(&layout);
+    let transfer = compressed(&[]);
+    let metadata = BlobMetadata {
+        source_name: SOURCE_NAME.to_owned(),
+        timestamp_ms: TIMESTAMP_MS,
+        original_size_bytes: 0,
+        compressed_size_bytes: 0,
+        sha256: ContentHash::digest(&[]),
+    };
+    let mut receiver = receiver(&layout, put_begin(metadata, transfer.len() as u64));
+    receiver
+        .push(&transfer)
+        .expect("the empty-original stream is accepted");
+    let stored = receiver.finish().expect("the empty original is stored");
+    assert_eq!(stored.size_bytes, 0);
+    assert_eq!(fs::read(&path).expect("the empty blob is readable"), b"");
+}
+
+#[test]
+fn rejects_transfer_sizes_outside_the_declared_bound() {
+    let temp = TempDir::new().expect("temp directory is created");
+    let layout = StorageLayout::new(temp.path());
+    let metadata = metadata_for(b"x");
+
+    let zero = BlobReplicaReceiver::new(
+        put_begin(metadata.clone(), 0),
+        layout.clone(),
+        MAX_FILE_BYTES,
+    );
+    assert!(matches!(zero, Err(ReplicaError::TransferBound)));
+
+    // B(1) = 1 + 0 + 64 = 65.
+    let oversized = BlobReplicaReceiver::new(put_begin(metadata, 66), layout, MAX_FILE_BYTES);
+    assert!(matches!(oversized, Err(ReplicaError::TransferBound)));
+}
