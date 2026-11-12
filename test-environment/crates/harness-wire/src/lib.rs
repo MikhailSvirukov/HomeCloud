@@ -15,16 +15,20 @@ pub mod cbor;
 pub mod frame;
 pub mod header;
 pub mod heartbeat;
+pub mod host;
 pub mod inter_server;
 pub mod raft;
 pub mod result;
+pub mod topology;
 
 pub use cbor::{CborError, Value};
 pub use frame::{Frame, FrameError};
 pub use header::{ExternalFrameHeader, HeaderError};
 pub use heartbeat::{HeartbeatRequest, HeartbeatResponse};
+pub use host::{CanonicalHost, HostError};
 pub use inter_server::{
     InterServerMessage, MessageError, MessageType, RegistryError, V1_REGISTRY, validate_registry,
 };
 pub use raft::RaftRpc;
 pub use result::{ResultClass, ResultEnvelope, ResultError};
+pub use topology::{NodeEntry, TopologyAnswer, TopologyError};
