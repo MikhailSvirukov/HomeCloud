@@ -87,9 +87,9 @@ pub enum InterServerClientError {
     /// The response does not belong to the request or the addressed node.
     #[error("the response does not match the request: {0}")]
     Mismatch(&'static str),
-    /// The content tag could not be encoded.
+    /// The content tag could not be computed.
     #[error("the registration content tag could not be computed: {0}")]
-    Tag(String),
+    Tag(#[from] crate::registration_tag::RegistrationSecretError),
     /// The storage node answered with a non-zero result code.
     #[error("the storage node rejected the request with result code {0:#010x}")]
     Rejected(u32),
@@ -277,8 +277,7 @@ pub(crate) fn propose_registration(
         request.password,
         &request.x25519_key,
         &request.ed25519_key,
-    )
-    .map_err(|error| InterServerClientError::Tag(error.to_string()))?;
+    )?;
     let message = InterServerMessage::RegistrationPropose {
         login: request.login.to_owned(),
         registration_request_id: request.request_id,
@@ -633,6 +632,8 @@ mod tests {
         installation_id: [u8; 16],
         code: u32,
         commit_index: u64,
+        expected_verifier_value: Option<String>,
+        new_verifier_value: Option<String>,
     ) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("the client must connect");
@@ -654,21 +655,25 @@ mod tests {
             match request {
                 InterServerMessage::RegistrationPropose {
                     login,
+                    registration_request_id,
                     content_tag,
                     installation_id: sent,
                     x25519_key,
                     ed25519_key,
                     expected_verifier,
                     new_verifier,
-                    ..
                 } => {
                     assert_eq!(login, "alice");
+                    assert_eq!(registration_request_id, [0x11; 16]);
                     assert_eq!(content_tag, expected_tag);
                     assert_eq!(sent, installation_id);
                     assert_eq!(x25519_key, [0x44; 32]);
                     assert_eq!(ed25519_key, [0x55; 32]);
-                    assert_eq!(expected_verifier, None);
-                    assert_eq!(new_verifier.as_deref(), Some("new-phc"));
+                    assert_eq!(
+                        expected_verifier.as_deref(),
+                        expected_verifier_value.as_deref()
+                    );
+                    assert_eq!(new_verifier.as_deref(), new_verifier_value.as_deref());
                 }
                 _ => panic!("the request must be a registration propose"),
             }
@@ -708,6 +713,24 @@ mod tests {
         code: u32,
         commit_index: u64,
     ) -> Result<RegistrationCommit> {
+        propose_with_verifiers(
+            expected_tag,
+            installation_id,
+            code,
+            commit_index,
+            None,
+            Some("new-phc"),
+        )
+    }
+
+    fn propose_with_verifiers(
+        expected_tag: [u8; 32],
+        installation_id: [u8; 16],
+        code: u32,
+        commit_index: u64,
+        expected_verifier: Option<&str>,
+        new_verifier: Option<&str>,
+    ) -> Result<RegistrationCommit> {
         let dir = TempDir::new("propose");
         let identity = identity(&dir);
         let secret = secret(&dir);
@@ -717,8 +740,15 @@ mod tests {
             .expect("the listener must have an address")
             .port();
         let config = config(port);
-        let server =
-            mock_storage_propose(listener, expected_tag, installation_id, code, commit_index);
+        let server = mock_storage_propose(
+            listener,
+            expected_tag,
+            installation_id,
+            code,
+            commit_index,
+            expected_verifier.map(str::to_owned),
+            new_verifier.map(str::to_owned),
+        );
         let request = RegistrationProposeRequest {
             login: "alice",
             password: "secret-password",
@@ -726,8 +756,8 @@ mod tests {
             request_id: [0x11; 16],
             x25519_key: [0x44; 32],
             ed25519_key: [0x55; 32],
-            expected_verifier: None,
-            new_verifier: Some("new-phc"),
+            expected_verifier,
+            new_verifier,
         };
         let result = propose_registration(&config, &identity, &secret, &request);
         server.join().expect("the mock server must finish");
@@ -792,6 +822,53 @@ mod tests {
                 commit_index: 9
             }
         );
+    }
+
+    #[test]
+    fn an_existing_account_propose_carries_the_expected_verifier() {
+        let dir = TempDir::new("tag-existing");
+        let secret = secret(&dir);
+        let expected_tag = content_tag(
+            &secret,
+            "alice",
+            "secret-password",
+            &[0x44; 32],
+            &[0x55; 32],
+        )
+        .expect("the tag must be computed");
+
+        let commit = propose_with_verifiers(expected_tag, [0x66; 16], 0, 4, Some("old-phc"), None)
+            .expect("the existing-account propose must be committed");
+
+        assert_eq!(commit.commit_index, 4);
+    }
+
+    #[test]
+    fn a_propose_login_outside_the_configured_range_is_rejected_before_connecting() {
+        let dir = TempDir::new("propose-login");
+        let identity = identity(&dir);
+        let secret = secret(&dir);
+        let config = config(9);
+        let login = "a".repeat(65);
+        let request = RegistrationProposeRequest {
+            login: &login,
+            password: "secret-password",
+            installation_id: [0x66; 16],
+            request_id: [0x11; 16],
+            x25519_key: [0x44; 32],
+            ed25519_key: [0x55; 32],
+            expected_verifier: None,
+            new_verifier: Some("new-phc"),
+        };
+
+        assert!(matches!(
+            propose_registration(&config, &identity, &secret, &request),
+            Err(InterServerClientError::LoginOutOfBounds {
+                actual: 65,
+                min: 1,
+                max: 64
+            })
+        ));
     }
 
     #[test]
