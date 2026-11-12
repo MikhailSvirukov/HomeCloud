@@ -14,8 +14,8 @@ class ClientNetworkConfigurationTest {
         assertEquals(30_000, configuration.operationTimeoutMillis)
         assertEquals(5, configuration.bootstrapMaxAttempts)
         assertEquals(1_000L, configuration.bootstrapRetryIntervalMillis)
-        assertEquals(1_048_576, configuration.maxFrameBytes)
-        assertEquals(128, configuration.maxLabelBytes)
+        assertEquals(4_194_304, configuration.maxFrameBytes)
+        assertEquals(256, configuration.maxLabelBytes)
     }
 
     @Test
@@ -56,20 +56,20 @@ class ClientNetworkConfigurationTest {
 
     @Test
     fun maxFrameBytesAcceptsMinimumAndMaximum() {
-        val minimum = ClientNetworkConfiguration(maxFrameBytes = 1_024)
-        val maximum = ClientNetworkConfiguration(maxFrameBytes = 16_777_216)
+        val minimum = ClientNetworkConfiguration(maxFrameBytes = 4_096)
+        val maximum = ClientNetworkConfiguration(maxFrameBytes = 67_108_864)
 
-        assertEquals(1_024, minimum.maxFrameBytes)
-        assertEquals(16_777_216, maximum.maxFrameBytes)
+        assertEquals(4_096, minimum.maxFrameBytes)
+        assertEquals(67_108_864, maximum.maxFrameBytes)
     }
 
     @Test
     fun maxLabelBytesAcceptsMinimumAndMaximum() {
         val minimum = ClientNetworkConfiguration(maxLabelBytes = 1)
-        val maximum = ClientNetworkConfiguration(maxLabelBytes = 1_024)
+        val maximum = ClientNetworkConfiguration(maxLabelBytes = 4_096)
 
         assertEquals(1, minimum.maxLabelBytes)
-        assertEquals(1_024, maximum.maxLabelBytes)
+        assertEquals(4_096, maximum.maxLabelBytes)
     }
 
     @Test
@@ -123,13 +123,13 @@ class ClientNetworkConfigurationTest {
     @Test
     fun maxFrameBytesBelowMinimumIsRejected() =
         assertRejected(MAX_FRAME_BYTES_FIELD) {
-            ClientNetworkConfiguration(maxFrameBytes = 1_023)
+            ClientNetworkConfiguration(maxFrameBytes = 4_095)
         }
 
     @Test
     fun maxFrameBytesAboveMaximumIsRejected() =
         assertRejected(MAX_FRAME_BYTES_FIELD) {
-            ClientNetworkConfiguration(maxFrameBytes = 16_777_217)
+            ClientNetworkConfiguration(maxFrameBytes = 67_108_865)
         }
 
     @Test
@@ -141,7 +141,7 @@ class ClientNetworkConfigurationTest {
     @Test
     fun maxLabelBytesAboveMaximumIsRejected() =
         assertRejected(MAX_LABEL_BYTES_FIELD) {
-            ClientNetworkConfiguration(maxLabelBytes = 1_025)
+            ClientNetworkConfiguration(maxLabelBytes = 4_097)
         }
 
     @Test
