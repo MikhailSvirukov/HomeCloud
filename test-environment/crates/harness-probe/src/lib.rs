@@ -48,6 +48,10 @@ pub enum ProbeError {
 
 impl WireProbe {
     /// Connects with the given timeout for connect, read and write operations.
+    ///
+    /// A connect-phase timeout is reported as [`ProbeError::Connect`] so the
+    /// failing endpoint is named; [`ProbeError::Timeout`] is reserved for read
+    /// and write operations on an established connection.
     pub fn connect(address: SocketAddr, timeout: Duration) -> Result<Self, ProbeError> {
         let stream = TcpStream::connect_timeout(&address, timeout)
             .map_err(|source| ProbeError::Connect { address, source })?;
@@ -63,7 +67,10 @@ impl WireProbe {
 
     /// Sends exactly the given bytes.
     pub fn send(&mut self, bytes: &[u8]) -> Result<(), ProbeError> {
-        self.stream.write_all(bytes).map_err(ProbeError::Write)
+        let timeout = self.timeout;
+        self.stream
+            .write_all(bytes)
+            .map_err(|error| write_failure(error, timeout))
     }
 
     /// Encodes `frame` with `max_frame_len` and sends it.
@@ -144,6 +151,13 @@ fn read_failure(source: std::io::Error, timeout: Duration) -> ProbeError {
     }
 }
 
+fn write_failure(source: std::io::Error, timeout: Duration) -> ProbeError {
+    match source.kind() {
+        ErrorKind::WouldBlock | ErrorKind::TimedOut => ProbeError::Timeout(timeout),
+        _ => ProbeError::Write(source),
+    }
+}
+
 fn is_connection_closed(kind: ErrorKind) -> bool {
     matches!(
         kind,
@@ -156,8 +170,9 @@ fn is_connection_closed(kind: ErrorKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_connection_closed;
+    use super::{ProbeError, is_connection_closed, write_failure};
     use std::io::ErrorKind;
+    use std::time::Duration;
 
     #[test]
     fn classifies_connection_closed_error_kinds() {
@@ -172,5 +187,23 @@ mod tests {
 
         assert!(!is_connection_closed(ErrorKind::ConnectionRefused));
         assert!(!is_connection_closed(ErrorKind::TimedOut));
+    }
+
+    #[test]
+    fn maps_write_timeouts_and_failures() {
+        let timeout = Duration::from_secs(1);
+
+        assert!(matches!(
+            write_failure(std::io::Error::from(ErrorKind::TimedOut), timeout),
+            ProbeError::Timeout(observed) if observed == timeout
+        ));
+        assert!(matches!(
+            write_failure(std::io::Error::from(ErrorKind::WouldBlock), timeout),
+            ProbeError::Timeout(observed) if observed == timeout
+        ));
+        assert!(matches!(
+            write_failure(std::io::Error::from(ErrorKind::BrokenPipe), timeout),
+            ProbeError::Write(_)
+        ));
     }
 }
