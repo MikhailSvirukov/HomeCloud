@@ -28,12 +28,12 @@ internal data class UploadFramePlan(
  * Splits one compressed version into the plaintext payloads of its upload frames (`FR-UP-003`,
  * `FR-UP-004`, `FR-UP-005`, `FR-UP-016`, `CFG-CL-011`).
  *
- * The configured frame limit applies to the whole frame: the four-byte length prefix, the external
+ * The configured frame-body limit excludes the four-byte length prefix and covers the external
  * header, the 64-byte Ed25519 signature, the 48 bytes of HPKE encapsulated key and AES-GCM tag, and
  * the plaintext payload (`CFG-CL-011`). The external header is bounded by encoding the template
  * with the widest `uint32` frame number, 4294967295, so the budget does not depend on the actual
  * frame number (`INT-NET-050`). The budget for one frame's plaintext is therefore
- * `maxFrameBytes - 4 - 64 - 48 - worstCaseHeaderBytes`.
+ * `maxFrameBytes - 64 - 48 - worstCaseHeaderBytes`.
  *
  * Frame zero carries the non-empty logical header followed by the first compressed bytes, and each
  * later frame carries only the next compressed bytes; every frame except the last is filled to the
@@ -69,7 +69,6 @@ private fun frameBudget(
             .encode(headerTemplate.copy(frameNumber = WIDEST_FRAME_NUMBER))
             .size
     return maxFrameBytes.toLong() -
-        LENGTH_PREFIX_BYTES -
         SIGNATURE_BYTES -
         ENCRYPTION_OVERHEAD_BYTES -
         worstCaseHeaderBytes
@@ -115,7 +114,6 @@ private const val FIRST_FRAME_INDEX = 0
 
 // Every frame starts with a four-byte length prefix, the external header and a 64-byte Ed25519
 // signature before its encrypted payload (INT-NET-081).
-private const val LENGTH_PREFIX_BYTES = 4
 private const val SIGNATURE_BYTES = 64
 
 // The encrypted payload adds a 32-byte HPKE encapsulated key and a 16-byte AES-GCM tag (INT-NET-024,

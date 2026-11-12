@@ -3,11 +3,10 @@ package dev.homecloud.android.net
 /**
  * Validated network settings for one client configuration.
  *
- * The operation timeout, bootstrap attempt budget and retry interval defaults and ranges are fixed
- * by the area SRS (`CFG-CL-017 / 2`, `CFG-CL-008 / 3`, `CFG-CL-018 / 2`). The connect timeout,
- * frame size and label size are client defaults for limits the shared design requires to be
- * configurable (`CFG-CL-011`, `CFG-CL-031`); the SRS does not fix their numeric values, and the
- * frame and label limits must match the server configuration.
+ * The operation timeout, bootstrap attempt budget, retry interval, frame-body size and node-label
+ * limit, together with their ranges, follow the shared configuration profile (`CFG-CL-017 / 2`,
+ * `CFG-CL-008 / 3`, `CFG-CL-018 / 2`, `CFG-CL-011 / 1`, `CFG-CL-031 / 1`). The connect timeout is a
+ * client default. The frame and label limits must match the server configuration.
  *
  * An out-of-range value is a configuration error rather than a value to clamp: construction fails
  * with [IllegalArgumentException] that names the offending field.
@@ -65,11 +64,11 @@ internal data class ClientNetworkConfiguration(
         /** Client default for the wait between bootstrap attempts (`CFG-CL-018 / 2`). */
         const val DEFAULT_BOOTSTRAP_RETRY_INTERVAL_MILLIS = 1_000L
 
-        /** Client default for the shared frame limit (`CFG-CL-011`); must match the server. */
-        const val DEFAULT_MAX_FRAME_BYTES = 1_048_576
+        /** Default for the shared frame-body limit (`CFG-CL-011 / 1`); must match the server. */
+        const val DEFAULT_MAX_FRAME_BYTES = 4_194_304
 
-        /** Client default for the shared label limit (`CFG-CL-031`); must match the server. */
-        const val DEFAULT_MAX_LABEL_BYTES = 128
+        /** Default for the shared node-label limit (`CFG-CL-031 / 1`); must match the server. */
+        const val DEFAULT_MAX_LABEL_BYTES = 256
     }
 }
 
@@ -83,5 +82,5 @@ private val CONNECT_TIMEOUT_MILLIS_RANGE = 1_000..60_000
 private val OPERATION_TIMEOUT_MILLIS_RANGE = 1_000..300_000
 private val BOOTSTRAP_MAX_ATTEMPTS_RANGE = 1..10
 private val BOOTSTRAP_RETRY_INTERVAL_MILLIS_RANGE = 100L..60_000L
-private val MAX_FRAME_BYTES_RANGE = 1_024..16_777_216
-private val MAX_LABEL_BYTES_RANGE = 1..1_024
+private val MAX_FRAME_BYTES_RANGE = 4_096..67_108_864
+private val MAX_LABEL_BYTES_RANGE = 1..4_096

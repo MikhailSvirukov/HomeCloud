@@ -85,7 +85,6 @@ class UploadFramePlanTest {
     fun `a limit that cannot carry the logical header is rejected`() {
         val maxFrameBytes =
             worstCaseHeaderBytes() +
-                LENGTH_PREFIX_BYTES +
                 SIGNATURE_BYTES +
                 ENCRYPTION_OVERHEAD_BYTES +
                 LOGICAL_HEADER.size
@@ -147,7 +146,6 @@ class UploadFramePlanTest {
 
     private fun budget(): Int =
         MAX_FRAME_BYTES -
-            LENGTH_PREFIX_BYTES -
             SIGNATURE_BYTES -
             ENCRYPTION_OVERHEAD_BYTES -
             worstCaseHeaderBytes()
@@ -187,7 +185,6 @@ private val HEADER_TEMPLATE =
 private const val MAX_FRAME_BYTES = 256
 private const val PAYLOAD_WITHIN_BUDGET = 40
 private const val BLOCK_FILL_STEP = 31
-private const val LENGTH_PREFIX_BYTES = 4
 private const val SIGNATURE_BYTES = 64
 private const val HPKE_ENCAPSULATED_KEY_BYTES = 32
 private const val GCM_TAG_BYTES = 16
