@@ -19,6 +19,7 @@ mod metrics;
 mod metrics_server;
 mod password;
 mod registration;
+mod registration_tag;
 mod report;
 mod result_code;
 mod topology;
@@ -48,6 +49,9 @@ pub use password::{Argon2Params, PasswordError, PasswordVerifier};
 pub use registration::{
     Account, AccountRegistry, CredentialLimits, Installation, InstallationId, InstallationKeys,
     Login, LoginError, RegistrationError, RegistrationOutcome, RegistrationRequest, RequestId,
+};
+pub use registration_tag::{
+    content_tag, RegistrationSecret, RegistrationSecretError, REGISTRATION_SECRET_BYTES,
 };
 pub use report::{Startup, StartupError};
 pub use result_code::{ResultClass, ResultCode};

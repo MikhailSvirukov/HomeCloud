@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use dedicated_server::CONFIG_PATH_ENV;
+use dedicated_server::{CONFIG_PATH_ENV, REGISTRATION_SECRET_BYTES};
 
 /// Binary under test, provided by Cargo for integration tests.
 const BINARY: &str = env!("CARGO_BIN_EXE_dedicated-server");
@@ -35,6 +35,7 @@ const CONFIG_TEMPLATE: &str = include_str!("fixtures/server_config.toml.tmpl");
 const ENCRYPTION_KEY_PLACEHOLDER: &str = "{{ENCRYPTION_KEY}}";
 const SIGNING_KEY_PLACEHOLDER: &str = "{{SIGNING_KEY}}";
 const LABEL_PLACEHOLDER: &str = "{{LABEL}}";
+const REGISTRATION_SECRET_PLACEHOLDER: &str = "{{REGISTRATION_SECRET}}";
 const LOG_PATH_PLACEHOLDER: &str = "{{LOG_PATH}}";
 /// Placeholder for the loopback metrics bind address used by the tests.
 const METRICS_BIND_PLACEHOLDER: &str = "{{METRICS_BIND}}";
@@ -77,6 +78,17 @@ impl Drop for TempDir {
 
 /// Write a complete, valid configuration pointing at the given file paths.
 fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) -> PathBuf {
+    let secret = dir.file("registration.secret");
+    std::fs::write(&secret, [0x24_u8; REGISTRATION_SECRET_BYTES])
+        .expect("registration secret must be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600))
+            .expect("registration secret permissions must be set");
+    }
+
     let config = CONFIG_TEMPLATE
         .replace(
             ENCRYPTION_KEY_PLACEHOLDER,
@@ -84,6 +96,10 @@ fn write_config(dir: &TempDir, encryption: &Path, signing: &Path, log: &Path) ->
         )
         .replace(SIGNING_KEY_PLACEHOLDER, &signing.display().to_string())
         .replace(LABEL_PLACEHOLDER, LABEL)
+        .replace(
+            REGISTRATION_SECRET_PLACEHOLDER,
+            &secret.display().to_string(),
+        )
         .replace(LOG_PATH_PLACEHOLDER, &log.display().to_string())
         .replace(
             METRICS_BIND_PLACEHOLDER,

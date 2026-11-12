@@ -242,7 +242,8 @@ for the whole process and flushes buffered records when dropped.
   size (`CFG-CL-020`, `1..=i64::MAX`); `connect_timeout_ms` and
   `inter_server_timeout_ms` bound a connection attempt and one control
   inter-server request (`CFG-CL-027`, `CFG-CL-054`, `100..=300000`).
-- `registration`: `total_deadline_ms` (`1000..=300000`), `attempt_deadline_ms`
+- `registration`: `secret_path` (the file holding the 32-byte registration
+  secret `K`), `total_deadline_ms` (`1000..=300000`), `attempt_deadline_ms`
   (`100..=300000`, not above the total), `attempts` (`1..=1000`, the first
   attempt included) and `retry_interval_ms` (`1..=60000`) bound the storage
   commit stage (`CFG-CL-042`-`CFG-CL-045`).
@@ -533,6 +534,15 @@ send/timeout actions, but delivering heartbeats over the network is not
 implemented yet.
 
 ## Account registration
+
+`src/registration_tag.rs` loads the registration secret `K`: exactly 32 bytes
+from the configured file, never created or replaced, and on Unix not readable by
+group or other. Startup fails with the `registration_secret_error` record when
+the file is missing, oversized, short or too permissive (`CFG-CL-048`). The
+module also computes the registration content tag,
+`HMAC-SHA-256(K, deterministic_cbor(["homecloud.registration.v1", login,
+password, x25519_key, ed25519_key]))`, over the exact bytes of the array without
+string normalisation (`INT-NET-109`); the secret itself is never logged.
 
 `src/registration.rs` holds the in-memory account model behind client
 registration. It is pure state: no I/O, not async, and no cryptography.

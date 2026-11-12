@@ -109,6 +109,8 @@ pub(crate) struct RegistrationConfig {
     pub(crate) attempts: NonZeroU32,
     /// Pause between two storage attempts.
     pub(crate) retry_interval_ms: NonZeroU64,
+    /// Path of the registration secret file (`CFG-CL-048 / 1`).
+    pub(crate) secret_path: PathBuf,
 }
 
 /// Key identity of the dedicated server.
@@ -447,6 +449,9 @@ pub enum ConfigError {
         /// Configured verifier limit.
         max_verifier_bytes: u64,
     },
+    /// The registration secret path is empty.
+    #[error("registration.secret_path must not be empty")]
+    EmptyRegistrationSecretPath,
     /// The configured Argon2id salt cannot be encoded in a PHC record.
     #[error(
         "a {actual}-byte Argon2id salt cannot be encoded in a PHC salt field, which carries at most 48 bytes"
@@ -771,6 +776,10 @@ fn validate_profile(config: &ServerConfig) -> Result<()> {
             min: minimum_memory,
             max: 1_048_576,
         });
+    }
+
+    if config.registration.secret_path.as_os_str().is_empty() {
+        return Err(ConfigError::EmptyRegistrationSecretPath);
     }
 
     let salt = config.password.salt_length_bytes.get();
@@ -1218,6 +1227,19 @@ mod tests {
             Err(ConfigError::EmptyDedicatedField {
                 field: NodeField::Label
             })
+        ));
+    }
+
+    #[test]
+    fn rejects_an_empty_registration_secret_path() {
+        let document = VALID_SERVER.replace(
+            "secret_path = \"/etc/homecloud/registration.secret\"",
+            "secret_path = \"\"",
+        );
+
+        assert!(matches!(
+            ServerConfig::from_toml_str(&document),
+            Err(ConfigError::EmptyRegistrationSecretPath)
         ));
     }
 

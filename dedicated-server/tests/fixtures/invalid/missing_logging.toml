@@ -52,6 +52,7 @@ signing_public_key = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 bind = "127.0.0.1:9101"
 
 [registration]
+secret_path = "/etc/homecloud/registration.secret"
 total_deadline_ms = 30000
 attempt_deadline_ms = 10000
 attempts = 5
