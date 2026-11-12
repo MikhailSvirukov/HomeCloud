@@ -759,9 +759,10 @@ async fn persists_replica_availability_and_updates_catalog_replicas() {
 
     let unavailable = publish_replica_status(leader, record.upload_id, record.content_hash, false);
     runtime
-        .replica_status(unavailable)
+        .replica_status(unavailable.clone())
         .await
         .expect("a fixed voter reports an unavailable committed upload");
+    wait_for_replica_status(&runtime, record.upload_id, leader, &unavailable).await;
     let statuses = runtime.node().replica_statuses().await;
     assert_eq!(
         statuses
@@ -782,9 +783,10 @@ async fn persists_replica_availability_and_updates_catalog_replicas() {
 
     let available = publish_replica_status(leader, record.upload_id, record.content_hash, true);
     runtime
-        .replica_status(available)
+        .replica_status(available.clone())
         .await
         .expect("a fixed voter reports an available committed upload");
+    wait_for_replica_status(&runtime, record.upload_id, leader, &available).await;
     let statuses = runtime.node().replica_statuses().await;
     assert_eq!(
         statuses
