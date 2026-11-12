@@ -69,6 +69,21 @@ fn calculated_zero_clock_offset_is_integer_zero() {
     );
 }
 
+/// `INT-NET-087`, `TST-036/5`: a positive calculated offset is a positive CBOR
+/// integer, distinct from `null`, zero, and negative offsets.
+#[test]
+fn positive_clock_offset_uses_minimal_integer() {
+    let message = InterServerMessage::HeartbeatRequest(HeartbeatRequest {
+        sequence_number: 1,
+        dedicated_sent_at_ms: 1000,
+        previous_clock_offset_ms: Some(5),
+    });
+    let expected = vec![0x82, 0x01, 0x83, 0x01, 0x19, 0x03, 0xE8, 0x05];
+
+    assert_eq!(message.encode(), expected);
+    assert_eq!(decode_message(&expected), Ok(message));
+}
+
 /// `INT-NET-073/6`, `TST-036/5`.
 #[test]
 fn heartbeat_response_matches_contract_vector() {
@@ -100,6 +115,23 @@ fn heartbeat_response_echoes_the_request_sequence() {
         InterServerMessage::HeartbeatResponse(response).encode(),
         vec![0x82, 0x02, 0x83, 0x01, 0x19, 0x07, 0xD0, 0x19, 0x0B, 0xB8]
     );
+}
+
+/// `INT-NET-073/6`, `TST-036/5`: both response timestamps use the negative
+/// `int64` path down to `i64::MIN`.
+#[test]
+fn heartbeat_response_accepts_negative_int64_timestamps() {
+    let message = InterServerMessage::HeartbeatResponse(HeartbeatResponse {
+        sequence_number: 1,
+        node_received_at_ms: -1,
+        node_sent_at_ms: i64::MIN,
+    });
+    let expected = vec![
+        0x82, 0x02, 0x83, 0x01, 0x20, 0x3B, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    ];
+
+    assert_eq!(message.encode(), expected);
+    assert_eq!(decode_message(&expected), Ok(message));
 }
 
 /// `INT-NET-073/6`, `TST-036/5`: every heartbeat number uses the minimal

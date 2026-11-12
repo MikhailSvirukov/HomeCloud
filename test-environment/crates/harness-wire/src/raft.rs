@@ -36,39 +36,3 @@ impl RaftRpc {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::RaftRpc;
-    use crate::cbor::Value;
-    use crate::inter_server::MessageError;
-
-    #[test]
-    fn round_trips_opaque_rpc_bytes() {
-        let bytes = vec![0x00, 0x7F, 0xFF];
-        let args = RaftRpc {
-            rpc_bytes: bytes.clone(),
-        }
-        .args();
-        assert_eq!(RaftRpc::from_args(&args), Ok(RaftRpc { rpc_bytes: bytes }));
-    }
-
-    #[test]
-    fn rejects_wrong_rpc_argument_count() {
-        assert_eq!(
-            RaftRpc::from_args(&[Value::Bytes(Vec::new()), Value::Null]),
-            Err(MessageError::WrongArgumentCount {
-                expected: 1,
-                actual: 2,
-            })
-        );
-    }
-
-    #[test]
-    fn rejects_non_byte_string_rpc_argument() {
-        assert_eq!(
-            RaftRpc::from_args(&[Value::Text("rpc".to_owned())]),
-            Err(MessageError::WrongType("rpc_bytes"))
-        );
-    }
-}

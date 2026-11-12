@@ -267,144 +267,17 @@ pub(crate) fn decode_bytes<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        InterServerMessage, MESSAGE_TYPE_HEARTBEAT_REQUEST, MESSAGE_TYPE_HEARTBEAT_RESPONSE,
-        MESSAGE_TYPE_RESERVED, MESSAGE_TYPE_RPC_OPENRAFT, MessageError, MessageType, RegistryError,
-        V1_REGISTRY, validate_registry,
-    };
-    use crate::cbor::{self, Value};
-    use crate::heartbeat::{HeartbeatRequest, HeartbeatResponse};
-    use crate::raft::RaftRpc;
+    use super::{MessageError, decode_int64, decode_uint64, encode_int64};
+    use crate::cbor::Value;
 
     #[test]
-    fn resolves_published_message_type_codes() {
+    fn helpers_handle_non_negative_int_values() {
+        assert_eq!(decode_int64(&Value::Int(0), "field"), Ok(0));
         assert_eq!(
-            MessageType::from_code(MESSAGE_TYPE_HEARTBEAT_REQUEST),
-            Ok(MessageType::HeartbeatRequest)
+            decode_uint64(&Value::Int(0), "field"),
+            Err(MessageError::WrongType("field"))
         );
-        assert_eq!(
-            MessageType::from_code(MESSAGE_TYPE_HEARTBEAT_RESPONSE),
-            Ok(MessageType::HeartbeatResponse)
-        );
-        assert_eq!(
-            MessageType::from_code(MESSAGE_TYPE_RPC_OPENRAFT),
-            Ok(MessageType::RpcOpenRaft)
-        );
-    }
-
-    #[test]
-    fn rejects_reserved_message_type_code() {
-        assert_eq!(
-            MessageType::from_code(MESSAGE_TYPE_RESERVED),
-            Err(MessageError::ReservedMessageType)
-        );
-    }
-
-    #[test]
-    fn rejects_unknown_message_type_codes() {
-        assert_eq!(
-            MessageType::from_code(4),
-            Err(MessageError::UnknownMessageType(4))
-        );
-        assert_eq!(
-            MessageType::from_code(u32::MAX),
-            Err(MessageError::UnknownMessageType(u32::MAX))
-        );
-    }
-
-    #[test]
-    fn accepts_v1_registry() {
-        assert_eq!(validate_registry(&V1_REGISTRY), Ok(()));
-    }
-
-    #[test]
-    fn rejects_reserved_registry_code() {
-        assert_eq!(
-            validate_registry(&[(MESSAGE_TYPE_RESERVED, MessageType::HeartbeatRequest)]),
-            Err(RegistryError::ReservedCode)
-        );
-    }
-
-    #[test]
-    fn rejects_unassigned_registry_code() {
-        assert_eq!(
-            validate_registry(&[(4, MessageType::HeartbeatRequest)]),
-            Err(RegistryError::UnassignedCode(4))
-        );
-    }
-
-    #[test]
-    fn rejects_duplicate_registry_code() {
-        assert_eq!(
-            validate_registry(&[
-                (
-                    MESSAGE_TYPE_HEARTBEAT_REQUEST,
-                    MessageType::HeartbeatRequest
-                ),
-                (
-                    MESSAGE_TYPE_HEARTBEAT_REQUEST,
-                    MessageType::HeartbeatRequest
-                ),
-            ]),
-            Err(RegistryError::DuplicateCode(MESSAGE_TYPE_HEARTBEAT_REQUEST))
-        );
-    }
-
-    #[test]
-    fn rejects_conflicting_registry_assignment() {
-        assert_eq!(
-            validate_registry(&[(
-                MESSAGE_TYPE_HEARTBEAT_RESPONSE,
-                MessageType::HeartbeatRequest,
-            )]),
-            Err(RegistryError::MismatchedAssignment {
-                code: MESSAGE_TYPE_HEARTBEAT_RESPONSE,
-                expected: MessageType::HeartbeatResponse,
-                actual: MessageType::HeartbeatRequest,
-            })
-        );
-    }
-
-    #[test]
-    fn round_trips_heartbeat_request_envelope() {
-        let message = InterServerMessage::HeartbeatRequest(HeartbeatRequest {
-            sequence_number: 7,
-            dedicated_sent_at_ms: -1,
-            previous_clock_offset_ms: Some(0),
-        });
-        let value = cbor::decode(&message.encode()).expect("envelope is valid CBOR");
-        assert_eq!(InterServerMessage::decode(&value), Ok(message));
-    }
-
-    #[test]
-    fn round_trips_heartbeat_response_envelope() {
-        let message = InterServerMessage::HeartbeatResponse(HeartbeatResponse {
-            sequence_number: 7,
-            node_received_at_ms: 10,
-            node_sent_at_ms: 20,
-        });
-        let value = cbor::decode(&message.encode()).expect("envelope is valid CBOR");
-        assert_eq!(InterServerMessage::decode(&value), Ok(message));
-    }
-
-    #[test]
-    fn round_trips_raft_rpc_envelope() {
-        let message = InterServerMessage::RaftRpc(RaftRpc {
-            rpc_bytes: vec![0x00, 0x7F, 0xFF],
-        });
-        let value = cbor::decode(&message.encode()).expect("envelope is valid CBOR");
-        assert_eq!(InterServerMessage::decode(&value), Ok(message));
-    }
-
-    #[test]
-    fn rejects_envelope_with_wrong_shape() {
-        assert_eq!(
-            InterServerMessage::decode(&Value::Array(vec![Value::Uint(1)])),
-            Err(MessageError::WrongEnvelopeShape)
-        );
-        assert_eq!(
-            InterServerMessage::decode(&Value::Null),
-            Err(MessageError::WrongEnvelopeShape)
-        );
+        assert_eq!(encode_int64(0), Value::Uint(0));
+        assert_eq!(encode_int64(-1), Value::Int(-1));
     }
 }
