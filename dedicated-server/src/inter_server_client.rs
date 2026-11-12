@@ -42,6 +42,24 @@ pub enum InterServerClientError {
         /// Expected length.
         expected: usize,
     },
+    /// A login is outside the configured byte range.
+    #[error("login must be between {min} and {max} bytes, got {actual}")]
+    LoginOutOfBounds {
+        /// Observed length in bytes.
+        actual: usize,
+        /// Configured minimum.
+        min: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// The decoded logical header exceeds the configured limit.
+    #[error("the logical header is {actual} bytes, above max_header_bytes ({max})")]
+    LogicalHeaderTooLarge {
+        /// Observed length in bytes.
+        actual: usize,
+        /// Configured maximum.
+        max: usize,
+    },
     /// The connection attempt failed.
     #[error("connecting to {address} failed: {source}")]
     Connect {
@@ -54,14 +72,14 @@ pub enum InterServerClientError {
     /// Writing the request or reading the response failed.
     #[error("the inter-server exchange failed: {0}")]
     Io(#[from] std::io::Error),
-    /// The response frame is malformed.
-    #[error("the response frame is invalid: {0}")]
+    /// A frame is malformed.
+    #[error("the frame is invalid: {0}")]
     Frame(#[from] FrameError),
-    /// The response frame could not be sealed or opened.
-    #[error("the response frame could not be sealed or opened: {0}")]
+    /// A frame could not be sealed or opened.
+    #[error("the frame could not be sealed or opened: {0}")]
     Seal(#[from] FrameSealError),
-    /// The response header is invalid.
-    #[error("the response header is invalid: {0}")]
+    /// An inter-server message is invalid.
+    #[error("the inter-server message is invalid: {0}")]
     Wire(#[from] WireError),
     /// The encoded external header boundary could not be found.
     #[error("the response header boundary could not be found: {0}")]
@@ -140,6 +158,11 @@ fn exchange(
             "the response label is not the addressed node label",
         ));
     }
+    if response_header.upload_id.is_some() {
+        return Err(InterServerClientError::Mismatch(
+            "a registry result does not carry an upload identifier",
+        ));
+    }
 
     let mut sealed = Vec::with_capacity(4 + body.len());
     sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
@@ -151,9 +174,35 @@ fn exchange(
         &recipient_secret,
         storage.signing_public_key.as_bytes(),
     )?;
+    ensure_header_bound(&plaintext, config.max_header_bytes.get())?;
 
     InterServerMessage::decode(&plaintext, config.max_verifier_bytes.get())
         .map_err(InterServerClientError::Wire)
+}
+
+/// Reject a decoded logical header above the configured limit (`INT-NET-085`).
+fn ensure_header_bound(plaintext: &[u8], max_header_bytes: usize) -> Result<()> {
+    if plaintext.len() > max_header_bytes {
+        return Err(InterServerClientError::LogicalHeaderTooLarge {
+            actual: plaintext.len(),
+            max: max_header_bytes,
+        });
+    }
+
+    Ok(())
+}
+
+/// Reject a login outside the configured byte range (`CFG-CL-029`).
+fn ensure_login_bounds(login: &str, min: usize, max: usize) -> Result<()> {
+    if login.len() < min || login.len() > max {
+        return Err(InterServerClientError::LoginOutOfBounds {
+            actual: login.len(),
+            min,
+            max,
+        });
+    }
+
+    Ok(())
 }
 
 /// Read the 32-byte key out of `bytes`.
@@ -197,6 +246,13 @@ pub(crate) fn lookup_registry(
         .storage
         .first()
         .ok_or(InterServerClientError::NoStorageNode)?;
+    if let Some(login) = login {
+        ensure_login_bounds(
+            login,
+            config.min_login_bytes.get(),
+            config.max_login_bytes.get(),
+        )?;
+    }
     let request_id: [u8; IDENTIFIER_BYTES] = *uuid::Uuid::new_v4().as_bytes();
     let request = InterServerMessage::RegistryLookup {
         login: login.map(str::to_owned),
@@ -206,7 +262,15 @@ pub(crate) fn lookup_registry(
 
     match exchange(config, identity, storage, &request, request_id)? {
         InterServerMessage::RegistryLookupResult { code: 0, snapshot } => {
-            snapshot.ok_or(InterServerClientError::UnexpectedMessage)
+            let snapshot = snapshot.ok_or(InterServerClientError::UnexpectedMessage)?;
+            if let Some(installation) = &snapshot.installation {
+                ensure_login_bounds(
+                    &installation.login,
+                    config.min_login_bytes.get(),
+                    config.max_login_bytes.get(),
+                )?;
+            }
+            Ok(snapshot)
         }
         InterServerMessage::RegistryLookupResult { code, .. } => {
             Err(InterServerClientError::Rejected(code))
@@ -229,6 +293,7 @@ mod tests {
     use crate::config::ServerConfig;
 
     const FIXTURE: &str = include_str!("../tests/fixtures/valid_server.toml");
+    const DEDICATED_ID: [u8; 16] = [0x00; 16];
     const STORAGE_ID: [u8; 16] = {
         let mut id = [0x00; 16];
         id[15] = 0x01;
@@ -265,8 +330,15 @@ mod tests {
 
     impl TempDir {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("homecloud-lookup-{name}-{}", std::process::id()));
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "homecloud-lookup-{name}-{}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).expect("the test directory must be created");
             Self(path)
@@ -322,11 +394,31 @@ mod tests {
         ServerConfig::from_toml_str(&document).expect("the test configuration must parse")
     }
 
-    fn mock_storage(
-        listener: TcpListener,
+    struct MockResponse {
+        sender_id: Option<[u8; 16]>,
+        request_id: Option<[u8; 16]>,
+        frame_number: u32,
+        upload_id: Option<[u8; 16]>,
+        responder_label: Option<String>,
         code: u32,
         snapshot: Option<RegistrySnapshot>,
-    ) -> thread::JoinHandle<()> {
+    }
+
+    impl MockResponse {
+        fn snapshot(snapshot: RegistrySnapshot) -> Self {
+            Self {
+                sender_id: Some(STORAGE_ID),
+                request_id: None,
+                frame_number: 0,
+                upload_id: None,
+                responder_label: Some("storage-1".to_owned()),
+                code: 0,
+                snapshot: Some(snapshot),
+            }
+        }
+    }
+
+    fn mock_storage(listener: TcpListener, response: MockResponse) -> thread::JoinHandle<()> {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("the client must connect");
             let limit = std::num::NonZeroU32::new(4 * 1024 * 1024).expect("a non-zero limit");
@@ -335,6 +427,11 @@ mod tests {
                 external_header_length(&body).expect("the request header must be found");
             let request_header =
                 ExternalHeader::decode(&body[..header_length], 64).expect("the header must parse");
+            assert_eq!(request_header.sender_id, Some(DEDICATED_ID));
+            assert_eq!(request_header.frame_number, 0);
+            assert_eq!(request_header.upload_id, None);
+            assert_eq!(request_header.responder_label, None);
+            assert_eq!(request_header.bootstrap_signing_public_key, None);
             let mut sealed = Vec::with_capacity(4 + body.len());
             sealed.extend_from_slice(&(body.len() as u32).to_be_bytes());
             sealed.extend_from_slice(&body);
@@ -344,16 +441,26 @@ mod tests {
                 .expect("the request must open");
             let request =
                 InterServerMessage::decode(&plaintext, 512).expect("the request must parse");
-            assert!(matches!(request, InterServerMessage::RegistryLookup { .. }));
+            match request {
+                InterServerMessage::RegistryLookup { login, .. } => {
+                    assert_eq!(login.as_deref(), Some("alice"));
+                }
+                _ => panic!("the request must be a registry lookup"),
+            }
 
-            let response = InterServerMessage::RegistryLookupResult { code, snapshot };
-            let payload = response.encode(512).expect("the response must encode");
+            let response_message = InterServerMessage::RegistryLookupResult {
+                code: response.code,
+                snapshot: response.snapshot,
+            };
+            let payload = response_message
+                .encode(512)
+                .expect("the response must encode");
             let header = ExternalHeader {
-                sender_id: Some(STORAGE_ID),
-                request_id: request_header.request_id,
-                frame_number: 0,
-                upload_id: None,
-                responder_label: Some("storage-1".to_owned()),
+                sender_id: response.sender_id,
+                request_id: response.request_id.unwrap_or(request_header.request_id),
+                frame_number: response.frame_number,
+                upload_id: response.upload_id,
+                responder_label: response.responder_label,
                 bootstrap_signing_public_key: None,
             };
             let header_bytes = header.encode(64).expect("the response header must encode");
@@ -371,8 +478,7 @@ mod tests {
         })
     }
 
-    #[test]
-    fn a_lookup_returns_the_storage_snapshot() {
+    fn lookup_with(response: MockResponse) -> Result<RegistrySnapshot> {
         let dir = TempDir::new("lookup");
         let identity = identity(&dir);
         let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
@@ -381,41 +487,166 @@ mod tests {
             .expect("the listener must have an address")
             .port();
         let config = config(port);
+        let server = mock_storage(listener, response);
+        let result = lookup_registry(&config, &identity, Some("alice"), None, None);
+        server.join().expect("the mock server must finish");
+
+        result
+    }
+
+    #[test]
+    fn a_lookup_returns_the_storage_snapshot() {
         let snapshot = RegistrySnapshot {
             read_index: 7,
             account: None,
             registration: None,
             installation: None,
         };
-        let server = mock_storage(listener, 0, Some(snapshot.clone()));
 
-        let found = lookup_registry(&config, &identity, Some("alice"), None, None)
-            .expect("the lookup must succeed");
+        let found =
+            lookup_with(MockResponse::snapshot(snapshot.clone())).expect("the lookup must succeed");
 
-        server.join().expect("the mock server must finish");
         assert_eq!(found, snapshot);
     }
 
     #[test]
     fn a_rejected_lookup_reports_the_storage_result_code() {
-        let dir = TempDir::new("rejected");
-        let identity = identity(&dir);
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener must bind");
-        let port = listener
-            .local_addr()
-            .expect("the listener must have an address")
-            .port();
-        let config = config(port);
-        let server = mock_storage(listener, 0x0001_0002, None);
+        let response = MockResponse {
+            code: 0x0001_0002,
+            snapshot: None,
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 0,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
 
-        let error = lookup_registry(&config, &identity, Some("alice"), None, None)
-            .expect_err("a rejected lookup must fail");
+        let error = lookup_with(response).expect_err("a rejected lookup must fail");
 
-        server.join().expect("the mock server must finish");
         assert!(matches!(
             error,
             InterServerClientError::Rejected(0x0001_0002)
         ));
+    }
+
+    #[test]
+    fn a_response_from_another_sender_is_rejected() {
+        let response = MockResponse {
+            sender_id: Some([0x99; 16]),
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 1,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
+
+        assert!(matches!(
+            lookup_with(response),
+            Err(InterServerClientError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_response_with_another_request_identifier_is_rejected() {
+        let response = MockResponse {
+            request_id: Some([0x77; 16]),
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 1,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
+
+        assert!(matches!(
+            lookup_with(response),
+            Err(InterServerClientError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_response_with_another_frame_number_is_rejected() {
+        let response = MockResponse {
+            frame_number: 1,
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 1,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
+
+        assert!(matches!(
+            lookup_with(response),
+            Err(InterServerClientError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_response_with_another_label_is_rejected() {
+        let response = MockResponse {
+            responder_label: Some("storage-2".to_owned()),
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 1,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
+
+        assert!(matches!(
+            lookup_with(response),
+            Err(InterServerClientError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_response_with_an_upload_identifier_is_rejected() {
+        let response = MockResponse {
+            upload_id: Some([0x55; 16]),
+            ..MockResponse::snapshot(RegistrySnapshot {
+                read_index: 1,
+                account: None,
+                registration: None,
+                installation: None,
+            })
+        };
+
+        assert!(matches!(
+            lookup_with(response),
+            Err(InterServerClientError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_login_outside_the_configured_range_is_rejected_before_connecting() {
+        let dir = TempDir::new("login");
+        let identity = identity(&dir);
+        let config = config(9);
+        let login = "a".repeat(65);
+
+        assert!(matches!(
+            lookup_registry(&config, &identity, Some(&login), None, None),
+            Err(InterServerClientError::LoginOutOfBounds {
+                actual: 65,
+                min: 1,
+                max: 64
+            })
+        ));
+    }
+
+    #[test]
+    fn the_header_bound_rejects_an_oversized_plaintext() {
+        assert!(matches!(
+            ensure_header_bound(&[0x00; 129], 128),
+            Err(InterServerClientError::LogicalHeaderTooLarge {
+                actual: 129,
+                max: 128
+            })
+        ));
+        assert!(ensure_header_bound(&[0x00; 128], 128).is_ok());
     }
 
     #[test]
