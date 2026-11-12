@@ -71,7 +71,7 @@ internal object UploadMetadataCodec {
      * Encodes the five arguments in the order fixed by `INT-NET-052 / 4` and `INT-NET-084 / 1`.
      *
      * An empty name, a name above the configured byte limit, a digest whose length is not 32 bytes,
-     * a negative timestamp or size, and a size above the configured limit are rejected.
+     * a negative size, and a size above the configured limit are rejected.
      */
     fun encode(
         metadata: UploadMetadata,
@@ -98,7 +98,7 @@ internal object UploadMetadataCodec {
     /**
      * Decodes and validates a five-element argument list (`INT-NET-053 / 2`, `INT-NET-084 / 1`).
      *
-     * A wrong element count, a mismatched element type, a negative timestamp or size, a digest
+     * A wrong element count, a mismatched element type, a negative size, a digest
      * whose length is not 32 bytes, an empty name, a name above the configured byte limit, and a
      * size above the configured limit are rejected.
      */

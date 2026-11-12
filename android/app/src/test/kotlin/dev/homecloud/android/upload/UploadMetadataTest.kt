@@ -197,8 +197,10 @@ class UploadMetadataTest {
     fun `a negative timestamp round-trips`() {
         val metadata = metadata(timestampMillis = -1_000L)
 
-        val decoded = UploadMetadataCodec.decode(UploadMetadataCodec.encode(metadata))
+        val encoded = UploadMetadataCodec.encode(metadata)
+        assertEquals(CborValue.NInt(-1_000L), encoded[TIMESTAMP_INDEX])
 
+        val decoded = UploadMetadataCodec.decode(encoded)
         assertEquals(metadata.timestampMillis, decoded.timestampMillis)
     }
 
@@ -207,9 +209,12 @@ class UploadMetadataTest {
         val encoded = UploadMetadataCodec.encode(metadata(originalName = "12345678"))
         val limits = UploadMetadataLimits(maxOriginalSizeBytes = ORIGINAL_SIZE_BYTES, maxNameBytes = 4)
 
-        assertThrows(ProtocolEncodingException::class.java) {
-            UploadMetadataCodec.decode(encoded, limits)
-        }
+        val error =
+            assertThrows(ProtocolEncodingException::class.java) {
+                UploadMetadataCodec.decode(encoded, limits)
+            }
+
+        assertTrue(error.message.orEmpty().contains(SOURCE_NAME_FIELD))
     }
 
     @Test
@@ -220,9 +225,12 @@ class UploadMetadataTest {
             )
         val limits = UploadMetadataLimits(maxOriginalSizeBytes = 150L)
 
-        assertThrows(ProtocolEncodingException::class.java) {
-            UploadMetadataCodec.decode(encoded, limits)
-        }
+        val error =
+            assertThrows(ProtocolEncodingException::class.java) {
+                UploadMetadataCodec.decode(encoded, limits)
+            }
+
+        assertTrue(error.message.orEmpty().contains(COMPRESSED_SIZE_FIELD))
     }
 
     @Test
