@@ -10,8 +10,9 @@ internal enum class SetupMode {
 }
 
 /**
- * The setup values as they are currently typed. The draft lives in memory only; the password is
- * never written to disk or to a log (`FR-AND-041 / 2`).
+ * The setup values as they are currently typed. The draft lives in memory; a successful
+ * registration stores the password only inside the encrypted credential envelope for background
+ * requests (`FR-AND-022 / 1`), and it never reaches a log (`FR-AND-023 / 2`).
  */
 internal data class SetupDraft(
     val host: String = "",

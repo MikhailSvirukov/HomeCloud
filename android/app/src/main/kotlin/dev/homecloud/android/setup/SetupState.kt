@@ -39,8 +39,10 @@ internal data class SetupState(
 
 /**
  * The values a valid submission hands to the registration or connection step
- * (`FR-AND-041 / 2`, `FR-AND-042 / 1`): the configuration that may be persisted and the password
- * that must stay in memory only and never reach storage or a log.
+ * (`FR-AND-041 / 2`, `FR-AND-042 / 1`): the configuration that may be persisted and the password,
+ * which is submitted in memory and is stored after a successful registration only inside the
+ * encrypted credential envelope for background requests (`FR-AND-022 / 1`), never in a log
+ * (`FR-AND-023 / 2`).
  */
 internal data class SetupSubmission(
     val configuration: SetupConfiguration,

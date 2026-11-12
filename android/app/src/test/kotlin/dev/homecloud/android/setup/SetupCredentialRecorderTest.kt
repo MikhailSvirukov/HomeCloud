@@ -5,8 +5,10 @@ import dev.homecloud.android.credentials.CredentialStore
 import dev.homecloud.android.credentials.StoredCredential
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Asserts the recording rules of `FR-AND-022 / 1`, `FR-AND-023 / 2` and `FR-AND-024 / 1`: a
@@ -24,6 +26,15 @@ class SetupCredentialRecorderTest {
 
         assertTrue(recorded)
         assertEquals(StoredCredential(login = LOGIN, password = PASSWORD), store.saved)
+    }
+
+    @Test
+    fun `record propagates cancellation instead of reporting a failed save`() {
+        val store = RecordingCredentialStore(failure = CancellationException())
+
+        assertThrows(CancellationException::class.java) {
+            SetupCredentialRecorder(store).record(SUBMISSION)
+        }
     }
 
     @Test
