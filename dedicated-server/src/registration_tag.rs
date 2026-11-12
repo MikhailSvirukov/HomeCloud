@@ -315,6 +315,26 @@ mod tests {
     }
 
     #[test]
+    fn the_secret_survives_a_restart_unchanged() {
+        let file = TempFile::write(&SECRET);
+
+        let first = RegistrationSecret::load(file.path()).expect("the first load must work");
+        let second = RegistrationSecret::load(file.path()).expect("the second load must work");
+        let first_tag = content_tag(&first, LOGIN, PASSWORD, &X25519_KEY, &ED25519_KEY)
+            .expect("the tag must be computed");
+        let second_tag = content_tag(&second, LOGIN, PASSWORD, &X25519_KEY, &ED25519_KEY)
+            .expect("the tag must be computed");
+
+        assert_eq!(first_tag, second_tag);
+        assert_eq!(
+            fs::metadata(file.path())
+                .expect("the secret file must remain")
+                .len(),
+            REGISTRATION_SECRET_BYTES as u64
+        );
+    }
+
+    #[test]
     fn the_content_tag_is_stable_for_the_same_inputs() {
         let secret = secret();
 
