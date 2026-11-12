@@ -17,6 +17,9 @@ cryptographic, or configuration work.
 - `INT-NET-072/2`, `INT-NET-073/6`, `INT-NET-074/2`, `INT-NET-075/1` and
   `TST-035/2`, `TST-036/5`, `TST-037/2`, `TST-038/1` — the inter-server
   envelope, heartbeat messages, RPC OpenRaft wrapper, and message-type registry.
+- `INT-NET-070/6`, `TST-023/5`, `TST-033/1`, `CFG-CL-031` — the topology
+  answer, its per-node rows, manifest order, byte-bounded labels, and canonical
+  host literals.
 
 ## API
 
@@ -35,6 +38,18 @@ cryptographic, or configuration work.
   `1` and `2` with their three-element argument arrays.
 - `harness_wire::raft` — `RaftRpc`; code `3` with the single opaque
   `rpc_bytes` byte string.
+- `harness_wire::host` — `CanonicalHost`, `HostError`; canonical IPv4 and IPv6
+  literal validation for the topology `host` position.
+- `harness_wire::topology` — `TopologyAnswer`, `NodeEntry`, `TopologyError`;
+  the `[nodes]` result arguments and the six-position per-node row.
+
+## Canonical topology hosts
+
+`host` is an unbracketed IP literal, never a DNS name and never an IPv6 zone
+identifier. IPv4 is four decimal octets without leading zeros; IPv6 uses the
+RFC 5952 canonical form, so only the compressed lowercase spelling is accepted.
+Labels are UTF-8 text limited in bytes by `CFG-CL-031` and are not normalized. A
+node row carries exactly one `host` and one `port` in `1..=65535`.
 
 ## Configuration inputs
 
@@ -42,8 +57,9 @@ Callers pass the limits; the crate holds no configuration of its own.
 
 - `CFG-CL-011` frame body limit — the maximum value of the 4-byte length prefix,
   passed to `frame::encode`, `frame::decode`, and `frame::signed_message`.
-- `CFG-CL-031` responder-label limit in UTF-8 bytes — passed to
-  `ExternalFrameHeader::encode` and `ExternalFrameHeader::decode`.
+- `CFG-CL-031` label limit in UTF-8 bytes — passed to
+  `ExternalFrameHeader::encode` and `ExternalFrameHeader::decode`, and to
+  `TopologyAnswer`/`NodeEntry` encoding and decoding.
 
 ## Scope
 
@@ -56,6 +72,8 @@ component concerns.
 `tests/golden_vectors.rs` pins the exact contract bytes for the ordinary and
 primary-registration headers, the frame body and signed range, and every
 published result code; `tests/inter_server_vectors.rs` pins the envelope,
-heartbeat, and RPC vectors and the registry table. Component implementations
-(Android, dedicated server, distributed storage) can consume the same vectors as
-external conformance tests so that one encoding is proven across languages.
+heartbeat, and RPC vectors and the registry table; `tests/topology_vectors.rs`
+pins the topology answer, node rows, and canonical host rules. Component
+implementations (Android, dedicated server, distributed storage) can consume the
+same vectors as external conformance tests so that one encoding is proven
+across languages.
