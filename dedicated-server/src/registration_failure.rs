@@ -6,6 +6,7 @@
 //! the other, so a request handler can answer a failure without inventing a
 //! code.
 
+use crate::frame::FrameError;
 use crate::inter_server_client::InterServerClientError;
 use crate::registration_flow::RegistrationFlowError;
 use crate::result_code::ResultCode;
@@ -33,13 +34,13 @@ fn exchange_failure(error: &InterServerClientError) -> ResultCode {
         }
         InterServerClientError::Connect { .. }
         | InterServerClientError::Io(_)
-        | InterServerClientError::Frame(_)
-        | InterServerClientError::Seal(_)
+        | InterServerClientError::Frame(FrameError::Io(_))
         | InterServerClientError::Deadline { .. } => ResultCode::TemporaryUnavailable,
+        InterServerClientError::Frame(_) | InterServerClientError::Seal(_) => ResultCode::Internal,
         InterServerClientError::Wire(_) => ResultCode::Internal,
         InterServerClientError::Mismatch(_) => ResultCode::Internal,
-        InterServerClientError::LoginOutOfBounds { .. }
-        | InterServerClientError::LogicalHeaderTooLarge { .. } => ResultCode::InvalidArguments,
+        InterServerClientError::LogicalHeaderTooLarge { .. } => ResultCode::Internal,
+        InterServerClientError::LoginOutOfBounds { .. } => ResultCode::InvalidArguments,
         InterServerClientError::NoStorageNode => ResultCode::TemporaryUnavailable,
         InterServerClientError::KeyLength { .. } => ResultCode::Internal,
         InterServerClientError::HeaderBoundary(_) => ResultCode::Internal,
@@ -117,6 +118,40 @@ mod tests {
                 InterServerClientError::NoStorageNode
             )),
             ResultCode::TemporaryUnavailable
+        );
+    }
+
+    #[test]
+    fn a_read_failure_is_temporary_and_a_malformed_frame_is_internal() {
+        let read = InterServerClientError::Frame(FrameError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timeout",
+        )));
+        let malformed = InterServerClientError::Frame(FrameError::TooLarge {
+            announced: 10,
+            max: 4,
+        });
+
+        assert_eq!(
+            registration_failure(&RegistrationFlowError::Exchange(read)),
+            ResultCode::TemporaryUnavailable
+        );
+        assert_eq!(
+            registration_failure(&RegistrationFlowError::Exchange(malformed)),
+            ResultCode::Internal
+        );
+    }
+
+    #[test]
+    fn an_oversized_response_header_answers_the_internal_code() {
+        assert_eq!(
+            registration_failure(&RegistrationFlowError::Exchange(
+                InterServerClientError::LogicalHeaderTooLarge {
+                    actual: 2_000,
+                    max: 1_024
+                }
+            )),
+            ResultCode::Internal
         );
     }
 
