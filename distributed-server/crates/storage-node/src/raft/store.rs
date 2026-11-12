@@ -2,6 +2,7 @@
 
 use core::fmt;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::io::Write;
 use std::ops::RangeBounds;
@@ -28,6 +29,7 @@ use openraft::Vote;
 use tokio::sync::RwLock;
 
 use crate::metadata::UploadId;
+use crate::replication::validate_publish_version;
 
 use super::{CommittedVersion, NodeId, RaftConfig, RaftRequest, RaftResponse};
 
@@ -341,6 +343,28 @@ impl RaftStorage<RaftConfig> for MemStore {
                     responses.push(RaftResponse {
                         upload_id: Some(upload_id),
                     });
+                }
+                EntryPayload::Normal(RaftRequest::PublishVersion(command)) => {
+                    let voters: BTreeSet<NodeId> = inner.last_membership.voter_ids().collect();
+                    let validated = {
+                        let existing = inner.catalog.get(&command.record.upload_id);
+                        validate_publish_version(command, &voters, existing)
+                    };
+                    match validated {
+                        Ok(version) => {
+                            let upload_id = version.record.upload_id;
+                            inner.catalog.insert(upload_id, version);
+                            responses.push(RaftResponse {
+                                upload_id: Some(upload_id),
+                            });
+                        }
+                        Err(_) => {
+                            // The log entry is applied as a no-op: the catalog is
+                            // unchanged and the coordinator maps `None` to a typed
+                            // publish rejection.
+                            responses.push(RaftResponse { upload_id: None });
+                        }
+                    }
                 }
                 EntryPayload::Normal(RaftRequest::UpdateReplicas {
                     upload_id,
