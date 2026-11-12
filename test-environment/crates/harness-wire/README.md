@@ -26,6 +26,9 @@ cryptographic, or configuration work.
 - `INT-NET-051/3`, `INT-NET-054/1`, `INT-NET-055/2`, `INT-NET-057/1`,
   `INT-NET-060/1`, `CFG-CL-029` — the authenticated client logical header, the
   v1 operation table, the login character set, and credential limits.
+- `INT-NET-084/1`, `CFG-CL-020`, `CFG-CL-032` and `TST-029/1`, `TST-034/1` —
+  the upload metadata arguments, the `[upload_id]` success result, size limits,
+  and byte-bounded source names.
 
 ## API
 
@@ -55,6 +58,17 @@ cryptographic, or configuration work.
 - `harness_wire::client` — `ClientRequest`, `OperationType`, `CredentialLimits`,
   `ClientError`; the `[operation_type, login, password, args]` client logical
   header, the operation table, and the credential rules.
+- `harness_wire::upload` — `UploadMetadata`, `UploadResult`, `UploadError`; the
+  five-position upload metadata arguments and the `[upload_id]` success result.
+
+## Upload shapes
+
+Upload metadata is `[source_name, timestamp_ms, original_size,
+compressed_size, sha256]`: source name is UTF-8 text limited in bytes by
+`CFG-CL-032`, the timestamp is a signed 64-bit Unix millisecond value, the sizes
+are unsigned integers bounded by `CFG-CL-020`, and `sha256` is a 32-byte byte
+string. The successful upload response has result code `0` and the single
+result argument `[upload_id]`, a 16-byte byte string (`FR-UP-021`).
 
 ## Client logical header
 
@@ -96,7 +110,10 @@ Callers pass the limits; the crate holds no configuration of its own.
   `ExternalFrameHeader::encode` and `ExternalFrameHeader::decode`, and to
   `TopologyAnswer`/`NodeEntry` encoding and decoding.
 - `CFG-CL-032` source-name limit in UTF-8 bytes — passed to
-  `CatalogEntry::to_value`/`from_value` and `CatalogPage::to_args`/`from_args`.
+  `CatalogEntry::to_value`/`from_value`, `CatalogPage::to_args`/`from_args`, and
+  `UploadMetadata::to_args`/`from_args`.
+- `CFG-CL-020` upload size limit — passed to `UploadMetadata::to_args`/`from_args`
+  alongside the source-name limit.
 - `CFG-CL-029` credential limits — a `CredentialLimits` value passed to
   `ClientRequest::to_args`/`from_args`; `CredentialLimits::V1_DEFAULT` matches
   the published v1 defaults.
@@ -116,6 +133,7 @@ heartbeat, and RPC vectors and the registry table; `tests/topology_vectors.rs`
 pins the topology answer, node rows, and canonical host rules;
 `tests/catalog_vectors.rs` pins the catalog entry row, page answers, and page
 requests; `tests/client_vectors.rs` pins the client logical header, operation
-codes, and credential limits. Component implementations (Android, dedicated
-server, distributed storage) can consume the same vectors as external
-conformance tests so that one encoding is proven across languages.
+codes, and credential limits; `tests/upload_vectors.rs` pins the upload metadata
+and result vectors. Component implementations (Android, dedicated server,
+distributed storage) can consume the same vectors as external conformance tests
+so that one encoding is proven across languages.

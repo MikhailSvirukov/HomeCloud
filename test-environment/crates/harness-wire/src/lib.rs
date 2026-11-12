@@ -22,6 +22,7 @@ pub mod inter_server;
 pub mod raft;
 pub mod result;
 pub mod topology;
+pub mod upload;
 
 pub use catalog::{CatalogEntry, CatalogError, CatalogPage, CatalogPageRequest};
 pub use cbor::{CborError, Value};
@@ -36,3 +37,4 @@ pub use inter_server::{
 pub use raft::RaftRpc;
 pub use result::{ResultClass, ResultEnvelope, ResultError};
 pub use topology::{NodeEntry, TopologyAnswer, TopologyError};
+pub use upload::{UploadError, UploadMetadata, UploadResult};
