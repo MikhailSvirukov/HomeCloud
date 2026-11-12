@@ -212,12 +212,17 @@ impl RaftRuntime {
     /// committed catalog, then submits it to OpenRaft. An accepted status is
     /// persisted in the replicated state machine and snapshot, and its
     /// `available` flag adds or removes the replica in the upload's catalog
-    /// replica set.
+    /// replica set. An identical persisted status is acknowledged without
+    /// appending another log entry.
     pub async fn replica_status(&self, status: ReplicaStatus) -> Result<(), RuntimeError> {
         let upload_id = status.upload_id;
         let existing = self.node.committed_versions().await.remove(&upload_id);
         let voters: BTreeSet<NodeId> = self.members.keys().copied().collect();
         validate_replica_status(&status, &voters, existing.as_ref())?;
+        let key = (upload_id, status.replica_id);
+        if self.node.replica_statuses().await.get(&key) == Some(&status) {
+            return Ok(());
+        }
         let response = self
             .node
             .client_write(RaftRequest::ReplicaStatus(status))
