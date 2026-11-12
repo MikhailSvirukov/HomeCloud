@@ -146,6 +146,11 @@ impl MemStore {
         self.inner.read().await.catalog.clone()
     }
 
+    /// Returns one applied catalog version without copying the catalog.
+    pub(super) async fn committed_version(&self, upload_id: UploadId) -> Option<CommittedVersion> {
+        self.inner.read().await.catalog.get(&upload_id).cloned()
+    }
+
     /// Returns the number of applied catalog versions without copying them.
     pub(super) async fn committed_version_count(&self) -> usize {
         self.inner.read().await.catalog.len()
@@ -154,6 +159,20 @@ impl MemStore {
     /// Returns the applied replica statuses on this node.
     pub(super) async fn replica_statuses(&self) -> BTreeMap<(UploadId, NodeId), ReplicaStatus> {
         self.inner.read().await.replica_statuses.clone()
+    }
+
+    /// Returns one applied replica status without copying the status map.
+    pub(super) async fn replica_status(
+        &self,
+        upload_id: UploadId,
+        replica_id: NodeId,
+    ) -> Option<ReplicaStatus> {
+        self.inner
+            .read()
+            .await
+            .replica_statuses
+            .get(&(upload_id, replica_id))
+            .cloned()
     }
 }
 

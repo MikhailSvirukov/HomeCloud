@@ -564,6 +564,17 @@ async fn records_a_valid_replica_status_and_replays_idempotently() {
         .replica_status(status.clone())
         .await
         .expect("a fixed voter reports a matching committed upload");
+    let key = (status.upload_id, status.replica_id);
+    assert_eq!(
+        runtime.node().replica_statuses().await.get(&key),
+        Some(&status),
+        "the persisted status map contains the accepted status"
+    );
+    assert_eq!(
+        runtime.node().replica_status(key.0, key.1).await,
+        Some(status.clone()),
+        "the keyed accessor returns the accepted status"
+    );
     let applied_after_status = runtime
         .node()
         .last_applied_index()
