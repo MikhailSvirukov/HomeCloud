@@ -38,6 +38,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- WorkManager runs setForeground work in its own foreground service; declaring the dataSync type here keeps the long upload transfer visible (CON-AND-004, CON-AND-005). -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
 
         <provider
             android:name="androidx.startup.InitializationProvider"
