@@ -11,6 +11,7 @@ mod command;
 mod docker_faults;
 mod plan;
 mod process;
+mod process_faults;
 mod runtime;
 
 pub use bollard_runtime::BollardClusterRuntime;
@@ -22,4 +23,5 @@ pub use command::{
 pub use docker_faults::DockerFaultInjector;
 pub use plan::{ClusterPlan, ContainerPlan, EnvBuilder, NetworkPlan, PlanSettings};
 pub use process::ProcessCommandRunner;
+pub use process_faults::{DockerProcessFault, ProcessRestart};
 pub use runtime::{ClusterRuntime, FakeClusterRuntime};

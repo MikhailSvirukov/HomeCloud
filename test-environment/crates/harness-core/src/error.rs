@@ -87,4 +87,19 @@ pub enum HarnessError {
         operation: &'static str,
         message: String,
     },
+    /// The supervisor inside a running container has no child process to kill.
+    #[error("container for {node} has no supervised child process")]
+    SupervisedProcessMissing { node: NodeId },
+    /// The supervisor did not replace its killed child before the timeout.
+    #[error("supervised process {previous_pid} of {node} was not replaced before the timeout")]
+    SupervisedProcessRestartTimedOut { node: NodeId, previous_pid: u32 },
+    /// The container identity changed while the supervised process was restarted.
+    #[error("container for {node} was recreated during the process restart")]
+    ContainerRecreated { node: NodeId },
+    /// More than one live child matches the expected supervised process name.
+    #[error("container for {node} has {count} live supervised processes")]
+    SupervisedProcessAmbiguous { node: NodeId, count: usize },
+    /// The expected supervised process name is not a valid `/proc/<pid>/comm` value.
+    #[error("invalid supervised process name {name:?}")]
+    InvalidProcessName { name: String },
 }

@@ -23,7 +23,7 @@ test-environment/
     ├── harness-core/           # Docker-independent model + fakes
     │   └── src/{lib,topology,fault,node,error}.rs
     ├── harness-docker/         # cluster plan, CLI rendering, runtimes, Docker faults
-    │   └── src/{lib,plan,command,runtime,cli,process,bollard_runtime,docker_faults}.rs
+    │   └── src/{lib,plan,command,runtime,cli,process,bollard_runtime,docker_faults,process_faults}.rs
     ├── harness-scenario/       # scenario engine, checks, catalogue, registry
     │   └── src/{lib,scenario,checks,catalogue,spec}.rs
     └── harness-test-support/   # fixtures shared by tests
@@ -62,6 +62,12 @@ test-environment/
 - `harness-docker::docker_faults`: `DockerFaultInjector`, a `FaultInjector` that
   applies per-pair packet filtering inside the node containers through the
   Docker API (TST-006), with full drop and probabilistic loss.
+- `harness-docker::process_faults`: `DockerProcessFault::restart_node` abruptly
+  kills the container's supervised child and waits for its replacement in the
+  same container (TST-016), verifying the container id and `StartedAt` are
+  unchanged, per
+  [`distributed-server/RUNTIME_CONTRACT.md`](../distributed-server/RUNTIME_CONTRACT.md)
+  §2. The `process_restart.rs` test is Docker-backed and ignored locally.
 - `harness-scenario::spec`: `ScenarioSpec` and an ordered `ScenarioRegistry` for
   registering and building scenarios without changing the runner (TST-009).
 - `harness-scenario`: `Scenario`/`ScenarioBuilder` (ordered `Action`s), the
