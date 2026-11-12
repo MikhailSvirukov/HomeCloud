@@ -286,10 +286,9 @@ mod tests {
     fn identity(dir: &TempDir) -> ServerIdentity {
         let encryption = dir.file("encryption.key");
         let signing = dir.file("signing.key");
-        let (_, dedicated_x25519) = x25519(&DEDICATED_X25519_SEED);
-        std::fs::write(&encryption, DEDICATED_X25519_SEED).expect("the encryption key must exist");
+        let (dedicated_x25519, _) = x25519(&DEDICATED_X25519_SEED);
+        std::fs::write(&encryption, dedicated_x25519).expect("the encryption key must exist");
         std::fs::write(&signing, DEDICATED_ED25519_SEED).expect("the signing key must exist");
-        let _ = dedicated_x25519;
         ServerIdentity::load("dedicated-1", &encryption, &signing).expect("the identity must load")
     }
 
@@ -422,7 +421,7 @@ mod tests {
     #[test]
     fn the_header_boundary_is_the_encoded_header_only() {
         let header = ExternalHeader {
-            sender_id: None,
+            sender_id: Some([0x11; 16]),
             request_id: [0x11; 16],
             frame_number: 0,
             upload_id: None,
