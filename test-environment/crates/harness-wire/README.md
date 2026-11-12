@@ -14,6 +14,9 @@ cryptographic, or configuration work.
   `INT-NET-050/4`, `INT-NET-061/1`, `INT-NET-062/1`, `INT-NET-063/1`,
   `INT-NET-069/1`, `INT-NET-081/1` — the frame, external header, and result
   envelope representation exercised by those vectors.
+- `INT-NET-072/2`, `INT-NET-073/6`, `INT-NET-074/2`, `INT-NET-075/1` and
+  `TST-035/2`, `TST-036/5`, `TST-037/2`, `TST-038/1` — the inter-server
+  envelope, heartbeat messages, RPC OpenRaft wrapper, and message-type registry.
 
 ## API
 
@@ -25,6 +28,13 @@ cryptographic, or configuration work.
   `signed_message`; the `[length][header][signature][payload]` layout.
 - `harness_wire::result` — `ResultEnvelope`, `ResultClass`, `class_of`, the 18
   published result-code constants, and `ResultError`.
+- `harness_wire::inter_server` — `InterServerMessage`, `MessageType`,
+  `MessageError`, `V1_REGISTRY`, `validate_registry`, `RegistryError`, and the
+  `MESSAGE_TYPE_*` code constants; the `[message_type, args]` envelope.
+- `harness_wire::heartbeat` — `HeartbeatRequest`, `HeartbeatResponse`; codes
+  `1` and `2` with their three-element argument arrays.
+- `harness_wire::raft` — `RaftRpc`; code `3` with the single opaque
+  `rpc_bytes` byte string.
 
 ## Configuration inputs
 
@@ -35,10 +45,17 @@ Callers pass the limits; the crate holds no configuration of its own.
 - `CFG-CL-031` responder-label limit in UTF-8 bytes — passed to
   `ExternalFrameHeader::encode` and `ExternalFrameHeader::decode`.
 
+## Scope
+
+The crate validates the decrypted logical structures only. Frame signing and
+encryption, and serialization of the RPC payload behind `rpc_bytes`, are
+component concerns.
+
 ## Consuming the vectors
 
 `tests/golden_vectors.rs` pins the exact contract bytes for the ordinary and
 primary-registration headers, the frame body and signed range, and every
-published result code. Component implementations (Android, dedicated server,
-distributed storage) can consume the same vectors as external conformance tests
-so that one encoding is proven across languages.
+published result code; `tests/inter_server_vectors.rs` pins the envelope,
+heartbeat, and RPC vectors and the registry table. Component implementations
+(Android, dedicated server, distributed storage) can consume the same vectors as
+external conformance tests so that one encoding is proven across languages.
