@@ -93,6 +93,9 @@ clients; it does not relay Raft or blob traffic.
   stores full version metadata and blob replica sets with file-backed
   persistence), `src/replication.rs` (publish-version quorum and idempotent
   replay validation plus replica-status validation for the fixed voter set),
+  `src/replication_exchange.rs` (strict CBOR codecs for publish-version
+  message 8 and result 9, and replica-status message 16 and result 17, with
+  exact metadata/UUID/result shapes and canonical encoding),
   `src/runtime.rs` (node Raft runtime that resolves the local
   manifest entry, validates the configured identity keys, derives the transport
   and voter set, and exposes the local OpenRaft node), `src/frame_sequence.rs`
